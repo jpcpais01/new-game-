@@ -7,7 +7,7 @@ export default defineConfig({
     // three.js is the bulk of the bundle; keep it in its own long-cached chunk.
     rolldownOptions: {
       output: {
-        advancedChunks: {
+        codeSplitting: {
           groups: [{ name: 'three', test: /node_modules[\\/](three|postprocessing)/ }],
         },
       },

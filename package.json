@@ -8,8 +8,10 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
-    "sim": "vitest run src/sim/balance.test.ts --reporter=verbose"
+    "test": "vitest run src/sim/battle.test.ts",
+    "sim": "vitest run src/sim/balance.test.ts --disable-console-intercept",
+    "duel": "vitest run scripts/duel.test.ts --dir . --disable-console-intercept",
+    "icons": "node scripts/icons.mjs"
   },
   "dependencies": {
     "postprocessing": "^6.39.5",

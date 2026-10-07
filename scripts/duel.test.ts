@@ -1,4 +1,5 @@
 import { it } from 'vitest';
+// Usage: A=vanguard B=ronin IA=item1,item2 IB=... N=5 V=1 npm run duel
 import { Battle } from '../src/sim/battle';
 import type { ClassId, ItemId } from '../src/sim/types';
 
