@@ -4,25 +4,23 @@ import { GEAR_SLOTS, SLOT_NAMES, gearIdsFor, gearOf } from '../sim/gear';
 import {
   buildAbilities, computeBaseStats, randomBuild, withGear, type CharacterBuild,
 } from '../sim/loadout';
-import type { FormId, GearId, GearSlot } from '../sim/types';
+import type { GearId, GearSlot } from '../sim/types';
 import { h, hex } from './dom';
 import { fmtMult } from './format';
 import { emptySlotIcon } from './itemIcons';
 import { skinStrip, wornIcon } from './skinIcons';
+import { formIcon, icon, type IconName } from './icons';
+import { canInstall, onInstallChange, promptInstall } from './install';
 import { withSkin } from '../gear/skins';
 import { ARENA_IDS, ARENA_NAMES, type ArenaId } from '../render/scene/arena';
 import type { Zoom } from '../render/camera';
 
 export const ZOOM_LABEL: Record<Zoom, string> = { close: 'Close', normal: 'Normal', distant: 'Distant' };
 export const ZOOM_ORDER: Zoom[] = ['close', 'normal', 'distant'];
-const ARENA_GLYPH: Record<ArenaId, string> = { highlands: '🏔️', colosseum: '🏛️' };
+const ARENA_ICON: Record<ArenaId, IconName> = { highlands: 'highlands', colosseum: 'colosseum' };
 
 /** A corner's character: name, body form and six gear slots. */
 export type Loadout = CharacterBuild;
-
-export const FORM_GLYPH: Record<FormId, string> = {
-  robust: '🐻', agile: '🦊', balanced: '⚖️', slender: '🦒', mighty: '💪', ethereal: '🌙',
-};
 
 
 export interface MenuSettings {
@@ -75,17 +73,17 @@ export class Menu {
       onclick: () => { if (this.activeSide === side) return; sfx.play('ui'); this.activeSide = side; this.render(); },
     }, h('small', null, side === 0 ? 'You' : 'Rival'), h('span', null, this.loadouts[side].name));
     this.el.replaceChildren(
-      h('div.title', null, h('h1', null, 'CLASHBORN'), h('p', null, 'Auto Duel Arena')),
+      h('div.title', null, h('h1.wordmark', { 'aria-label': 'Clashborn' }, 'CLASH', h('em', null, 'BORN')), h('p', null, 'Auto Duel Arena')),
       this.vsTabs = h('div.vs-tabs', { role: 'tablist' }, tab(0), h('b', null, 'VS'), tab(1)),
       this.corner(0),
       this.corner(1),
       h('div.menu-bottom', null,
         this.arenaRow(),
         h('button.btn.icon-btn', { title: 'Settings', 'aria-label': 'Settings', onclick: () => { sfx.play('ui'); this.openSettings(); } },
-          h('span.glyph', null, '⚙️'), h('span.lbl', null, 'Settings')),
-        h('button.btn-fight', { onclick: () => this.cb.onFight() }, 'FIGHT'),
+          icon('settings', 'glyph'), h('span.lbl', null, 'Settings')),
+        h('button.btn-fight', { onclick: () => this.cb.onFight() }, h('span.face', null, icon('swords'), 'FIGHT')),
         h('button.btn.icon-btn', { title: 'New rival', 'aria-label': 'New rival', onclick: () => { sfx.play('ui'); this.cb.onNewRival(); } },
-          h('span.glyph', null, '🎲'), h('span.lbl', null, 'New rival')),
+          icon('dice', 'glyph'), h('span.lbl', null, 'New rival')),
       ),
     );
   }
@@ -110,27 +108,34 @@ export class Menu {
       h('button.btn' + (s.arena === id ? '.on' : ''), {
         title: ARENA_NAMES[id],
         onclick: () => { if (s.arena === id) return; sfx.play('ui'); this.setSettings({ arena: id }); },
-      }, h('span.glyph', null, ARENA_GLYPH[id]), ARENA_NAMES[id])));
+      }, icon(ARENA_ICON[id], 'glyph'), ARENA_NAMES[id])));
   }
 
   private openSettings(): void {
-    const seg = <T extends string>(title: string, options: [T, string][], cur: T, pick: (v: T) => void) =>
+    const seg = <T extends string>(title: string, options: [T, string, IconName?][], cur: T, pick: (v: T) => void) =>
       h('section.set-row', null,
         h('h4', null, title),
-        h('div.seg', null, ...options.map(([v, label]) =>
-          h('button.btn' + (v === cur ? '.on' : ''), { onclick: () => { if (v === cur) return; sfx.play('ui'); pick(v); draw(); } }, label))));
+        h('div.seg', null, ...options.map(([v, label, ic]) =>
+          h('button.btn' + (v === cur ? '.on' : ''), { onclick: () => { if (v === cur) return; sfx.play('ui'); pick(v); draw(); } },
+            ic ? icon(ic, 'glyph') : null, label))));
     const body = h('div.modal-body.set-body');
     const draw = () => {
       const s = this.settings;
       body.replaceChildren(
-        seg('Arena', ARENA_IDS.map((id) => [id, `${ARENA_GLYPH[id]} ${ARENA_NAMES[id]}`] as [ArenaId, string]), s.arena, (arena) => this.setSettings({ arena })),
+        seg('Arena', ARENA_IDS.map((id) => [id, ARENA_NAMES[id], ARENA_ICON[id]] as [ArenaId, string, IconName]), s.arena, (arena) => this.setSettings({ arena })),
         seg('Camera', ZOOM_ORDER.map((z) => [z, ZOOM_LABEL[z]] as [Zoom, string]), s.zoom, (zoom) => this.setSettings({ zoom })),
         seg('Graphics', [['auto', 'Auto'], ['high', 'High'], ['medium', 'Med'], ['low', 'Low']], s.quality, (quality) => this.setSettings({ quality })),
-        seg('Sound', [['on', '🔊 On'], ['off', '🔇 Off']], s.sound ? 'on' : 'off', (v) => this.setSettings({ sound: v === 'on' })),
+        seg('Sound', [['on', 'On', 'soundOn'], ['off', 'Off', 'soundOff']], s.sound ? 'on' : 'off', (v) => this.setSettings({ sound: v === 'on' })),
         seg('FPS counter', [['off', 'Off'], ['on', 'On']], s.fps ? 'on' : 'off', (v) => this.setSettings({ fps: v === 'on' })),
+        // Only when the browser offers it (Chrome/Edge/Android, not yet installed).
+        canInstall() ? h('section.set-row.set-install', null,
+          h('h4', null, 'App'),
+          h('button.btn.install-btn', { onclick: () => { sfx.play('ui'); void promptInstall(); } },
+            icon('install', 'glyph'), 'Install Clashborn')) : '',
       );
     };
     draw();
+    const off = onInstallChange(() => { if (body.isConnected) draw(); else off(); });
     this.openModal('Settings', body, 'modal.settings-modal');
   }
 
@@ -139,10 +144,10 @@ export class Menu {
     this.picker?.remove();
     const close = () => { sfx.play('ui'); this.closeModal(); };
     const wrap: HTMLDivElement = h<HTMLDivElement>('div.modal-wrap', { onclick: (e: Event) => { if (e.target === wrap) close(); } },
-      h(`div.${cls}.glass`, { role: 'dialog', 'aria-label': title },
+      h(`div.${cls}.plate`, { role: 'dialog', 'aria-label': title },
         h('header.modal-head', null,
           h('h3', null, title),
-          h('button.btn.close', { title: 'Close', 'aria-label': 'Close', onclick: close }, '✕')),
+          h('button.btn.close', { title: 'Close', 'aria-label': 'Close', onclick: close }, icon('close'))),
         body,
       ),
     );
@@ -163,16 +168,17 @@ export class Menu {
       [h('span', null, label), h('div.bar', null, h('i', { style: { transform: `scaleX(${Math.min(1, v / max)})` } })), h('b', null, shown)];
     const set = (next: Loadout) => { sfx.play('ui'); this.loadouts[side] = next; this.changed(); };
 
-    return h(`div.corner.glass.side-${side}` + (this.activeSide === side ? '.active' : ''), null,
+    return h(`div.corner.plate.side-${side}` + (this.activeSide === side ? '.active' : ''), null,
       h('header', null,
-        h('div', null,
+        h('span.medal', { style: { '--c': hex(form.color) }, title: form.name }, formIcon(lo.form)),
+        h('div.who', null,
           h('div.tag', null, side === 0 ? 'You · Blue corner' : 'Rival · Red corner'),
           h('div.name', null, lo.name),
           h('div.sub', null, `${form.name} · ${form.title}`),
         ),
         side === 0
           ? h('button.btn.icon-btn.edit', { title: 'Edit your fighter', 'aria-label': 'Edit your fighter', onclick: () => { sfx.play('ui'); this.cb.onEditCharacter(); } },
-            h('span.glyph', null, '✎'), h('span.lbl', null, 'Edit'))
+            icon('edit', 'glyph'), h('span.lbl', null, 'Edit'))
           : null,
       ),
       // Your form is part of who your character is: it changes in the editor.
@@ -182,7 +188,7 @@ export class Menu {
           title: `${FORMS[id].name}: ${FORMS[id].blurb}`,
           'aria-label': FORMS[id].name,
           onclick: () => set({ ...lo, form: id }),
-        }, h('span.glyph', null, FORM_GLYPH[id]), h('span.nm', null, FORMS[id].name)),
+        }, h('span.glyph', null, formIcon(id)), h('span.nm', null, FORMS[id].name)),
       )),
       h('p.blurb', null, form.blurb),
       h('div.stats', null,
@@ -233,7 +239,7 @@ export class Menu {
             h('span.ds', null, it.desc, grants.length ? h('em.grants', null, grants.join(' · ')) : null));
         }),
         current && slot !== 'main'
-          ? h('button.item', { onclick: () => choose(null) }, h('span.ico', null, '✕'), h('span.nm', null, 'Remove'), h('span.ds', null, 'Leave this slot empty.'))
+          ? h('button.item.remove', { onclick: () => choose(null) }, h('span.ico', null, icon('close')), h('span.nm', null, 'Remove'), h('span.ds', null, 'Leave this slot empty.'))
           : null,
       ),
     );
