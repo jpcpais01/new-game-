@@ -181,6 +181,11 @@ export class Brain implements FighterBrain {
   // Look-ahead
   /** Imagined copy used inside another brain's look-ahead (never plans itself). */
   private imagined = false;
+  /**
+   * Imagined enemy: how readily it defends, from what I've seen of the real
+   * one (leaning careful: better to be pleasantly surprised). 1 = normal.
+   */
+  private defendBias = 1;
   /** First move forced on an imagined brain, then it plays its normal policy. */
   private script: Choice | null = null;
   private scriptUntil = 0;
@@ -234,7 +239,12 @@ export class Brain implements FighterBrain {
       m.init(b, this.f);
       this.mirror = m;
     }
-    this.mirror.plan = (b.brains[e.id] as Partial<Brain>).plan ?? 'pressure';
+    const m = this.mirror;
+    m.plan = (b.brains[e.id] as Partial<Brain>).plan ?? 'pressure';
+    // Shape the imagined enemy after the real one's habits.
+    m.defendBias = clamp(0.9 + this.opp.defends * 1.6, 0.8, 2);
+    const mp = m.p as Personality;
+    mp.aggression = clamp(0.3 + this.opp.aggro * 0.6 + this.opp.trade * 0.3, 0.1, 0.95);
     return this.mirror;
   }
   private mirror: Brain | null = null;
@@ -548,9 +558,13 @@ export class Brain implements FighterBrain {
           return;
         }
       }
-    } else if (!this.imagined && b.time < this.nextLookAt && c.threat === null && c.open <= 0) {
-      // Between look-aheads, keep to the chosen footwork unless something urgent comes up.
-      if (this.heldMove !== 0 || bestIdx < 0) { f.move = this.heldMove; return; }
+    } else if (!this.imagined && b.time < this.nextLookAt) {
+      // Between look-aheads, keep to the chosen footwork; only a timed defense
+      // against a seen threat or a punish on an opening can't wait.
+      const info = bestIdx >= 0 ? this.kit.info[bestIdx] : null;
+      const defend = !!info?.defense && c.threat !== null;
+      const punish = !!info?.offensive && c.open > 0.12;
+      if (!defend && !punish && this.spacingDodge(c) <= bestVal) { f.move = this.heldMove; return; }
     }
 
     // Stepping out of reach costs no cooldown and sets up a whiff punish.
@@ -594,8 +608,13 @@ export class Brain implements FighterBrain {
     const toward = Math.sign(e.x - f.x) || f.facing;
     options.sort((x, y) => y.prior - x.prior);
     const cands: Option[] = options.slice(0, MAX_ABILITY_OPTIONS);
-    // Defensive answers always get a look when something is coming.
-    if (c.threat) for (const o of options) if (!cands.includes(o) && this.kit.info[(o.choice as { idx: number }).idx].defense) cands.push(o);
+    for (const o of options) {
+      if (cands.includes(o)) continue;
+      const info = this.kit.info[(o.choice as { idx: number }).idx];
+      // Defensive answers always get a look when something is coming, and a
+      // ready ultimate always gets considered (its instinctive value is damped).
+      if ((c.threat && info.defense) || info.ultimate) cands.push(o);
+    }
     cands.push(
       { choice: { kind: 'move', dir: toward }, prior: 0, why: '' },
       { choice: { kind: 'move', dir: -toward }, prior: 0, why: '' },
@@ -609,15 +628,22 @@ export class Brain implements FighterBrain {
     let best: Option | null = null;
     let bestScore = -Infinity;
     for (const o of cands) {
-      const sim = b.fork(seed, (copy) => {
-        const me = Brain.imagine(this, copy.fighters[f.id], o.choice, copy.time);
-        const them = Brain.imagine(enemy, copy.fighters[e.id], null, copy.time);
-        // The enemy's current action was already seen by the real me.
-        me.seenKey = this.seenKey; me.seenAt = this.seenAt;
-        return f.id === 0 ? [me, them] : [them, me];
-      });
-      for (let t = 0; t < HORIZON_TICKS && !sim.over; t++) sim.step();
-      const score = this.evaluate(sim, start) + o.prior * PRIOR_WEIGHT;
+      // Big commitments are imagined twice: one lucky future shouldn't sell them.
+      const risky = o.choice.kind === 'ability' && (this.kit.info[o.choice.idx].ultimate || this.kit.info[o.choice.idx].ab.windup >= 0.45);
+      let total = 0;
+      const samples = risky ? 2 : 1;
+      for (let k = 0; k < samples; k++) {
+        const sim = b.fork(k === 0 ? seed : (seed ^ 0x9e3779b9) >>> 0, (copy) => {
+          const me = Brain.imagine(this, copy.fighters[f.id], o.choice, copy.time);
+          const them = Brain.imagine(enemy, copy.fighters[e.id], null, copy.time);
+          // The enemy's current action was already seen by the real me.
+          me.seenKey = this.seenKey; me.seenAt = this.seenAt;
+          return f.id === 0 ? [me, them] : [them, me];
+        });
+        for (let t = 0, n = this.horizonFor(o.choice, c.dist); t < n && !sim.over; t++) sim.step();
+        total += this.evaluate(sim, start);
+      }
+      const score = total / samples + o.prior * PRIOR_WEIGHT;
       o.score = score;
       if (score > bestScore) { bestScore = score; best = o; }
     }
@@ -625,12 +651,23 @@ export class Brain implements FighterBrain {
     // Explain choices the instinctive answer would not have made.
     if (best.choice.kind === 'move') {
       const ab = heuristicIdx >= 0 ? this.kit.info[heuristicIdx] : null;
-      if (ab && ab.offensive && best.choice.dir === -toward) best.why = 'Holds back — that trade loses.';
+      if (ab && ab.offensive && best.choice.dir === -toward) best.why = `Holds back — ${ab.ab.name} would lose that trade.`;
       else if (best.choice.dir === -toward && c.threat?.melee) best.why = 'Steps out of reach.';
     } else if (best.choice.idx !== heuristicIdx && !best.why) {
-      best.why = this.kit.info[best.choice.idx].defense ? 'Sees it coming.' : 'Spots an opening.';
+      const n = this.kit.info[best.choice.idx].ab.name;
+      best.why = this.kit.info[best.choice.idx].defense ? `Sees it coming — ${n}.` : `Spots an opening for ${n}.`;
     }
     return best;
+  }
+
+  /** Ticks to imagine: long enough to see slow attacks (meteors, slow orbs) land. */
+  private horizonFor(choice: Choice, dist: number): number {
+    if (choice.kind !== 'ability') return HORIZON_TICKS;
+    const ab = this.kit.info[choice.idx].ab;
+    let t = (ab.windup + ab.active) / this.f.stats.attackSpeed + 0.35;
+    if (ab.kind === 'meteor') t += 12 / ab.projectile!.speed;
+    else if (ab.projectile) t += dist / ab.projectile.speed;
+    return Math.max(HORIZON_TICKS, Math.min(150, Math.ceil(t / DT)));
   }
 
   /** How much better the imagined future is for me than the present. */
@@ -646,7 +683,9 @@ export class Brain implements FighterBrain {
     // Who is free to act next.
     v += (lockedFor(e) - lockedFor(f)) * LOCK_VALUE;
     // Resources: energy and defensive cooldowns spent.
-    v += (f.energy - start.myEnergy - (e.energy - start.enEnergy)) * 0.0004;
+    // Energy is worth more to whoever has an ultimate to spend it on.
+    const myUlt = this.kit.info.some((a) => a.ultimate), theirUlt = this.ek.info.some((a) => a.ultimate);
+    v += (f.energy - start.myEnergy) * (myUlt ? 0.0011 : 0.0003) - (e.energy - start.enEnergy) * (theirUlt ? 0.0011 : 0.0003);
     v -= defenseSpent(f, this.kit) - defenseSpent(e, this.ek);
     // Position: nobody wants their back to the wall.
     const dist = Math.abs(e.x - f.x);
@@ -688,25 +727,25 @@ export class Brain implements FighterBrain {
           if (!t.blockable) return null;
           const g = ab.guard!;
           // Timing noise: less cunning fighters misjudge the moment.
-          const noise = (b.rng.next() - 0.5) * (1 - p.cunning) * 0.12;
+          const noise = this.defendBias > 1.2 ? 0 : (b.rng.next() - 0.5) * (1 - p.cunning) * 0.12;
           const lead = t.tti + noise - startup;
           if (lead < -0.01) return null;
           if (lead > g.parryWindow * 0.8) {
             if (lead < ab.active - 0.05 && t.danger > 0.1 && p.caution > 0.5) {
               val = t.danger * g.reduction * 0.6;
-              why = 'Shields up.';
+              why = `${ab.name} up.`;
             } else return { val: 0, why: '', wait: true };
           } else {
             val = t.danger * 1.1 + 0.05 + (g.counterPower ? 0.08 : 0) + (t.heavy ? 0.05 : 0)
               + (t.projectile && g.reflectProjectiles ? 0.06 : 0);
-            why = t.projectile && g.reflectProjectiles ? 'Bats the shot back!' : t.heavy ? 'Reads the heavy — parries!' : 'Times the parry.';
+            why = t.projectile && g.reflectProjectiles ? `Bats the shot back with ${ab.name}!` : t.heavy ? `Reads the heavy — ${ab.name}!` : `Times the ${ab.name}.`;
           }
           break;
         }
         case 'armor': {
           if (t.tti < startup) return null;
           val = t.danger * 0.55 + (c.cornered ? 0.03 : 0) + (t.heavy ? 0.02 : 0);
-          why = 'Hardens to tank it.';
+          why = `${ab.name} to tank it.`;
           break;
         }
         default: {
@@ -716,12 +755,13 @@ export class Brain implements FighterBrain {
           if (t.tti < lo) return null;
           if (t.tti > hi) return { val: 0, why: '', wait: true };
           val = t.danger * (0.75 + p.caution * 0.4) + 0.02 + (!t.blockable ? 0.03 : 0);
-          why = info.defense === 'blink' ? 'Blinks out of it.' : c.cornered ? 'Cornered — rolls through!' : 'Sidesteps the attack.';
-          if (t.heavy && !t.blockable) why = 'Can\'t block that — evades.';
+          why = info.defense === 'blink' ? `${ab.name} out of it.` : c.cornered ? `Cornered — ${ab.name} through!` : `${ab.name} past the attack.`;
+          if (t.heavy && !t.blockable) why = `Can't block that — ${ab.name}!`;
         }
       }
       // Prefer the cheaper answer when the damage is small.
       if (t.danger < 0.03) val *= 0.4;
+      val *= this.defendBias;
       return { val, why };
     }
 
@@ -730,7 +770,7 @@ export class Brain implements FighterBrain {
     if (info.defense === 'armor') {
       if (pressured && (this.plan === 'pressure' || this.plan === 'allin' || c.cornered)) {
         val = 0.03 + p.aggression * 0.02;
-        why = 'Tanks through the pressure.';
+        why = `${ab.name} — tanks through the pressure.`;
       }
     } else if (info.defense === 'evade' || info.defense === 'blink') {
       const wantsOut = this.kit.ranged || c.myHp < 0.4 || this.plan === 'recover' || this.plan === 'kite';
@@ -759,7 +799,7 @@ export class Brain implements FighterBrain {
       const gain = (fx.dmg ?? 0) + (fx.speed ?? 0) * 0.8;
       if (gain > 0) {
         val += myDps * s.duration * gain * (inFight ? 1 : 0.35);
-        why = this.plan === 'allin' ? 'Powers up for the kill!' : 'Powers up.';
+        why = this.plan === 'allin' ? `${ab.name} for the kill!` : `${ab.name}!`;
       }
       if (fx.move && fx.move > 0) val += 0.008;
     }
@@ -834,7 +874,7 @@ export class Brain implements FighterBrain {
     if (this.baitedUntil > b.time && !punishing) {
       // They burned a defense on my feint: their answer is spent.
       pHit = Math.min(0.95, pHit + 0.2);
-      why = 'Follows the feint!';
+      why = `Feint, then ${ab.name}!`;
     }
 
     // Trading into an enemy windup.
@@ -844,14 +884,14 @@ export class Brain implements FighterBrain {
       const theirRemaining = ea.windup - ea.t;
       if (eab.kind === 'guard') {
         if (!ab.unblockable) pHit *= 0.35;
-        else { pHit = Math.min(1, pHit + 0.2); why = 'Guard break!'; }
+        else { pHit = Math.min(1, pHit + 0.2); why = `${ab.name} breaks the guard!`; }
       } else if (eab.power > 0) {
         if (windup < theirRemaining - 0.03 && (ab.stagger || ab.stun) && !eab.hyperArmor) {
           val += 0.06;
-          why = 'Interrupts the windup!';
+          why = `${ab.name} stuffs the windup!`;
         } else if (ab.hyperArmor && windup < theirRemaining + 0.25) {
           val += 0.02;
-          why = why || 'Trades through it.';
+          why = why || `${ab.name} trades through it.`;
         } else if (!ab.hyperArmor && windup > theirRemaining) {
           pHit *= 0.3;
         }
@@ -861,6 +901,12 @@ export class Brain implements FighterBrain {
       if (!ab.unblockable) pHit *= 0.3;
     }
     if (e.invuln > reachTime) return null;
+
+    // Slow windups get stuffed if they can hit me first (unless I have hyper armor).
+    if (!ab.hyperArmor && !punishing && windup > 0.3) {
+      const theirs = fastestAnswer(e, this.ek, Math.max(0.5, dist - (ab.lunge ?? 0) * 0.25)) + p.reaction * 0.5;
+      if (theirs < windup && !isDisabled(e)) pHit *= info.ultimate ? 0.3 : 0.55;
+    }
 
     // Learned accuracy per ability.
     const learned = clamp(this.hitRate[info.idx] / 0.65, 0.35, 1.25);
@@ -872,7 +918,7 @@ export class Brain implements FighterBrain {
       const answer = ab.unblockable ? (def.evade ? o.evade : 0) : (def.parry ? o.guard : 0) + (def.evade ? o.evade : 0);
       const tele = clamp((windup - 0.2) * 3, 0, 1);
       pHit *= 1 - clamp(answer, 0, 0.9) * 0.6 * tele;
-      if (!def.any && ab.heavy) { val += 0.01; why = why || 'Their defenses are down!'; }
+      if (!def.any && ab.heavy) { val += 0.01; why = why || `Their defenses are down — ${ab.name}!`; }
     }
 
     val += pHit * dmg;
@@ -880,12 +926,12 @@ export class Brain implements FighterBrain {
 
     // Finishing blow.
     const phoenix = e.has.has('phoenix_feather') && !e.phoenixUsed;
-    if (dmg * pHit > c.enHp * 0.95 && !phoenix) { val += 0.08; why = 'Goes for the finisher!'; }
+    if (dmg * pHit > c.enHp * 0.95 && !phoenix) { val += 0.08; why = `${ab.name} to finish!`; }
 
     // Situational bonuses.
     if (ab.knockback && ab.knockback >= 4 && Math.abs(e.x) > ARENA_HALF_WIDTH - 2.5 && Math.sign(e.x) === Math.sign(e.x - f.x)) {
       val += 0.03 * pHit;
-      why = why || 'Drives them into the wall!';
+      why = why || `${ab.name} drives them into the wall!`;
     }
     if (c.cornered && ab.knockback && ab.knockback >= 4) { val += 0.03; why = why || 'Shoves out of the corner!'; }
     if (f.has.has('storm_crown') && f.stormCounter === 2) val += 0.02 * pHit;
@@ -912,8 +958,8 @@ export class Brain implements FighterBrain {
       const killShot = dmg * pHit > c.enHp && !phoenix;
       const desperate = c.myHp < 0.22;
       if (!(punishing || killShot || desperate || pHit > 0.8 || plan === 'allin')) val *= 0.25;
-      else why = killShot ? 'Goes for the finisher!' : punishing ? 'Ultimate on the opening!' : why;
-      if (phoenix && c.enHp < 0.2) { val *= 0.4; why = 'Saving the ultimate for after the Phoenix.'; }
+      else why = killShot ? `${ab.name} to finish!` : punishing ? `${ab.name} on the opening!` : why;
+      if (phoenix && c.enHp < 0.2) { val *= 0.4; why = `Saving ${ab.name} for after the Phoenix.`; }
     } else if (ab.cost > 0) {
       // Keep a reserve for the ultimate when close to it.
       const ult = this.kit.info.find((a) => a.ultimate);
@@ -939,7 +985,7 @@ export class Brain implements FighterBrain {
       val -= (1 - pHit) * 0.06 * (myRecovery / 0.4) * (0.5 + p.caution) * exposed * (0.6 + o.punisher * 0.8);
     }
     if (this.parriedRecently > 1 && ab.heavy && !ab.unblockable && !punishing) val *= 0.6;
-    if (punishing && !why) why = c.open > 0.5 ? 'Punishes the opening!' : 'Whiff punish!';
+    if (punishing && !why) why = c.open > 0.5 ? `Punishes with ${ab.name}!` : `Whiff punish — ${ab.name}!`;
 
     // Tiny noise so mirror matches diverge naturally.
     val *= 0.95 + b.rng.next() * 0.1;

@@ -17,7 +17,9 @@ it('new AI vs legacy AI', () => {
   const byWeapon: Record<string, [number, number]> = {};
   let wins = 0, games = 0, draws = 0, time = 0;
   for (let i = 0; i < N; i++) {
-    const fa = randomBuild(rng), fb = randomBuild(rng);
+    const fa = randomBuild(rng);
+    // MIRROR=1: identical builds on both sides, to isolate how well each AI plays a kit.
+    const fb = process.env.MIRROR ? { ...fa, gear: { ...fa.gear } } : randomBuild(rng);
     const seed = rng.int(0, 2 ** 31);
     // Same builds and seed, new AI on each side in turn.
     for (const side of [0, 1] as const) {

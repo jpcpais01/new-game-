@@ -77,7 +77,8 @@ export function reachOf(f: Fighter, ab: AbilityDef): [number, number] {
   switch (ab.kind) {
     // Only ~30% of a lunge happens before the first hit lands (more for flurries).
     case 'melee': return [0, r + (ab.lunge ?? 0) * ((ab.hits ?? 1) > 1 ? 0.6 : 0.3)];
-    case 'aoe': return [0, r + (ab.lunge ?? 0) * (ab.airborne ? 0.8 : 0.3)];
+    // AoEs land as the active phase starts: only the windup part of the lunge (25%) counts.
+    case 'aoe': return [0, r + (ab.lunge ?? 0) * 0.25];
     case 'dash': return ab.dash?.strike ? [0.6, (ab.dash.distance ?? 0) - 0.6] : [0, 0];
     case 'projectile': return [0, r];
     case 'meteor': return [0, r];
@@ -248,7 +249,9 @@ export function analyzeMatchup(f: Fighter, fk: Kit, e: Fighter, ek: Kit, caution
     } else {
       myFar = Math.max(myFar, mine);
       theirFar = Math.max(theirFar, theirs);
-      const s = (mine - theirs * w) * kiteEff;
+      // Distance is time: every extra metre is more shots before they arrive.
+      const buffer = clamp((d - ek.meleeReach) / Math.max(1, e.stats.moveSpeed), 0, 1.2);
+      const s = (mine * (1 + buffer * 0.5) - theirs * w) * kiteEff;
       if (mine > 0 && s > zoneScore) { zoneScore = s; zone = d; zoneEdge = mine * kiteEff - theirs; }
     }
   }
