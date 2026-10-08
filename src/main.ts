@@ -1,19 +1,19 @@
 import './ui/styles.css';
-import { Fog, Scene } from 'three';
+import { Scene } from 'three';
 import { registerSW } from 'virtual:pwa-register';
 import { sfx } from './audio/sfx';
 import { randomSeed } from './core/rng';
 import { BattleView } from './render/battleView';
-import { FightCamera } from './render/camera';
+import { FightCamera, type Zoom } from './render/camera';
 import { Particles } from './render/fx/particles';
 import { detectQuality, GameRenderer, settingsFor, type Quality } from './render/renderer';
-import { Arena } from './render/scene/arena';
+import { ARENA_IDS, createArena, type Arena, type ArenaId } from './render/scene/arena';
 import { Battle } from './sim/battle';
 import { DT } from './sim/constants';
 import { h, save, store } from './ui/dom';
 import { FloatingText } from './ui/floatingText';
 import { Hud } from './ui/hud';
-import { Menu, randomLoadout, type Loadout, type MenuSettings } from './ui/menu';
+import { Menu, randomLoadout, ZOOM_LABEL, ZOOM_ORDER, type Loadout, type MenuSettings } from './ui/menu';
 import { Results } from './ui/results';
 
 type State = 'menu' | 'intro' | 'battle' | 'ending' | 'results';
@@ -22,16 +22,36 @@ const canvas = document.getElementById('game') as HTMLCanvasElement;
 const ui = document.getElementById('ui')!;
 const fxLayer = document.getElementById('fx-layer')!;
 
-const settings = store<MenuSettings>('cb.settings', { quality: 'auto', sound: true, fps: false });
+const params = new URLSearchParams(location.search);
+const settings: MenuSettings = { quality: 'auto', sound: true, fps: false, arena: 'highlands', zoom: 'normal', ...store<Partial<MenuSettings>>('cb.settings', {}) };
+// URL overrides for testing/sharing: ?arena=colosseum&zoom=close
+if (ARENA_IDS.includes(params.get('arena') as ArenaId)) settings.arena = params.get('arena') as ArenaId;
+if (ZOOM_ORDER.includes(params.get('zoom') as Zoom)) settings.zoom = params.get('zoom') as Zoom;
 const resolveQuality = (q: MenuSettings['quality']): Quality => (q === 'auto' ? detectQuality() : q);
 
 const renderer = new GameRenderer(canvas, resolveQuality(settings.quality));
 const scene = new Scene();
-scene.fog = new Fog(0x3a1f45, 38, 140);
 const cam = new FightCamera(renderer.aspect);
 cam.resize(renderer.aspect);
-const q0 = settingsFor(resolveQuality(settings.quality));
-const arena = new Arena(scene, { shadows: q0.shadows, shadowMapSize: q0.shadowMapSize, crowd: q0.crowd });
+cam.zoom = settings.zoom;
+const arenaOpts = () => {
+  const q = settingsFor(resolveQuality(settings.quality));
+  return { shadows: q.shadows, shadowMapSize: q.shadowMapSize, crowd: q.crowd, detail: q.detail };
+};
+let arena: Arena = await createArena(settings.arena, scene, arenaOpts());
+renderer.setGrade(arena.grade);
+let arenaToken = 0;
+/** Swaps the arena (or rebuilds it for a new quality tier). */
+async function loadArena(id: ArenaId): Promise<void> {
+  const token = ++arenaToken;
+  const next = await createArena(id, scene, arenaOpts());
+  if (token !== arenaToken) { next.dispose(); return; }
+  arena.dispose();
+  arena = next;
+  view.arena = next;
+  renderer.setGrade(next.grade);
+  try { await renderer.renderer.compileAsync(scene, cam.camera); } catch { /* optional */ }
+}
 const fx = { add: new Particles(6144, true), smoke: new Particles(1536, false) };
 scene.add(fx.smoke.mesh, fx.add.mesh);
 const floating = new FloatingText(fxLayer);
@@ -60,7 +80,16 @@ function newBattle(seed: number): void {
   hud.setup(battle, speed);
 }
 
+function cycleZoom(): void {
+  const z = ZOOM_ORDER[(ZOOM_ORDER.indexOf(settings.zoom) + 1) % ZOOM_ORDER.length];
+  applySettings({ ...settings, zoom: z });
+  menu.settings = { ...settings };
+  if (state === 'menu') menu.render();
+  sfx.play('ui');
+}
+
 const hud = new Hud({
+  onZoom: () => cycleZoom(),
   onSpeed: (s) => { speed = s; hud.setSpeed(s); sfx.play('ui'); },
   onPause: () => togglePause(),
   onExit: () => toMenu(),
@@ -85,20 +114,19 @@ hud.show(false);
 
 function applySettings(s: MenuSettings): void {
   const prevQuality = settings.quality;
+  const prevArena = settings.arena;
   Object.assign(settings, s);
   save('cb.settings', settings);
   sfx.setMuted(!s.sound);
   fpsEl.hidden = !s.fps;
+  cam.zoom = s.zoom;
+  hud.setZoom(ZOOM_LABEL[s.zoom]);
   if (s.quality !== prevQuality) {
     const q = resolveQuality(s.quality);
     renderer.setQuality(q);
-    const qs = settingsFor(q);
-    arena.key.castShadow = qs.shadows;
-    arena.key.shadow.mapSize.set(qs.shadowMapSize, qs.shadowMapSize);
-    arena.key.shadow.map?.dispose();
-    arena.key.shadow.map = null;
     renderer.setupPasses(scene, cam.camera);
   }
+  if (s.quality !== prevQuality || s.arena !== prevArena) void loadArena(s.arena);
 }
 
 function togglePause(): void {
@@ -229,6 +257,7 @@ window.addEventListener('keydown', (e) => {
   if (e.key === ' ' ) { e.preventDefault(); togglePause(); }
   else if (e.key === '1' || e.key === '2' || e.key === '4') { speed = Number(e.key); hud.setSpeed(speed); }
   else if (e.key === 'Escape' && state !== 'menu') toMenu();
+  else if (e.key.toLowerCase() === 'z') cycleZoom();
   else if (e.key === 'Enter' && (state === 'menu' || state === 'results')) startFight(randomSeed());
   else if (e.key.toLowerCase() === 'r' && state === 'menu') { loadouts = [randomLoadout(), randomLoadout()]; menu.loadouts = loadouts; menu.render(); newBattle(randomSeed()); }
 });
@@ -241,6 +270,7 @@ document.addEventListener('visibilitychange', () => {
 });
 
 async function boot(): Promise<void> {
+  hud.setZoom(ZOOM_LABEL[settings.zoom]);
   sfx.setMuted(!settings.sound);
   fpsEl.hidden = !settings.fps;
   newBattle(randomSeed());
@@ -255,7 +285,6 @@ async function boot(): Promise<void> {
 }
 
 // URL options: ?demo starts a random duel straight away (kiosk/attract mode), ?speed=2|4.
-const params = new URLSearchParams(location.search);
 if (params.has('speed')) speed = Math.min(8, Math.max(1, Number(params.get('speed')) || 1));
 
 void boot().then(async () => {

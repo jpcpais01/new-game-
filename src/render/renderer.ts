@@ -1,9 +1,9 @@
 import {
-  ACESFilmicToneMapping, HalfFloatType, NoToneMapping, PCFShadowMap, SRGBColorSpace, Vector2, WebGLRenderer,
+  ACESFilmicToneMapping, Color, Uniform, Vector3, HalfFloatType, NoToneMapping, PCFShadowMap, SRGBColorSpace, WebGLRenderer,
   type Camera, type Scene,
 } from 'three';
 import {
-  BlendFunction, BloomEffect, Effect, ChromaticAberrationEffect, EffectComposer, EffectPass, RenderPass, SMAAEffect, ToneMappingEffect,
+  BlendFunction, BloomEffect, Effect, EffectComposer, EffectPass, RenderPass, SMAAEffect, ToneMappingEffect,
   ToneMappingMode, VignetteEffect,
 } from 'postprocessing';
 
@@ -32,6 +32,43 @@ class NanGuardEffect extends Effect {
   }
 }
 
+/**
+ * Stylised colour grade in one cheap pass: saturation, contrast, split toning
+ * (cool shadows, warm highlights) and a full-screen flash for big moments.
+ * Every input is clamped, so it can never emit NaN.
+ */
+export class GradeEffect extends Effect {
+  constructor() {
+    super('Grade', /* glsl */ `
+      uniform float uSat;
+      uniform float uContrast;
+      uniform vec3 uShadows;
+      uniform vec3 uHighlights;
+      uniform vec3 uFlash;
+      void mainImage(const in vec4 inputColor, const in vec2 uv, out vec4 outputColor) {
+        vec3 c = clamp(inputColor.rgb, 0.0, 1.0);
+        float l = dot(c, vec3(0.299, 0.587, 0.114));
+        c = mix(vec3(l), c, uSat);
+        c = clamp((c - 0.5) * uContrast + 0.5, 0.0, 1.0);
+        c += uShadows * (1.0 - smoothstep(0.0, 0.5, l)) + uHighlights * smoothstep(0.5, 1.0, l);
+        c = clamp(c + uFlash, 0.0, 1.0);
+        outputColor = vec4(c, inputColor.a);
+      }`, {
+      blendFunction: BlendFunction.SRC,
+      uniforms: new Map<string, Uniform>([
+        ['uSat', new Uniform(1.12)],
+        ['uContrast', new Uniform(1.06)],
+        ['uShadows', new Uniform(new Vector3(-0.01, 0.0, 0.03))],
+        ['uHighlights', new Uniform(new Vector3(0.03, 0.015, -0.01))],
+        ['uFlash', new Uniform(new Vector3())],
+      ]),
+    });
+  }
+}
+
+/** Per-arena grade, also used when post-processing is off (no-op then). */
+export interface GradeSettings { sat: number; contrast: number; shadows: [number, number, number]; highlights: [number, number, number] }
+
 export type Quality = 'high' | 'medium' | 'low';
 
 export interface QualitySettings {
@@ -42,15 +79,17 @@ export interface QualitySettings {
   shadowMapSize: number;
   maxPixelRatio: number;
   crowd: number;
+  /** Scenery detail 0..2 (grass, trees, ambient particles). */
+  detail: number;
 }
 
 export function settingsFor(q: Quality): QualitySettings {
   switch (q) {
     // No MSAA on any tier: multisampled half-float targets flicker black on
     // Chrome/Windows (ANGLE on Direct3D 11); SMAA in the merged pass is cheaper anyway.
-    case 'high': return { quality: q, post: true, msaa: 0, shadows: true, shadowMapSize: 2048, maxPixelRatio: 2, crowd: 700 };
-    case 'medium': return { quality: q, post: true, msaa: 0, shadows: true, shadowMapSize: 1024, maxPixelRatio: 1.5, crowd: 400 };
-    case 'low': return { quality: q, post: false, msaa: 0, shadows: false, shadowMapSize: 512, maxPixelRatio: 1, crowd: 160 };
+    case 'high': return { quality: q, post: true, msaa: 0, shadows: true, shadowMapSize: 2048, maxPixelRatio: 2, crowd: 1300, detail: 2 };
+    case 'medium': return { quality: q, post: true, msaa: 0, shadows: true, shadowMapSize: 1024, maxPixelRatio: 1.5, crowd: 900, detail: 1 };
+    case 'low': return { quality: q, post: false, msaa: 0, shadows: false, shadowMapSize: 512, maxPixelRatio: 1, crowd: 350, detail: 0 };
   }
 }
 
@@ -74,8 +113,10 @@ export class GameRenderer {
   settings: QualitySettings;
   private composer: EffectComposer | null = null;
   private composerSized = false;
-  private chroma: ChromaticAberrationEffect | null = null;
-  private chromaAmt = 0;
+  private grade: GradeEffect | null = null;
+  private gradeSettings: GradeSettings | null = null;
+  private flashColor = new Color();
+  private flashAmt = 0;
   /** Resolution multiplier from dynamic scaling (0.5 .. 1). */
   private scale = 1;
   private frameEma = 1 / 60;
@@ -129,7 +170,7 @@ export class GameRenderer {
     this.renderer.shadowMap.enabled = s.shadows;
     this.composer?.dispose();
     this.composer = null;
-    this.chroma = null;
+    this.grade = null;
     if (s.post && this.debug.post) {
       this.renderer.toneMapping = NoToneMapping;
       this.composer = new EffectComposer(this.renderer, { frameBufferType: HalfFloatType, multisampling: this.msaaSamples });
@@ -158,12 +199,11 @@ export class GameRenderer {
       radius: 0.72,
     });
     if (this.debug.bloom) effects.push(bloom);
-    if (this.settings.quality === 'high') {
-      this.chroma = new ChromaticAberrationEffect({ offset: new Vector2(0, 0), radialModulation: true, modulationOffset: 0.2 });
-      effects.push(this.chroma);
-    }
-    effects.push(new VignetteEffect({ offset: 0.32, darkness: 0.55 }));
+    effects.push(new VignetteEffect({ offset: 0.35, darkness: 0.45 }));
     effects.push(new ToneMappingEffect({ mode: ToneMappingMode.ACES_FILMIC }));
+    this.grade = new GradeEffect();
+    if (this.gradeSettings) this.setGrade(this.gradeSettings);
+    effects.push(this.grade);
     if (this.msaaSamples === 0) effects.push(new SMAAEffect());
     if (this.debug.nanGuard) effects.push(new NanGuardEffect());
     this.composer.addPass(new EffectPass(camera, ...effects));
@@ -183,9 +223,20 @@ export class GameRenderer {
     return this.composer?.inputBuffer ?? null;
   }
 
-  /** Brief chromatic split on heavy impacts. */
-  impact(amount: number): void {
-    this.chromaAmt = Math.min(1, this.chromaAmt + amount);
+  /** Brief screen flash on heavy impacts (white by default). */
+  impact(amount: number, color = 0xfff4e0): void {
+    if (amount * 0.12 >= this.flashAmt) this.flashColor.setHex(color);
+    this.flashAmt = Math.min(0.22, this.flashAmt + amount * 0.12);
+  }
+
+  setGrade(g: GradeSettings): void {
+    this.gradeSettings = g;
+    if (!this.grade) return;
+    const u = this.grade.uniforms;
+    u.get('uSat')!.value = g.sat;
+    u.get('uContrast')!.value = g.contrast;
+    (u.get('uShadows')!.value as Vector3).set(...g.shadows);
+    (u.get('uHighlights')!.value as Vector3).set(...g.highlights);
   }
 
   /**
@@ -301,10 +352,10 @@ export class GameRenderer {
 
   render(scene: Scene, camera: Camera, dt: number): void {
     this.renderer.info.reset();
-    if (this.chroma) {
-      this.chromaAmt = Math.max(0, this.chromaAmt - dt * 4);
-      const a = this.chromaAmt * 0.0022;
-      this.chroma.offset.set(a, a * 0.6);
+    this.flashAmt = Math.max(0, this.flashAmt - dt * 1.6);
+    if (this.grade) {
+      const f = this.grade.uniforms.get('uFlash')!.value as Vector3;
+      f.set(this.flashColor.r, this.flashColor.g, this.flashColor.b).multiplyScalar(this.flashAmt);
     }
     if (this.composer) this.composer.render(dt);
     else this.renderer.render(scene, camera);

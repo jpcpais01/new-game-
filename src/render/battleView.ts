@@ -53,7 +53,7 @@ export class BattleView {
     private readonly fx: FxContext & { add: Particles; smoke: Particles },
     private readonly cam: FightCamera,
     private readonly renderer: GameRenderer,
-    private readonly arena: Arena,
+    public arena: Arena,
     private readonly text: FloatingText,
   ) {
     scene.add(this.projGroup, this.pulses.group, this.lightning.group);
@@ -148,14 +148,30 @@ export class BattleView {
     const g = new Group();
     const c = STYLE_COLOR[p.style];
     switch (p.style) {
-      case 'arcane':
-        g.add(new Mesh(gearGeo.sphere(0.15), glow(0xdffcff, 5)));
+      case 'arcane': {
+        g.add(new Mesh(gearGeo.sphere(0.12), glow(0xffffff, 5)));
+        const shard = new Mesh(gearGeo.octa(0.2), glow(c, 2.4));
+        shard.scale.set(1.8, 0.7, 0.7);
+        g.add(shard);
+        const ring = new Mesh(gearGeo.torus(0.24, 0.02), glow(0xbff8ff, 3));
+        ring.rotation.y = Math.PI / 2;
+        g.add(ring);
         break;
+      }
       case 'hex': {
-        g.add(new Mesh(gearGeo.sphere(0.3), glow(0x2a0a40, 1)));
-        const r = new Mesh(gearGeo.torus(0.42, 0.04), glow(c, 3));
+        g.add(new Mesh(gearGeo.sphere(0.28), glow(0x1a0628, 1)));
+        const r = new Mesh(gearGeo.torus(0.42, 0.035), glow(c, 3));
         g.add(r);
-        g.add(new Mesh(gearGeo.sphere(0.2), glow(c, 2.5)));
+        const r2 = new Mesh(gearGeo.torus(0.34, 0.02), glow(0xff8aff, 2.5));
+        r2.rotation.x = Math.PI / 2;
+        g.add(r2);
+        for (let i = 0; i < 3; i++) {
+          const o = new Mesh(gearGeo.octa(0.07), glow(0xe0a0ff, 3));
+          const a = (i / 3) * Math.PI * 2;
+          o.position.set(Math.cos(a) * 0.5, Math.sin(a) * 0.5, 0);
+          g.add(o);
+        }
+        g.add(new Mesh(gearGeo.sphere(0.16), glow(c, 2.5)));
         break;
       }
       case 'wave': {
@@ -178,9 +194,17 @@ export class BattleView {
         }
         break;
       }
-      case 'meteor':
-        g.add(new Mesh(gearGeo.ico(0.75), sceneToon(0x4a3228, 0xff5a10, 0.6)));
+      case 'meteor': {
+        g.add(new Mesh(gearGeo.ico(0.75), sceneToon(0x3a2620, 0xff4a10, 0.35)));
+        const core = new Mesh(gearGeo.ico(0.68, 1), glow(0xff7a20, 2.6));
+        g.add(core);
+        for (let i = 0; i < 5; i++) {
+          const chunk = new Mesh(gearGeo.ico(0.22), sceneToon(0x4a3228, 0xff5a10, 0.5));
+          chunk.position.set(Math.cos(i * 1.3) * 0.7, Math.sin(i * 2.1) * 0.6, Math.sin(i * 1.3) * 0.5);
+          g.add(chunk);
+        }
         break;
+      }
     }
     return g;
   }
@@ -239,6 +263,7 @@ export class BattleView {
         const f = b.fighters[e.f];
         const ab = f.abilities[e.ability];
         if (ab.slot === 'ultimate') {
+          this.renderer.impact(0.9, CLASSES[f.classId].accent);
           this.cam.kick(0.5);
           this.arena.excite(0.5);
           sfx.play('castBig', this.pan(f.x));
@@ -262,6 +287,7 @@ export class BattleView {
           if (ab.id === 'war_cry') this.cam.shake(0.25);
         }
         if (ab.kind === 'dash' && ab.slot !== 'evade') {
+          smoke.burst({ x: f.x, y: 0.15, count: 6, jitter: 0.3, dir: [-f.facing, 0.3, 0], spread: 0.5, speed: [1, 3], life: [0.4, 0.7], size: [0.35, 0.6], color: 0xd8c8b0, sizeEnd: 1.8, drag: 2 });
           add.burst({ x: f.x, y: 1.0, count: 20, dir: [-f.facing, 0, 0], spread: 0.3, speed: [4, 9], life: [0.2, 0.4], size: [0.06, 0.12], color: 0xffffff, intensity: 2.5, stretch: 0.08 });
         }
         break;
@@ -282,6 +308,7 @@ export class BattleView {
           speed: heavy ? [6, 14] : [4, 9], life: [0.15, 0.4], size: [0.05, 0.11], color, intensity: 3, gravity: 9, drag: 2, stretch: 0.045,
         });
         add.burst({ x: e.x, y: e.y, count: 1, speed: [0, 0], life: [0.12, 0.12], size: [heavy ? 1.1 : 0.7, heavy ? 1.1 : 0.7], color, intensity: 1.2, sizeEnd: 1.4 });
+        this.pulses.spawn('star', e.x, e.y, e.blocked ? 0.55 : heavy ? 1.35 : 0.85, color, heavy ? 0.18 : 0.12, 2.2);
         if (heavy && !e.blocked) {
           this.pulses.spawn('ring', e.x, e.y, 1.6, color, 0.3, 2.5);
           smoke.burst({ x: e.x, y: 0.15, count: 6, jitter: 0.4, speed: [0.5, 2], life: [0.5, 0.9], size: [0.4, 0.7], color: 0x8a8090, sizeEnd: 2 });
@@ -302,6 +329,7 @@ export class BattleView {
       }
       case 'parry':
         this.pulses.spawn('ring', e.x, e.y, 1.4, 0xffffff, 0.3, 4);
+        this.pulses.spawn('star', e.x, e.y, 1.6, 0xbfe4ff, 0.2, 3);
         add.burst({ x: e.x, y: e.y, count: 30, speed: [6, 12], life: [0.15, 0.35], size: [0.05, 0.1], color: 0xe8f4ff, intensity: 4, drag: 3, stretch: 0.06 });
         sfx.play('parry', this.pan(e.x));
         this.text.spawn('PARRY!', e.x, e.y + 1.3, 'callout parry', 1.3, 1.1);
@@ -339,6 +367,7 @@ export class BattleView {
         break;
       }
       case 'wallSplat':
+        this.pulses.spawn('star', e.x, 1.2, 1.5, 0xffd27a, 0.2, 2.5);
         smoke.burst({ x: e.x, y: 1, count: 14, jitter: 0.5, jitterY: 0.8, speed: [1, 3], life: [0.6, 1.0], size: [0.5, 0.9], color: 0x9a90a0, sizeEnd: 2 });
         add.burst({ x: e.x, y: 1.2, count: 20, speed: [3, 8], life: [0.2, 0.5], size: [0.06, 0.12], color: 0xffc070, intensity: 3, gravity: 10, stretch: 0.04 });
         this.cam.shake(0.45);
@@ -372,8 +401,10 @@ export class BattleView {
       case 'shockwave': {
         const col = e.style === 'nova' ? 0x9fe8ff : e.style === 'meteor' ? 0xff6a1a : e.style === 'judgment' ? 0xffe08a : 0xffa040;
         this.pulses.spawn('ring', e.x, 0.06, e.radius * 1.3, col, 0.55, 3);
+        if (e.style !== 'nova') this.pulses.spawn('crack', e.x, 0, e.radius * (e.style === 'meteor' ? 1.0 : 0.75), col, 2.4);
         if (e.style === 'meteor' || e.style === 'judgment') {
           this.pulses.spawn('pillar', e.x, 0, e.radius * 0.45, col, 0.6, 2.5);
+          this.renderer.impact(1.2, col);
           add.burst({ x: e.x, y: 0.3, count: 70, jitter: 0.6, dir: [0, 1, 0], spread: 1.2, speed: [4, 12], life: [0.4, 1.0], size: [0.12, 0.3], color: col, intensity: 3, gravity: 10, drag: 1 });
           smoke.burst({ x: e.x, y: 0.4, count: 18, jitter: 1, speed: [1, 4], life: [0.8, 1.5], size: [0.8, 1.4], color: 0x5a4a50, sizeEnd: 2.2, drag: 1.5 });
           sfx.play('explosion', this.pan(e.x));
@@ -421,7 +452,8 @@ export class BattleView {
         sfx.play('ko', this.pan(f.x));
         this.cam.shake(1);
         this.cam.kick(0.8);
-        this.renderer.impact(1);
+        this.renderer.impact(1.6);
+        this.pulses.spawn('star', f.x, 1.2, 2.2, 0xfff0c0, 0.3, 3);
         this.arena.excite(1);
         this.slowmo(0.22, 1.4);
         break;
