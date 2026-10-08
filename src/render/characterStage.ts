@@ -46,6 +46,7 @@ export class CharacterStage {
   /** Short victory flourish (form picked, look randomised, character saved). */
   cheer(): void {
     this.cheerT = 1.8;
+    this.view?.aura?.pulse('cast');
   }
 
   show(v: boolean): void {
@@ -71,6 +72,8 @@ export class CharacterStage {
 
   private rebuild(c: Character): void {
     const f = createFighter(0, { ...c, gear: { ...c.gear } });
+    // Show the special's aura fully charged in the preview.
+    f.energy = 100;
     const view = withBodyDetail(Math.min(2, bodyDetail() + 1), () => new FighterView(f, 0));
     this.view?.dispose();
     this.view = view;

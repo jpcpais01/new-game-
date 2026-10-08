@@ -12,6 +12,7 @@ import { gearGeo } from './geo';
 import { lookFor, type FighterLook } from './look';
 import { buildRig, type Rig } from './rig';
 import { emitMote, weaponVfx, type WeaponVfx } from '../gear/vfx';
+import { SpecialAura } from '../gear/aura';
 
 export interface FxContext {
   add: Particles;
@@ -88,6 +89,10 @@ export class FighterView {
   readonly headWorld = new Vector3();
 
   private readonly teamRing: Mesh;
+  /** Signature aura of the special item (null without one). */
+  readonly aura: SpecialAura | null;
+  private readonly auraOrb: Object3D | null = null;
+  private readonly orbWorld = new Vector3();
 
   constructor(f: Fighter, team: 0 | 1, look: FighterLook = lookFor(f)) {
     const items = f.gearIds;
@@ -118,6 +123,11 @@ export class FighterView {
     this.phoenix = this.rig.phoenix;
     for (const [name, o] of this.rig.tags) if (name.startsWith('spin:')) this.spinners.push(o);
     this.rig.orbiters.forEach((o, i) => this.orbiters.push({ item: o.item, mesh: o.bone, phase: i * 2.1, radius: 0.78 + i * 0.08 }));
+    this.aura = SpecialAura.for(f.gear, f.skins);
+    if (this.aura) {
+      this.aura.attach(this.group);
+      this.auraOrb = this.rig.orbiters.find((o) => o.item === f.gear.special)?.bone ?? null;
+    }
 
     // Shield bubble (Aegis or any shield).
     bubbleGeo ??= new SphereGeometry(1, 24, 16);
@@ -217,6 +227,10 @@ export class FighterView {
     this.updateStatusVisuals(f, dt, frozen);
     this.updateCloth(f, dt);
     this.emitParticles(f, dt, fx);
+    if (this.aura) {
+      const orb = this.auraOrb ? this.auraOrb.getWorldPosition(this.orbWorld) : null;
+      this.aura.update(f, dt, fx.add, fx.smoke, x, y, this.headWorld, orb, this.scale);
+    }
   }
 
   private updateStatusVisuals(f: Fighter, dt: number, frozen: boolean): void {
@@ -349,5 +363,6 @@ export class FighterView {
     for (const m of this.rig.materials) m.dispose();
     for (const m of this.rig.meshes) { m.geometry.dispose(); m.skeleton.dispose(); }
     this.shieldMat.dispose();
+    this.aura?.dispose();
   }
 }
