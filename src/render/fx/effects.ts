@@ -104,9 +104,9 @@ function pulseMaterial(pillar: boolean): ShaderMaterial {
     vertexShader: /* glsl */ `varying vec2 vUv; varying float vR; void main() { vUv = uv; vR = length(position.xz); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
     fragmentShader: pillar ? /* glsl */ `
       uniform vec3 uColor; uniform float uT; varying vec2 vUv; varying float vR;
-      void main() { float a = pow(1.0 - vUv.y, 1.5) * (1.0 - uT) * (1.0 - uT) * 0.4; gl_FragColor = vec4(uColor * a, a); }` : /* glsl */ `
+      void main() { float a = pow(clamp(1.0 - vUv.y, 0.0, 1.0), 1.5) * (1.0 - uT) * (1.0 - uT) * 0.4; gl_FragColor = vec4(uColor * a, a); }` : /* glsl */ `
       uniform vec3 uColor; uniform float uT; varying vec2 vUv; varying float vR;
-      void main() { float edge = smoothstep(0.7, 0.97, vR) * (1.0 - smoothstep(0.97, 1.0, vR) * 0.6); float a = edge * (1.0 - uT) * (1.0 - uT); gl_FragColor = vec4(uColor * a, a); }`,
+      void main() { float edge = smoothstep(0.7, 0.97, vR) * (1.0 - smoothstep(0.97, 1.0, vR) * 0.6); float a = edge * max(0.0, 1.0 - uT) * max(0.0, 1.0 - uT); gl_FragColor = vec4(uColor * a, a); }`,
   });
 }
 

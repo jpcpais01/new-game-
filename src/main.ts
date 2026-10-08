@@ -152,6 +152,7 @@ let last = performance.now();
 let fpsT = 0;
 
 let cpuMs = 0;
+let debugHooks: import('./debug').DebugHooks | null = null;
 let logicMs = 0;
 
 function frame(now: number): void {
@@ -198,7 +199,9 @@ function frame(now: number): void {
   if (state !== 'menu') hud.update();
   floating.update(dt, cam.camera, window.innerWidth, window.innerHeight);
   const t1 = performance.now();
+  debugHooks?.beforeRender();
   renderer.render(scene, cam.camera, realDt);
+  debugHooks?.afterRender(realDt);
   // JS time for simulation + scene/HUD updates, and for draw submission.
   logicMs += (t1 - t0 - logicMs) * 0.1;
   cpuMs += (performance.now() - t0 - cpuMs) * 0.1;
@@ -255,7 +258,11 @@ async function boot(): Promise<void> {
 const params = new URLSearchParams(location.search);
 if (params.has('speed')) speed = Math.min(8, Math.max(1, Number(params.get('speed')) || 1));
 
-void boot().then(() => {
+void boot().then(async () => {
+  if (params.has('debug')) {
+    const { installDebug } = await import('./debug');
+    debugHooks = installDebug({ renderer, scene, getState: () => (paused ? `${state} (paused)` : state) });
+  }
   if (params.has('demo')) {
     loadouts = [randomLoadout(), randomLoadout()];
     startFight(randomSeed());

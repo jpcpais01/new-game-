@@ -3,9 +3,34 @@ import {
   type Camera, type Scene,
 } from 'three';
 import {
-  BloomEffect, ChromaticAberrationEffect, EffectComposer, EffectPass, RenderPass, SMAAEffect, ToneMappingEffect,
+  BlendFunction, BloomEffect, Effect, ChromaticAberrationEffect, EffectComposer, EffectPass, RenderPass, SMAAEffect, ToneMappingEffect,
   ToneMappingMode, VignetteEffect,
 } from 'postprocessing';
+
+/**
+ * Last line of defence against NaN/Inf pixels. Some GPU drivers (Direct3D via
+ * ANGLE on Windows) return NaN for edge cases like pow() of a tiny negative
+ * number; the bloom mip chain then smears one bad pixel across most of the
+ * screen, which shows up as whole frames going black. Where the composited
+ * colour is not finite we fall back to the plain scene colour.
+ */
+class NanGuardEffect extends Effect {
+  constructor() {
+    super('NanGuard', /* glsl */ `
+      bool badColor(vec3 c) {
+        return any(isnan(c)) || any(isinf(c)) || !(abs(c.r) < 1e4 && abs(c.g) < 1e4 && abs(c.b) < 1e4);
+      }
+      void mainImage(const in vec4 inputColor, const in vec2 uv, out vec4 outputColor) {
+        if (badColor(inputColor.rgb)) {
+          vec3 raw = texture2D(inputBuffer, uv).rgb;
+          raw = badColor(raw) ? vec3(0.0) : raw / (1.0 + raw);
+          outputColor = vec4(raw, 1.0);
+        } else {
+          outputColor = inputColor;
+        }
+      }`, { blendFunction: BlendFunction.SRC });
+  }
+}
 
 export type Quality = 'high' | 'medium' | 'low';
 
@@ -61,10 +86,16 @@ export class GameRenderer {
   private devicePixels: [number, number] | null = null;
   /** Called after the canvas size changed (camera aspect lives elsewhere). */
   onResize: (() => void) | null = null;
+  /** Debug hook: dynamic resolution changed. */
+  onScale: ((from: number, to: number) => void) | null = null;
   private clock = 0;
   private lastChange = 0;
   private lastRaise = -99;
   private raiseLockedUntil = 0;
+  /** Toggles for the ?debug panel. */
+  readonly debug = { post: true, bloom: true, dynRes: true, nanGuard: true };
+  private passScene: Scene | null = null;
+  private passCamera: Camera | null = null;
 
   constructor(canvas: HTMLCanvasElement, quality: Quality) {
     this.canvas = canvas;
@@ -97,7 +128,7 @@ export class GameRenderer {
     this.composer?.dispose();
     this.composer = null;
     this.chroma = null;
-    if (s.post) {
+    if (s.post && this.debug.post) {
       this.renderer.toneMapping = NoToneMapping;
       this.composer = new EffectComposer(this.renderer, { frameBufferType: HalfFloatType, multisampling: s.msaa });
     } else {
@@ -111,9 +142,12 @@ export class GameRenderer {
 
   /** Must be called once the scene and camera exist (and after quality changes). */
   setupPasses(scene: Scene, camera: Camera): void {
+    this.passScene = scene;
+    this.passCamera = camera;
     if (!this.composer) return;
     this.composer.removeAllPasses();
     this.composer.addPass(new RenderPass(scene, camera));
+    const effects = [] as ConstructorParameters<typeof EffectPass>[1][];
     const bloom = new BloomEffect({
       mipmapBlur: true,
       luminanceThreshold: 0.9,
@@ -121,7 +155,7 @@ export class GameRenderer {
       intensity: 1.15,
       radius: 0.72,
     });
-    const effects = [bloom] as ConstructorParameters<typeof EffectPass>[1][];
+    if (this.debug.bloom) effects.push(bloom);
     if (this.settings.quality === 'high') {
       this.chroma = new ChromaticAberrationEffect({ offset: new Vector2(0, 0), radialModulation: true, modulationOffset: 0.2 });
       effects.push(this.chroma);
@@ -129,7 +163,18 @@ export class GameRenderer {
     effects.push(new VignetteEffect({ offset: 0.32, darkness: 0.55 }));
     effects.push(new ToneMappingEffect({ mode: ToneMappingMode.ACES_FILMIC }));
     if (this.settings.msaa === 0) effects.push(new SMAAEffect());
+    if (this.debug.nanGuard) effects.push(new NanGuardEffect());
     this.composer.addPass(new EffectPass(camera, ...effects));
+  }
+
+  /** Re-applies settings after a debug toggle. */
+  rebuild(): void {
+    this.applySettings();
+    if (this.passScene && this.passCamera) this.setupPasses(this.passScene, this.passCamera);
+  }
+
+  get composerTarget(): import('three').WebGLRenderTarget | null {
+    return this.composer?.inputBuffer ?? null;
   }
 
   /** Brief chromatic split on heavy impacts. */
@@ -206,6 +251,10 @@ export class GameRenderer {
   trackFrame(dt: number): void {
     this.clock += dt;
     this.frameEma += (dt - this.frameEma) * 0.05;
+    if (!this.debug.dynRes) {
+      if (this.scale !== 1) this.setScale(1);
+      return;
+    }
     // Let things settle after a change (and after tab switches) before judging.
     if (this.clock - this.lastChange < 2) return;
     if (this.frameEma > 1 / 45) { this.slowTime += dt; this.fastTime = 0; }
@@ -229,6 +278,7 @@ export class GameRenderer {
   }
 
   private setScale(v: number): void {
+    this.onScale?.(this.scale, v);
     this.scale = v;
     this.slowTime = this.fastTime = 0;
     this.lastChange = this.clock;

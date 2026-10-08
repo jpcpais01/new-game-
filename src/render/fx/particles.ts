@@ -111,7 +111,7 @@ export class Particles {
           }
           gl_Position = projectionMatrix * mv;
           vColor = aCol.rgb;
-          vAlpha = smoothstep(0.0, 0.08, t) * (1.0 - t * t);
+          vAlpha = smoothstep(0.0, 0.08, t) * max(0.0, 1.0 - t * t);
           vUv = corner + 0.5;
         }`,
       fragmentShader: additive ? /* glsl */ `
@@ -129,7 +129,7 @@ export class Particles {
         varying vec2 vUv;
         void main() {
           float d = length(vUv - 0.5) * 2.0;
-          float a = smoothstep(1.0, 0.35, d) * vAlpha * 0.75;
+          float a = (1.0 - smoothstep(0.35, 1.0, d)) * vAlpha * 0.75;
           if (a < 0.01) discard;
           gl_FragColor = vec4(vColor, a);
         }`,

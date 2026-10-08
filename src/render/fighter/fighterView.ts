@@ -40,9 +40,12 @@ function shieldMaterial(color: number): ShaderMaterial {
       uniform vec3 uColor; uniform float uAlpha; uniform float uTime;
       varying vec3 vN; varying vec3 vV; varying vec3 vP;
       void main() {
-        float f = pow(1.0 - abs(dot(vN, vV)), 3.5);
+        // Interpolated normals aren't unit length; clamp so pow never sees a
+        // negative base (NaN on D3D, which bloom then smears across the screen).
+        float f = pow(clamp(1.0 - abs(dot(normalize(vN), normalize(vV))), 0.0, 1.0), 3.5);
         float hex = 0.5 + 0.5 * sin(vP.y * 18.0 + uTime * 3.0) * sin(vP.x * 18.0 - uTime * 2.0);
         float a = (f * 0.9 + hex * 0.035) * uAlpha;
+        a = max(a, 0.0);
         gl_FragColor = vec4(uColor * a * 1.6, a);
       }`,
   });
