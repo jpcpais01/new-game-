@@ -433,6 +433,7 @@ export class Battle {
         f.x = f.px = dest;
         f.vx = 0;
         f.invuln = Math.max(f.invuln, ab.iframes ?? 0.2);
+        if (ab.buff) for (const b of ab.buff) this.applyStatus(f, f, b);
         this.emit({ type: 'blink', f: f.id, from, to: dest });
         break;
       }
@@ -689,7 +690,7 @@ export class Battle {
     // On-hit items (only for real ability hits, not DoTs/echoes).
     if (ab.slot !== 'evade' && !blocked) {
       if (att.has.has('frost_core') && this.rng.chance(0.5)) this.applyStatus(tgt, att, { status: 'chill', duration: 2.5 });
-      if (att.has.has('ember_core')) this.applyStatus(tgt, att, { status: 'burn', duration: 2 });
+      if (att.has.has('ember_core') && this.rng.chance(0.5)) this.applyStatus(tgt, att, { status: 'burn', duration: 2 });
       if (att.has.has('storm_crown')) {
         att.stormCounter++;
         if (att.stormCounter >= 4) {
@@ -737,7 +738,7 @@ export class Battle {
     if (tgt.hp <= 0) {
       if (tgt.has.has('phoenix_feather') && !tgt.phoenixUsed) {
         tgt.phoenixUsed = true;
-        tgt.hp = Math.round(tgt.stats.maxHp * 0.25);
+        tgt.hp = Math.round(tgt.stats.maxHp * 0.15);
         tgt.invuln = 1.3;
         tgt.action = null;
         tgt.stagger = 0;
