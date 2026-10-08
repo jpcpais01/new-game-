@@ -2,7 +2,7 @@ import { ALL_ART, ART_SLOTS, slotOfArt, type ArtKey, type ItemArt, type Rarity }
 import { itemIconUrl } from '../ui/itemIcons';
 import { GEAR, GEAR_SLOTS, SLOT_NAMES, type GearDef } from '../sim/gear';
 import { ITEM_ART } from '../gear/itemArt';
-import type { GearSlot } from '../sim/types';
+import type { FormId, GearSlot } from '../sim/types';
 
 // Review page for item art: every icon in a few colourways, and (below) the 3D
 // gear models on a turntable. Open /gallery.html on any preview deploy.
@@ -44,7 +44,7 @@ if (view === '3d' || !big) {
   canvas.id = 'models';
   document.body.append(h2, canvas);
   const slot = params.get('slot') as GearSlot | null;
-  void import('./models').then((m) => m.mountModels(canvas, slot ?? undefined, Number(params.get('cols')) || undefined));
+  void import('./models').then((m) => m.mountModels(canvas, slot ?? undefined, Number(params.get('cols')) || undefined, (params.get('form') as FormId | null) ?? undefined));
 }
 
 // The real catalog first: every gear piece with its icon.

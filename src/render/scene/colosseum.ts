@@ -6,52 +6,99 @@ import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.j
 import { ARENA_HALF_WIDTH } from '../../sim/constants';
 import { customStyled, glow, sceneToon, texturedMaterial } from '../materials';
 import { composeMatrix, MeshBuilder, prng } from '../meshBuilder';
-import type { GradeSettings } from '../renderer';
+import type { AtmosphereSettings, GradeSettings } from '../renderer';
 import { Arena, type ArenaFx, type ArenaOptions } from './arena';
-import { canvasTexture, cloud, finish, G, makeLights, skyDome } from './common';
+import { canvasTexture, cloud, finish, G, godRays, lightPools, makeLights, skyDome } from './common';
 
-/** Raked sand with faded painted rings, scuffs and footprints. */
+/**
+ * Raked sand: warm base with large soft tonal patches, combed rake arcs, a
+ * faded painted duel ring and laurel, scuffed footwork zones at both corners,
+ * drag marks, footprints and darker, trampled sand towards the wall.
+ */
 function sandTexture(size: number) {
   return canvasTexture(size, (g, S, rnd) => {
     const k = S / 1024, cx = S / 2;
     const grd = g.createRadialGradient(cx, cx, 0, cx, cx, S / 2);
-    grd.addColorStop(0, '#d9bb86');
-    grd.addColorStop(1, '#c49e68');
+    grd.addColorStop(0, '#dcb985');
+    grd.addColorStop(0.62, '#d2ab74');
+    grd.addColorStop(0.9, '#b98e5c');
+    grd.addColorStop(1, '#9c7448');
     g.fillStyle = grd;
     g.fillRect(0, 0, S, S);
-    // Rake marks: concentric fine rings.
-    for (let r = 20; r < 512; r += 9) {
-      g.strokeStyle = `rgba(${rnd() < 0.5 ? '150,110,60' : '255,240,210'},${0.06 + rnd() * 0.06})`;
-      g.lineWidth = (2 + rnd() * 2) * k;
-      g.beginPath(); g.arc(cx, cx, r * k, 0, Math.PI * 2); g.stroke();
+    // Large, soft tonal patches (damp and dry sand).
+    for (let i = 0; i < 70; i++) {
+      const x = rnd() * S, y = rnd() * S, r = (40 + rnd() * 120) * k;
+      const pg = g.createRadialGradient(x, y, 0, x, y, r);
+      const dark = rnd() < 0.55;
+      pg.addColorStop(0, dark ? 'rgba(140,96,52,0.12)' : 'rgba(255,236,196,0.12)');
+      pg.addColorStop(1, 'rgba(0,0,0,0)');
+      g.fillStyle = pg;
+      g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill();
     }
-    // Painted arena rings and a laurel emblem (worn).
-    g.strokeStyle = 'rgba(170,40,40,0.4)';
-    g.lineWidth = 14 * k;
-    g.beginPath(); g.arc(cx, cx, 360 * k, 0, Math.PI * 2); g.stroke();
-    g.strokeStyle = 'rgba(255,255,255,0.45)';
-    g.lineWidth = 6 * k;
-    g.beginPath(); g.arc(cx, cx, 340 * k, 0, Math.PI * 2); g.stroke();
-    g.beginPath(); g.arc(cx, cx, 110 * k, 0, Math.PI * 2); g.stroke();
-    g.fillStyle = 'rgba(170,40,40,0.22)';
-    for (let i = 0; i < 24; i++) {
-      const a = (i / 24) * Math.PI * 2;
+    // Combed rake arcs in overlapping fans.
+    g.lineCap = 'round';
+    for (let f = 0; f < 18; f++) {
+      const ox = rnd() * S, oy = rnd() * S, r0 = (60 + rnd() * 160) * k;
+      const a0 = rnd() * Math.PI * 2, span = 0.6 + rnd() * 1.2;
+      for (let t = 0; t < 7; t++) {
+        const r = r0 + t * 6 * k;
+        g.strokeStyle = `rgba(${t % 2 ? '120,82,44,0.10' : '255,240,210,0.10'})`;
+        g.lineWidth = 2.2 * k;
+        g.beginPath(); g.arc(ox, oy, r, a0, a0 + span); g.stroke();
+      }
+    }
+    // Faded painted duel ring, centre disc and laurel.
+    g.strokeStyle = 'rgba(250,244,230,0.42)';
+    g.lineWidth = 7 * k;
+    g.beginPath(); g.arc(cx, cx, 345 * k, 0, Math.PI * 2); g.stroke();
+    g.strokeStyle = 'rgba(160,48,38,0.32)';
+    g.lineWidth = 16 * k;
+    g.beginPath(); g.arc(cx, cx, 368 * k, 0, Math.PI * 2); g.stroke();
+    g.fillStyle = 'rgba(214,170,80,0.22)';
+    g.beginPath(); g.arc(cx, cx, 95 * k, 0, Math.PI * 2); g.fill();
+    g.strokeStyle = 'rgba(250,244,230,0.32)';
+    g.lineWidth = 4 * k;
+    g.beginPath(); g.arc(cx, cx, 95 * k, 0, Math.PI * 2); g.stroke();
+    g.fillStyle = 'rgba(150,110,40,0.22)';
+    for (const sgn of [-1, 1]) for (let i = 0; i < 9; i++) {
+      const a = Math.PI / 2 + sgn * (0.35 + i * 0.27);
       g.save();
-      g.translate(cx + Math.cos(a) * 160 * k, cx + Math.sin(a) * 160 * k);
-      g.rotate(a + 0.5);
-      g.beginPath(); g.ellipse(0, 0, 16 * k, 6 * k, 0, 0, Math.PI * 2); g.fill();
+      g.translate(cx + Math.cos(a) * 70 * k, cx + Math.sin(a) * 70 * k);
+      g.rotate(a + sgn * 0.9);
+      g.beginPath(); g.ellipse(0, 0, 11 * k, 4.5 * k, 0, 0, Math.PI * 2); g.fill();
       g.restore();
     }
-    g.fillStyle = 'rgba(205,160,60,0.25)';
-    g.beginPath(); g.arc(cx, cx, 40 * k, 0, Math.PI * 2); g.fill();
-    // Scuffs, grit and footprints.
-    for (let i = 0; i < 260; i++) {
-      g.fillStyle = `rgba(120,80,40,${0.05 + rnd() * 0.08})`;
-      g.beginPath(); g.ellipse(rnd() * S, rnd() * S, (10 + rnd() * 40) * k, (4 + rnd() * 12) * k, rnd() * 3, 0, Math.PI * 2); g.fill();
+    // Scuffed footwork zones at both corners and drag marks between them.
+    for (const sx of [-1, 1]) {
+      const zx = cx + sx * 250 * k;
+      for (let i = 0; i < 90; i++) {
+        const a = rnd() * Math.PI * 2, r = Math.pow(rnd(), 0.7) * 90 * k;
+        g.fillStyle = `rgba(${rnd() < 0.6 ? '110,74,40' : '250,232,196'},${0.05 + rnd() * 0.08})`;
+        g.beginPath(); g.ellipse(zx + Math.cos(a) * r, cx + Math.sin(a) * r * 0.7, (8 + rnd() * 22) * k, (3 + rnd() * 7) * k, rnd() * 3, 0, Math.PI * 2); g.fill();
+      }
     }
-    for (let i = 0; i < 6000; i++) {
-      g.fillStyle = `rgba(${rnd() < 0.5 ? '90,60,30' : '255,245,220'},${rnd() * 0.12})`;
-      const s = (1 + rnd() * 3) * k;
+    for (let i = 0; i < 26; i++) {
+      let x = cx + (rnd() - 0.5) * 600 * k, y = cx + (rnd() - 0.5) * 300 * k;
+      const dir = rnd() * Math.PI * 2;
+      g.strokeStyle = 'rgba(105,70,38,0.10)';
+      g.lineWidth = (3 + rnd() * 5) * k;
+      g.beginPath(); g.moveTo(x, y);
+      for (let j = 0; j < 5; j++) { x += Math.cos(dir + (rnd() - 0.5) * 0.6) * 22 * k; y += Math.sin(dir + (rnd() - 0.5) * 0.6) * 22 * k; g.lineTo(x, y); }
+      g.stroke();
+    }
+    // Footprints.
+    for (let i = 0; i < 160; i++) {
+      const x = rnd() * S, y = rnd() * S, a = rnd() * Math.PI * 2;
+      g.save(); g.translate(x, y); g.rotate(a);
+      g.fillStyle = 'rgba(110,74,40,0.12)';
+      g.beginPath(); g.ellipse(-5 * k, 0, 5 * k, 2.4 * k, 0, 0, Math.PI * 2); g.fill();
+      g.beginPath(); g.ellipse(6 * k, 5 * k, 5 * k, 2.4 * k, 0, 0, Math.PI * 2); g.fill();
+      g.restore();
+    }
+    // Grit.
+    for (let i = 0; i < 9000; i++) {
+      g.fillStyle = `rgba(${rnd() < 0.5 ? '90,60,30' : '255,245,220'},${rnd() * 0.1})`;
+      const s = (1 + rnd() * 2.5) * k;
       g.fillRect(rnd() * S, rnd() * S, s, s);
     }
   }, 23);
@@ -131,6 +178,10 @@ const CROWD_VERTEX = /* glsl */ `
     float pt = aInfo.r;
     vec3 flagCol = iData.w > 1.5 ? vec3(0.75, 0.06, 0.08) : vec3(0.08, 0.2, 0.85);
     vCrowdCol = pt < 0.5 ? iCloth : pt < 1.5 ? iSkin : pt < 2.5 ? iHair : pt < 3.5 ? flagCol : iCloth * 0.3 + vec3(0.02);
+    // Soften toy colours a touch, and put the top rows in the awnings' shade.
+    vCrowdCol = mix(vec3(dot(vCrowdCol, vec3(0.3, 0.59, 0.11))), vCrowdCol, 0.8);
+    float crowdY = (modelMatrix * instanceMatrix * vec4(transformed, 1.0)).y;
+    vCrowdCol *= mix(1.0, 0.6, smoothstep(9.0, 13.5, crowdY));
   }
 `;
 
@@ -208,8 +259,12 @@ const rowH = (i: number) => 2.6 + i * 0.95;
  * arcaded upper wall with striped awnings, gates, statues and an imperial box.
  */
 export class Colosseum extends Arena {
-  readonly grade: GradeSettings = { sat: 1.1, contrast: 1.06, shadows: [-0.01, 0.0, 0.025], highlights: [0.03, 0.02, 0.0] };
+  readonly grade: GradeSettings = { sat: 1.08, contrast: 1.1, shadows: [-0.02, -0.005, 0.04], highlights: [0.04, 0.018, -0.02], bloom: 1.15, vignette: 0.55 };
+  readonly atmosphere: AtmosphereSettings = {
+    fog: 0xe9c29a, sun: 0xffc27a, sunDir: [0.75, 0.22, -0.62], density: 0.006, falloff: 0.06, baseY: 0, max: 0.6, glow: 0.6, ao: 0.5,
+  };
   private readonly crowd: Crowd | null;
+  private rays: import('three').ShaderMaterial | null = null;
   private waveT = -1;
   private nextWave = 8;
 
@@ -217,13 +272,18 @@ export class Colosseum extends Arena {
     super(scene, opts);
     const d = opts.detail;
     this.setMood({
-      shadow: [0.46, 0.46, 0.72], mid: [0.8, 0.78, 0.88], lit: [1.07, 1.02, 0.93], skyFill: [0.08, 0.1, 0.16],
-    }, 0xcfe0f2, 70, 420);
+      shadow: [0.36, 0.34, 0.62], mid: [0.78, 0.72, 0.8], lit: [1.12, 0.98, 0.82], skyFill: [0.08, 0.08, 0.15],
+      term: [0.22, 0.07, 0.0], ramp: [0.48, 0.72],
+    }, 0xe9c29a, 70, 420);
+    // Late afternoon: a low, warm sun raking across the sand from the right.
     this.key = makeLights(this.group, {
-      key: 0xfff0d6, keyPos: [9, 13, 6], sky: 0xb8d4ff, ground: 0xc8a070, rim: 0xffe0b0, rimIntensity: 1.2,
+      key: 0xffd9a6, keyIntensity: 3.3, keyPos: [13, 9.5, 5], sky: 0x9fb8ec, ground: 0xb07850, hemiIntensity: 0.9, rim: 0xff9f62, rimIntensity: 1.8,
       shadows: opts.shadows, shadowMapSize: opts.shadowMapSize,
     });
-    const sky = skyDome({ zenith: 0x2a68d0, mid: 0x78b0ee, horizon: 0xdcecff, ground: 0xcfe0f2, sunDir: new Vector3(0.5, 0.55, -0.7), sunColor: 0xfff6e0 });
+    const sky = skyDome({
+      zenith: 0x34509e, mid: 0x7f9fd6, horizon: 0xffc690, ground: 0xe9c29a, sunDir: new Vector3(0.75, 0.22, -0.62), sunColor: 0xffd8a0, sunSize: 1.6,
+      clouds: { lit: 0xffe2c4, shade: 0xb48aa8, cover: 0.58, scale: 1.3, speed: 0.8 },
+    });
     sky.material.userData.own = true;
     this.group.add(sky);
 
@@ -243,7 +303,7 @@ export class Colosseum extends Arena {
     this.group.add(floor);
     const front = new PlaneGeometry(200, 80);
     front.rotateX(-Math.PI / 2);
-    far.put(front, 0xbf9a64, 0, -0.03, 45);
+    far.put(front, 0xa57d50, 0, -0.03, 45);
     for (const s of [-1, 1]) {
       const line = new Mesh(G.plane(), glow(0xffd36b, 1.0));
       line.scale.set(0.14, 6, 1);
@@ -258,9 +318,9 @@ export class Colosseum extends Arena {
     const wallR = 17.4;
     near.add(new CylinderGeometry(wallR, wallR, 2.8, wallSeg, 1, true, ARC0, span), composeMatrix(0, 1.2, 0, 0, 0, 0, INNER), 0x8a2a2a);
     near.add(new CylinderGeometry(wallR + 0.05, wallR + 0.05, 0.5, wallSeg, 1, true, ARC0, span), composeMatrix(0, 0.05, 0, 0, 0, 0, INNER), 0x6b5a4a);
-    near.add(new CylinderGeometry(wallR + 0.22, wallR + 0.22, 0.32, wallSeg, 1, true, ARC0, span), composeMatrix(0, 2.62, 0, 0, 0, 0, INNER), 0xe8dcc6);
+    near.add(new CylinderGeometry(wallR + 0.22, wallR + 0.22, 0.32, wallSeg, 1, true, ARC0, span), composeMatrix(0, 2.62, 0, 0, 0, 0, INNER), 0xe2cca6);
     near.add(new CylinderGeometry(wallR + 0.12, wallR + 0.12, 0.14, wallSeg, 1, true, ARC0, span), composeMatrix(0, 2.38, 0, 0, 0, 0, INNER), 0xd9b04a, 0.8);
-    near.add(new RingGeometry(wallR, rowR(0), wallSeg, 1, Math.PI / 2 - (ARC1 - Math.PI), span), composeMatrix(0, 2.62, 0, -Math.PI / 2), 0xd8cbb2);
+    near.add(new RingGeometry(wallR, rowR(0), wallSeg, 1, Math.PI / 2 - (ARC1 - Math.PI), span), composeMatrix(0, 2.62, 0, -Math.PI / 2), 0xcdb48e);
     // Gold-framed panels along the wall.
     for (let i = 0; i < 28; i++) {
       const a = ARC0 + ((i + 0.5) / 28) * span;
@@ -271,10 +331,10 @@ export class Colosseum extends Arena {
     }
 
     // --- Raked stands --------------------------------------------------------------
-    const marbleA = new Color(0xeadfca), marbleB = new Color(0xd6c7ab);
+    const marbleA = new Color(0xe0caa4), marbleB = new Color(0xc9b18a);
     for (let i = 0; i < ROWS; i++) {
       const r0 = rowR(i), r1 = rowR(i + 1), h0 = i === 0 ? 2.6 : rowH(i - 1), h1 = rowH(i);
-      far.add(new CylinderGeometry(r0, r0, h1 - h0, wallSeg, 1, true, ARC0, span), composeMatrix(0, (h0 + h1) / 2, 0, 0, 0, 0, INNER), i % 2 ? 0xbfae90 : 0xb3a284);
+      far.add(new CylinderGeometry(r0, r0, h1 - h0, wallSeg, 1, true, ARC0, span), composeMatrix(0, (h0 + h1) / 2, 0, 0, 0, 0, INNER), i % 2 ? 0xa8906e : 0x9c8464);
       far.add(new RingGeometry(r0, r1, wallSeg, 1, Math.PI / 2 - (ARC1 - Math.PI), span), composeMatrix(0, h1, 0, -Math.PI / 2), i % 2 ? marbleA : marbleB);
     }
     // Stair aisles.
@@ -284,22 +344,22 @@ export class Colosseum extends Arena {
     for (const a of aisles) {
       for (let i = 0; i < ROWS; i++) {
         const r = rowR(i) + 0.62;
-        far.put(new RoundedBoxGeometry(1.0, 0.06, 1.25, 1, 0.02), 0x9a8a70, Math.sin(a) * r, rowH(i) + 0.02, Math.cos(a) * r, { ry: a });
+        far.put(new RoundedBoxGeometry(1.0, 0.06, 1.25, 1, 0.02), 0x8a7458, Math.sin(a) * r, rowH(i) + 0.02, Math.cos(a) * r, { ry: a });
       }
     }
 
     // --- Upper arcade, awnings and banners -----------------------------------------------
     const topR = rowR(ROWS) + 0.4, topY = rowH(ROWS - 1);
-    far.add(new CylinderGeometry(topR + 1.2, topR + 1.2, 10, wallSeg, 1, true, ARC0, span), composeMatrix(0, topY + 5, 0, 0, 0, 0, INNER), 0x6e5f52); // dark recess behind arches
+    far.add(new CylinderGeometry(topR + 1.2, topR + 1.2, 10, wallSeg, 1, true, ARC0, span), composeMatrix(0, topY + 5, 0, 0, 0, 0, INNER), 0x4a3a32); // dark recess behind arches
     const arches = 34;
     for (let i = 0; i <= arches; i++) {
       const a = ARC0 + (i / arches) * span;
       const x = Math.sin(a) * topR, z = Math.cos(a) * topR;
-      far.put(new RoundedBoxGeometry(1.1, 8.6, 1.4, 1, 0.1), 0xe2d3b8, x, topY + 4.3, z, { ry: a });
+      far.put(new RoundedBoxGeometry(1.1, 8.6, 1.4, 1, 0.1), 0xd9c19a, x, topY + 4.3, z, { ry: a });
       if (i < arches) {
         const am = a + span / arches / 2;
         const ax = Math.sin(am) * topR, az = Math.cos(am) * topR;
-        far.put(new TorusGeometry(1.28, 0.32, 4, 10, Math.PI), 0xe2d3b8, ax, topY + 6.4, az, { ry: am, s: [1, 1.15, 1.6] });
+        far.put(new TorusGeometry(1.28, 0.32, 4, 10, Math.PI), 0xd9c19a, ax, topY + 6.4, az, { ry: am, s: [1, 1.15, 1.6] });
         // Hanging banners every few bays.
         if (i % 4 === 1) {
           const banner = new PlaneGeometry(1.3, 4.6, 1, 6);
@@ -314,8 +374,8 @@ export class Colosseum extends Arena {
       }
     }
     for (const b of [far]) {
-      b.add(new CylinderGeometry(topR + 0.75, topR + 0.75, 1.1, wallSeg, 1, true, ARC0, span), composeMatrix(0, topY + 9.1, 0, 0, 0, 0, INNER), 0xf0e4cc);
-      b.add(new CylinderGeometry(topR + 0.75, topR + 0.75, 0.7, wallSeg, 1, true, ARC0, span), composeMatrix(0, topY + 0.35, 0, 0, 0, 0, INNER), 0xcdbd9f);
+      b.add(new CylinderGeometry(topR + 0.75, topR + 0.75, 1.1, wallSeg, 1, true, ARC0, span), composeMatrix(0, topY + 9.1, 0, 0, 0, 0, INNER), 0xe6d0a8);
+      b.add(new CylinderGeometry(topR + 0.75, topR + 0.75, 0.7, wallSeg, 1, true, ARC0, span), composeMatrix(0, topY + 0.35, 0, 0, 0, 0, INNER), 0xc0a67e);
     }
     // Velarium: striped awnings slanting in over the top rows.
     for (let i = 0; i < arches; i += 2) {
@@ -344,9 +404,9 @@ export class Colosseum extends Arena {
       const a = Math.PI - sx * 1.15;
       const x = Math.sin(a) * (wallR + 0.05), z = Math.cos(a) * (wallR + 0.05);
       for (const b of [near, lines]) {
-        b.put(new RoundedBoxGeometry(0.8, 4.4, 1.0, 1, 0.08), 0xe8dcc6, x + Math.cos(a) * 1.9, 2.2, z - Math.sin(a) * 1.9, { ry: a });
-        b.put(new RoundedBoxGeometry(0.8, 4.4, 1.0, 1, 0.08), 0xe8dcc6, x - Math.cos(a) * 1.9, 2.2, z + Math.sin(a) * 1.9, { ry: a });
-        b.put(new TorusGeometry(1.9, 0.4, 5, 12, Math.PI), 0xe8dcc6, x, 4.0, z, { ry: a, s: [1, 0.8, 1.2] });
+        b.put(new RoundedBoxGeometry(0.8, 4.4, 1.0, 1, 0.08), 0xe2cca6, x + Math.cos(a) * 1.9, 2.2, z - Math.sin(a) * 1.9, { ry: a });
+        b.put(new RoundedBoxGeometry(0.8, 4.4, 1.0, 1, 0.08), 0xe2cca6, x - Math.cos(a) * 1.9, 2.2, z + Math.sin(a) * 1.9, { ry: a });
+        b.put(new TorusGeometry(1.9, 0.4, 5, 12, Math.PI), 0xe2cca6, x, 4.0, z, { ry: a, s: [1, 0.8, 1.2] });
       }
       near.put(new PlaneGeometry(3.0, 4.6), 0x241c18, x * 0.997, 2.3, z * 0.997, { ry: a + Math.PI });
       for (let k = -3; k <= 3; k++) near.put(G.cyl(4), 0x3a3a44, x + Math.cos(a) * k * 0.42, 0, z - Math.sin(a) * k * 0.42, { s: [0.05, 3.6, 0.05], gloss: 0.6 });
@@ -376,12 +436,38 @@ export class Colosseum extends Arena {
       this.group.add(core);
     }
 
+    // Wall torches between the gates: bracket, bowl and a live flame.
+    const pools: { x: number; z: number; r: number }[] = [];
+    for (const a of [Math.PI - 0.82, Math.PI - 0.42, Math.PI + 0.42, Math.PI + 0.82]) {
+      const r = wallR - 0.25;
+      const x = Math.sin(a) * r, z = Math.cos(a) * r;
+      for (const b of [near, lines]) {
+        b.put(new RoundedBoxGeometry(0.16, 0.7, 0.5, 1, 0.03), 0x3a3030, x, 2.2, z, { ry: a });
+        b.put(new CylinderGeometry(0.34, 0.18, 0.3, 8), 0xc9a24a, Math.sin(a) * (r - 0.35), 2.7, Math.cos(a) * (r - 0.35), { gloss: 0.8 });
+      }
+      const fx = Math.sin(a) * (r - 0.35), fz = Math.cos(a) * (r - 0.35);
+      this.braziers.push(new Vector3(fx, 2.95, fz));
+      const core = new Mesh(new SphereGeometry(0.22, 8, 6), glow(0xff8a2a, 3));
+      core.position.set(fx, 2.92, fz);
+      core.scale.y = 0.7;
+      this.group.add(core);
+      pools.push({ x: Math.sin(a) * (r - 1.6), z: Math.cos(a) * (r - 1.6), r: 2.6 });
+    }
+    for (const p of this.braziers.slice(0, 2)) pools.push({ x: p.x, z: p.z, r: 3.2 });
+    this.group.add(lightPools(pools, 0xff9a48, 0.55));
+    if (d >= 1) {
+      const rays = godRays(0xffcf8f, 5, new Vector3(-4, 18, -12), rnd, -1, 0.8);
+      rays.mat.userData.own = true;
+      this.rays = rays.mat;
+      this.group.add(rays.mesh);
+    }
+
     // --- Imperial box at the back centre ----------------------------------------------
     {
       const a = Math.PI, r = rowR(3);
       const x = Math.sin(a) * r, z = Math.cos(a) * r, y = rowH(2);
       for (const b of [near, lines]) {
-        b.put(new RoundedBoxGeometry(6.4, 1.3, 3.2, 1, 0.1), 0xe8dcc6, x, y + 0.65, z + 0.6);
+        b.put(new RoundedBoxGeometry(6.4, 1.3, 3.2, 1, 0.1), 0xe2cca6, x, y + 0.65, z + 0.6);
         for (const k of [-1, 1]) b.put(G.cyl(10), 0xd9b04a, x + k * 2.9, y + 1.3, z + 1.8, { s: [0.18, 3.6, 0.18], gloss: 0.8 });
         b.put(new RoundedBoxGeometry(7.2, 0.4, 3.8, 1, 0.1), 0x6a2a8a, x, y + 5.0, z + 0.4);
         b.put(new RoundedBoxGeometry(6.0, 0.6, 0.3, 1, 0.1), 0xd9b04a, x, y + 4.6, z + 2.2, { gloss: 0.8 });
@@ -424,6 +510,7 @@ export class Colosseum extends Arena {
   }
 
   protected animate(time: number, dt: number): void {
+    if (this.rays) this.rays.uniforms.uTime.value = time;
     const c = this.crowd;
     if (!c) return;
     c.excite.value = 0.12 + this.excitement * 0.88;

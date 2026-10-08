@@ -19,6 +19,10 @@ export const STYLE = {
   /** Strength of the soft sky light that keeps shadows from going flat. */
   uSkyFill: { value: new Color(0.1, 0.12, 0.2) },
   uTime: { value: 0 },
+  /** Warm, saturated band where light turns to shadow (painterly terminator). */
+  uTermTint: { value: new Color(0.16, 0.05, 0.0) },
+  /** World height of the ground, for contact occlusion on vertical surfaces. */
+  uGroundY: { value: 0 },
   /** Outline width in normalised device units, and height/width of the canvas. */
   uOutlineWidth: { value: 0.0036 },
   uAspect: { value: 9 / 16 },
@@ -66,6 +70,8 @@ interface StyleOptions {
   /** Custom colour code run after color_fragment (may modify diffuseColor). */
   fragmentPars?: string;
   fragmentColor?: string;
+  /** Darken vertical surfaces close to the ground (contact occlusion). Not for instanced meshes. */
+  ao?: boolean;
 }
 
 /**
@@ -79,11 +85,15 @@ function stylize(m: MeshLambertMaterial, key: string, o: StyleOptions): MeshLamb
   m.onBeforeCompile = (sh) => {
     Object.assign(sh.uniforms, {
       uShadowTint: STYLE.uShadowTint, uMidTint: STYLE.uMidTint, uLitTint: STYLE.uLitTint,
-      uRamp: STYLE.uRamp, uSkyFill: STYLE.uSkyFill, uTime: STYLE.uTime,
+      uRamp: STYLE.uRamp, uSkyFill: STYLE.uSkyFill, uTime: STYLE.uTime, uTermTint: STYLE.uTermTint, uGroundY: STYLE.uGroundY,
     });
     if (o.fighter) Object.assign(sh.uniforms, o.fighter);
     let vpars = '\nattribute float gloss;\nvarying float vGloss;\nuniform float uTime;\n' + (o.vertexPars ?? '');
     let vbody = '\nvGloss = gloss;\n';
+    if (o.ao) {
+      vpars += 'varying vec2 vAo;\n';
+      vbody += 'vAo = vec2((modelMatrix * vec4(transformed, 1.0)).y, normalize(mat3(modelMatrix) * objectNormal + 1e-6).y);\n';
+    }
     if (o.wind) {
       vpars += 'attribute float wind;\n';
       vbody += `
@@ -107,8 +117,10 @@ uniform vec3 uMidTint;
 uniform vec3 uLitTint;
 uniform vec2 uRamp;
 uniform vec3 uSkyFill;
+uniform vec3 uTermTint;
+uniform float uGroundY;
 varying float vGloss;
-` + (o.fragmentPars ?? '');
+` + (o.ao ? 'varying vec2 vAo;\n' : '') + (o.fragmentPars ?? '');
     if (o.fighter) fpars += 'uniform float uFlash;\nuniform vec3 uTint;\nuniform float uTintAmt;\nuniform vec3 uRim;\n';
     let fbody = `
 {
@@ -121,6 +133,9 @@ varying float vGloss;
   vec3 vdir = vViewPosition * inversesqrt(max(dot(vViewPosition, vViewPosition), 1e-8));
   float ndv = clamp(dot(normal, vdir), 0.0, 1.0);
   vec3 col = mix(mix(base * uShadowTint, base * uMidTint, t1), base * uLitTint, t2);
+  // Painterly terminator: a warm, saturated glow where light turns into shadow.
+  float term = smoothstep(uRamp.x - 0.2, uRamp.x, ratio) * (1.0 - smoothstep(uRamp.x + 0.02, uRamp.y + 0.06, ratio));
+  col += (base + 0.15) * uTermTint * term;
   // Sky fill brightens upward-facing shadow areas a touch (reads as bounce light).
   col += base * uSkyFill * (0.5 + 0.5 * normal.y) * (1.0 - t2);
   #if NUM_DIR_LIGHTS > 0
@@ -132,6 +147,18 @@ varying float vGloss;
   // Glossy surfaces also pick up a thin bright edge.
   col += base * smoothstep(0.72, 0.9, 1.0 - ndv) * vGloss * 0.5;
 `;
+    if (o.ao) {
+      fbody += `
+  {
+    // Contact occlusion: walls, trunks and rocks darken towards the ground.
+    float aoH = smoothstep(0.0, 1.6, vAo.x - uGroundY);
+    float vert = 1.0 - smoothstep(0.55, 0.9, abs(vAo.y));
+    col *= mix(1.0, mix(0.55, 1.0, aoH), vert);
+    // Upright scenery picks up a faint sky-coloured edge (atmospheric rim).
+    col += uSkyFill * smoothstep(0.55, 0.95, 1.0 - ndv) * vert * 0.9;
+  }
+`;
+    }
     if (o.fighter) {
       fbody += `
   float fres = 1.0 - ndv;
@@ -168,7 +195,7 @@ export function envMaterial(wind = false, fog = true): MeshLambertMaterial {
   let m = envCache.get(key);
   if (!m) {
     // Windy scenery is thin (blades, banners, awnings): draw both faces.
-    m = stylize(new MeshLambertMaterial({ vertexColors: true, fog, side: wind ? DoubleSide : FrontSide }), key, { wind });
+    m = stylize(new MeshLambertMaterial({ vertexColors: true, fog, side: wind ? DoubleSide : FrontSide }), key, { wind, ao: fog });
     envCache.set(key, m);
   }
   return m;

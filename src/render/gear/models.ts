@@ -1,7 +1,9 @@
-import type { Bone, Object3D } from 'three';
+import type { Object3D } from 'three';
 import { resolveArt, type ArtKey, type ResolvedArt } from '../../gear/art';
 import { ITEM_ART } from '../../gear/itemArt';
-import type { GearId, GearSet, GearSlot } from '../../sim/types';
+import { gearOf } from '../../sim/gear';
+import type { GearId } from '../../sim/types';
+import type { RigBuildApi, RigDecorator } from '../fighter/look';
 import {
   bent, blade, box, capsule, cone, cyl, group, halfSphere, ico, lathe, lineless, mats, octa, part, rbox, slab, sphere, torus,
   type Mats,
@@ -14,7 +16,7 @@ import {
 // are modelled in the frame of the bone they sit on.
 // -----------------------------------------------------------------------------
 
-/** Attach points the rig provides. Forward is +X, up +Y, the fighter's right is +Z. */
+/** Attach points, built from the rig's sockets. Forward is +X, up +Y, the fighter's right is +Z. */
 export interface GearSockets {
   /** Right-hand weapon frame: grip at the origin, blade along +Y. */
   grip: Object3D;
@@ -30,105 +32,137 @@ export interface GearSockets {
   hips: Object3D;
   shoulderL: Object3D;
   shoulderR: Object3D;
-  shinL: Object3D;
-  shinR: Object3D;
-  /** Fighter root (orbiting relics hang here). */
-  root: Object3D;
-  /** Heavy-set body: torso and limbs are wider. */
+  legL: Leg;
+  legR: Leg;
+  /** Heavy-set body: torso proxies already scale with the body, so this only thickens trims. */
   big: boolean;
-  /** Creates a skinned bone (cloth sway, orbiting relic). */
-  bone(parent: Object3D, x: number, y: number, z: number): Bone;
-  /** Cloth bones the view sways; gear appends to it. */
-  cloth: Bone[];
+  /** Creates an extra skinned bone. */
+  bone(parent: Object3D, x: number, y: number, z: number): Object3D;
+  /** Creates a cloth bone the view sways. */
+  clothBone(parent: Object3D, x: number, y: number, z: number): Object3D;
+  /** A bone orbiting the fighter for this item. */
+  orbiter(): Object3D;
+}
+
+/**
+ * Boots are modelled against a reference leg (knee at y=0, ground at y=-0.5).
+ * Shaft parts ride the shin, sole parts ride the foot so they stay planted.
+ */
+export interface Leg {
+  shin: Object3D;
+  foot: Object3D;
 }
 
 export interface WeaponTrailPoints {
   base: [number, number, number];
   tip: [number, number, number];
-}
-
-export interface GearBuild {
-  /** Trail points of the main weapon, in grip space. */
-  main: WeaponTrailPoints;
-  /** Trail points of a second weapon in the left hand, if any. */
-  off: WeaponTrailPoints | null;
-  /** Relics that orbit the fighter. */
-  orbiters: { item: GearId; bone: Bone }[];
-  /** Phoenix feather bone (shrunk once the revive is spent). */
-  phoenix: Bone | null;
-  /** A head piece covers the hair / class headwear. */
-  coversHead: boolean;
-  /** The left hand holds something (shield arm or a second weapon). */
-  leftHandBusy: boolean;
+  /** Where the left hand grips a two-handed weapon (grip space). */
+  offGrip?: [number, number, number];
 }
 
 /** Arts held in one hand, leaving the other free. */
 const ONE_HANDED: ArtKey[] = ['sword', 'katana', 'rapier', 'dagger', 'axe', 'mace', 'torch', 'wand', 'scepter'];
-/** Defensive arts worn on, or held in, the left arm. */
-const LEFT_ARM_DEFENSE: ArtKey[] = ['tower_shield', 'kite_shield', 'buckler', 'round_shield', 'spiked_shield', 'mirror_shield', 'parrying_dagger'];
 
 export function lookOf(id: GearId): ResolvedArt {
   return resolveArt(ITEM_ART[id]);
 }
 
-/** Authors every equipped piece onto the sockets. */
-export function authorGear(s: GearSockets, gear: GearSet): GearBuild {
-  const out: GearBuild = {
-    main: { base: [0, 0.2, 0], tip: [0, 1.1, 0] }, off: null, orbiters: [], phoenix: null, coversHead: false, leftHandBusy: false,
+// Reference body the models were authored against (the Balanced form is close to it).
+const REF = { chestD: 0.2, chestW: 0.28, chestH: 0.46, hipD: 0.17, hipW: 0.236, armR: 0.072, forearm: 0.3, calfR: 0.08 };
+
+/** A group that maps the reference body onto this body's proportions. */
+function proxy(api: RigBuildApi, parent: Object3D, scale: [number, number, number], pos: [number, number, number] = [0, 0, 0]): Object3D {
+  const g = api.group(parent, pos);
+  g.scale.set(...scale);
+  g.userData.proxy = true;
+  return g;
+}
+
+/** Bones must not live under a scaled proxy: hang them on the real bone instead. */
+function unproxied(parent: Object3D, x: number, y: number, z: number): [Object3D, [number, number, number]] {
+  if (!parent.userData.proxy || !parent.parent) return [parent, [x, y, z]];
+  const sc = parent.scale, o = parent.position;
+  return [parent.parent, [o.x + x * sc.x, o.y + y * sc.y, o.z + z * sc.z]];
+}
+
+function socketsFrom(api: RigBuildApi, id: GearId): GearSockets {
+  const k = api.sockets, m = api.metrics, sh = m.form.shape;
+  const chestScale: [number, number, number] = [m.chestD / REF.chestD, sh.neckLen / REF.chestH, m.chestW / REF.chestW];
+  const arm = (fa: Object3D) => proxy(api, fa, [m.foreR / 0.064, m.forearm / REF.forearm, m.foreR / 0.064]);
+  const shoulder = (so: Object3D) => proxy(api, so, [m.armR / REF.armR, m.armR / REF.armR, m.armR / REF.armR], [0, -0.0, 0]);
+  const leg = (shin: Object3D, foot: Object3D): Leg => {
+    const r = m.calfR / REF.calfR;
+    // Reference ground (y=-0.5) lands on this body's ground at rest.
+    const lift = 0.5 - (m.shin + m.ankleH);
+    return {
+      shin: proxy(api, shin, [r, 1, r], [0, lift, 0]),
+      foot: proxy(api, foot, [m.footS, m.footS, m.footS * r], [0, -m.ankleH + 0.5 * m.footS, 0]),
+    };
   };
-  const mainLook = lookOf(gear.main);
-  const defLook = gear.defense ? lookOf(gear.defense) : null;
-  const twoHandedMain = !ONE_HANDED.includes(mainLook.art) && mainLook.art !== 'twin_daggers';
-  const defenseOnLeft = !!defLook && LEFT_ARM_DEFENSE.includes(defLook.art);
+  return {
+    grip: k.mainHand,
+    offGrip: k.offHand,
+    forearmL: arm(k.forearmL),
+    forearmR: arm(k.forearmR),
+    head: k.head,
+    headY: m.headY,
+    headR: m.headR,
+    chest: proxy(api, k.chest, chestScale),
+    hips: proxy(api, k.hips, [m.chestD * 0.95 / REF.hipD, 1, (sh.hipW + m.thighR * 0.9) / REF.hipW]),
+    shoulderL: shoulder(k.shoulderL),
+    shoulderR: shoulder(k.shoulderR),
+    legL: leg(k.shinL, k.footL),
+    legR: leg(k.shinR, k.footR),
+    big: false,
+    bone: (parent, x, y, z) => { const [p, pos] = unproxied(parent, x, y, z); return api.bone(p, pos); },
+    clothBone: (parent, x, y, z) => { const [p, pos] = unproxied(parent, x, y, z); return api.cloth(p, ...pos); },
+    orbiter: () => api.orbiter(id),
+  };
+}
 
-  // Main weapon.
-  const w = WEAPONS[mainLook.art] ?? WEAPONS.sword!;
-  out.main = w(s.grip, mats(mainLook), s);
-  if (mainLook.art === 'twin_daggers') {
-    out.off = WEAPONS.dagger!(s.offGrip, mats(mainLook), s);
-    out.leftHandBusy = true;
-  }
-  if (twoHandedMain) out.leftHandBusy = true;
-
-  // Defense.
-  if (gear.defense && defLook) {
-    const d = DEFENSE[defLook.art];
-    if (d) {
-      const r = d(s, mats(defLook));
-      if (r && !out.off) out.off = r;
+/** Rig decorator that models one gear piece (registered in fighter/gearModels.ts). */
+export function gearDecorator(id: GearId): RigDecorator {
+  const look = lookOf(id);
+  const slot = gearOf(id).slot;
+  return (api) => {
+    const s = socketsFrom(api, id);
+    const m = mats(look);
+    const grip = api.look.grip;
+    // The left hand is free for a secondary when the main weapon is one-handed and nothing is strapped to that arm.
+    const leftFree = grip === 'oneHand' && (api.look.offhand === 'none' || api.look.offhand === 'focus');
+    switch (slot) {
+      case 'main': {
+        const w = WEAPONS[look.art] ?? WEAPONS.sword!;
+        const t = w(s.grip, m, s);
+        if (look.art === 'twin_daggers') WEAPONS.dagger!(s.offGrip, m, s);
+        api.setWeapon(t.base, t.tip);
+        if ((grip === 'twoHand' || grip === 'polearm') && !ONE_HANDED.includes(look.art)) api.setOffGrip(t.offGrip ?? [0, 0.24, 0]);
+        else if (grip === 'twoHand' || grip === 'polearm') api.setOffGrip(t.offGrip ?? [0, -0.11, 0]);
+        break;
+      }
+      case 'defense':
+        DEFENSE[look.art]?.(s, m);
+        break;
+      case 'offhand':
+        OFFHAND[look.art]?.(s, m, leftFree);
+        break;
+      case 'head':
+        if (look.art === 'knight_helm' || look.art === 'hood') api.hide('hair');
+        if (look.art === 'knight_helm') api.hide('ears');
+        HEAD[look.art]?.(s, m);
+        break;
+      case 'boots': {
+        const b = BOOTS[look.art] ?? BOOTS.leather_boots!;
+        for (const leg of [s.legL, s.legR]) b(leg, m, s);
+        break;
+      }
+      case 'special': {
+        const r = SPECIAL[look.art]?.(s, m);
+        if (r?.phoenix) api.tag('phoenix', r.phoenix);
+        break;
+      }
     }
-    if (defenseOnLeft) out.leftHandBusy = true;
-  }
-
-  // Secondary: held in the free left hand, otherwise stowed on the body.
-  if (gear.offhand) {
-    const look = lookOf(gear.offhand);
-    const o = OFFHAND[look.art];
-    o?.(s, mats(look), !out.leftHandBusy);
-  }
-
-  if (gear.head) {
-    const look = lookOf(gear.head);
-    HEAD[look.art]?.(s, mats(look));
-    out.coversHead = true;
-  }
-
-  if (gear.boots) {
-    const look = lookOf(gear.boots);
-    const b = BOOTS[look.art] ?? BOOTS.leather_boots!;
-    for (const shin of [s.shinL, s.shinR]) b(shin, mats(look), s);
-  }
-
-  if (gear.special) {
-    const look = lookOf(gear.special);
-    const sp = SPECIAL[look.art];
-    if (sp) {
-      const r = sp(s, mats(look));
-      if (r?.phoenix) out.phoenix = r.phoenix;
-      if (r?.orbiter) out.orbiters.push({ item: gear.special, bone: r.orbiter });
-    }
-  }
-  return out;
+  };
 }
 
 // --- weapons ---------------------------------------------------------------------
@@ -200,8 +234,7 @@ const WEAPONS: Partial<Record<ArtKey, WeaponFn>> = {
     part(g, blade(0.42, 0.13, 0.024, 0, 0.42, 0.45), m.main, { pos: [0, 1.42, 0] });
     part(g, box(0.014, 0.3, 0.03), m.edge, { pos: [0, 1.6, 0] });
     // Tassel under the head (sways like cloth).
-    const t = s.bone(g, 0, 1.33, 0);
-    s.cloth.push(t);
+    const t = s.clothBone(g, 0, 1.33, 0);
     for (let k = 0; k < 4; k++) part(t, capsule(0.014, 0.16), m.cloth, { pos: [-0.03 + (k % 2) * 0.03, -0.1, (k - 1.5) * 0.02], rot: [0, 0, 0.4 + k * 0.08] });
     return { base: [0, 1.05, 0], tip: [0, 1.84, 0] };
   },
@@ -378,8 +411,7 @@ const DEFENSE: Partial<Record<ArtKey, DefenseFn>> = {
     }
   },
   cloak: (s, m) => {
-    const cape = s.bone(s.chest, -0.21, 0.42, 0);
-    s.cloth.push(cape);
+    const cape = s.clothBone(s.chest, -0.21, 0.42, 0);
     const k = s.big ? 1.2 : 1;
     part(cape, rbox(0.04, 1.08, 0.6 * k, 0.018), m.cloth, { pos: [-0.02, -0.54, 0] });
     part(cape, rbox(0.035, 1.02, 0.54 * k, 0.018), m.clothDark, { pos: [0.006, -0.52, 0] });
@@ -421,8 +453,7 @@ const HEAD: Partial<Record<ArtKey, HeadFn>> = {
     for (let k = 0; k < 3; k++) for (const sz of [-1, 1]) part(head, sphere(0.009, 4, 3), lineless(m.dark), { pos: [r * 1.12, y - 0.06 - k * 0.03, sz * 0.05] });
     part(head, rbox(r * 2.0, 0.035, 0.03, 0.012), m.trim, { pos: [0, y + r * 0.95, 0], rot: [0, 0, 0] });
     part(head, torus(r * 1.16, 0.018, Math.PI * 2, 4, 20), m.trim, { pos: [-0.005, y - 0.04, 0], rot: [Math.PI / 2, 0, 0] });
-    const plume = s.bone(head, -0.02, y + r * 1.1, 0);
-    s.cloth.push(plume);
+    const plume = s.clothBone(head, -0.02, y + r * 1.1, 0);
     for (let k = 0; k < 6; k++) {
       const a = -0.9 + k * 0.32;
       part(plume, capsule(0.034, 0.15 + Math.sin((k / 5) * Math.PI) * 0.06), k % 2 ? m.cloth : m.clothDark, { pos: [Math.sin(a) * 0.12 - 0.05, Math.cos(a) * 0.1 + 0.03, 0], rot: [0, 0, -a * 1.1], scale: [1, 1, 0.7] });
@@ -457,8 +488,7 @@ const HEAD: Partial<Record<ArtKey, HeadFn>> = {
     // brow, a tail falling down the back and a mantle over the shoulders.
     part(head, sphere(r * 1.17, 16, 12), m.cloth, { pos: [-0.035, y + 0.035, 0], scale: [1, 1.06, 1.04] });
     part(head, cone(r * 0.55, r * 0.6, 10), m.cloth, { pos: [r * 0.55, y + r * 0.95, 0], rot: [0, 0, -1.25], scale: [1, 1, 0.9] });
-    const tail = s.bone(head, -r * 0.95, y + r * 0.2, 0);
-    s.cloth.push(tail);
+    const tail = s.clothBone(head, -r * 0.95, y + r * 0.2, 0);
     part(tail, cone(r * 0.62, r * 1.6, 10), m.cloth, { pos: [-r * 0.35, -r * 0.55, 0], rot: [0, 0, 2.6] });
     part(s.chest, lathe('cowl', [[0.12, 0.0], [0.24, 0.04], [0.29, 0.14], [0.24, 0.2], [0.14, 0.1]], 16), m.cloth, { pos: [-0.02, 0.38, 0], scale: [0.95, 1, 1.1] });
     part(s.chest, rbox(0.03, 0.05, 0.3, 0.012), m.trim, { pos: [0.21, 0.44, 0] });
@@ -483,8 +513,7 @@ const HEAD: Partial<Record<ArtKey, HeadFn>> = {
     part(head, torus(r * 1.0, 0.035, Math.PI * 2, 6, 22), m.cloth, { pos: [0, y + 0.08, 0], rot: [Math.PI / 2, -0.15, 0], scale: [1, 1, 1.05] });
     part(head, sphere(0.045, 8, 6), m.clothDark, { pos: [-r * 1.02, y + 0.06, 0] });
     for (let k = 0; k < 2; k++) {
-      const t = s.bone(head, -r * 1.02, y + 0.06, (k - 0.5) * 0.05);
-      s.cloth.push(t);
+      const t = s.clothBone(head, -r * 1.02, y + 0.06, (k - 0.5) * 0.05);
       part(t, rbox(0.3 - k * 0.06, 0.04, 0.07, 0.015), m.cloth, { pos: [-(0.15 - k * 0.03), -0.03 - k * 0.03, 0], rot: [0, 0, -0.35 - k * 0.15] });
     }
     part(head, octa(0.03), m.gem, { pos: [r * 1.0, y + 0.1, 0], scale: [0.5, 1, 1] });
@@ -493,56 +522,62 @@ const HEAD: Partial<Record<ArtKey, HeadFn>> = {
 
 // --- boots ------------------------------------------------------------------------
 
-type BootFn = (shin: Object3D, m: Mats, s: GearSockets) => void;
+type BootFn = (leg: Leg, m: Mats, s: GearSockets) => void;
 
-function bootBase(shin: Object3D, shaft: Mats['main'], foot: Mats['main'], sole: Mats['main'], s: GearSockets): void {
+/** Places a boot part on the shin or, below the ankle, on the foot. */
+function lp(leg: Leg, g: Parameters<typeof part>[1], spec: Parameters<typeof part>[2], o: Parameters<typeof part>[3] = {}): void {
+  const y = o.pos?.[1] ?? 0;
+  part(y < -0.38 ? leg.foot : leg.shin, g, spec, o);
+}
+
+function bootBase(shin: Leg, shaft: Mats['main'], foot: Mats['main'], sole: Mats['main'], s: GearSockets): void {
   const k = s.big ? 1.18 : 1;
-  part(shin, cyl(0.1 * k, 0.092 * k, 0.24, 12), shaft, { pos: [0, -0.3, 0] });
-  part(shin, rbox(0.32, 0.12, 0.165 * k, 0.05), foot, { pos: [0.075, -0.43, 0] });
-  part(shin, rbox(0.34, 0.035, 0.175 * k, 0.015), sole, { pos: [0.075, -0.49, 0] });
+  lp(shin, cyl(0.1 * k, 0.092 * k, 0.24, 12), shaft, { pos: [0, -0.3, 0] });
+  lp(shin, rbox(0.32, 0.12, 0.165 * k, 0.05), foot, { pos: [0.075, -0.43, 0] });
+  lp(shin, rbox(0.34, 0.035, 0.175 * k, 0.015), sole, { pos: [0.075, -0.49, 0] });
 }
 
 const BOOTS: Partial<Record<ArtKey, BootFn>> = {
   leather_boots: (sh, m, s) => {
     bootBase(sh, m.main, m.main, m.wrap, s);
-    part(sh, torus(0.1, 0.03, Math.PI * 2, 5, 14), m.cloth, { pos: [0, -0.18, 0], rot: [Math.PI / 2, 0, 0] });
-    for (let k = 0; k < 3; k++) part(sh, rbox(0.012, 0.012, 0.09, 0.005), lineless({ color: 0xf1e2c4 }), { pos: [0.1, -0.26 - k * 0.05, 0], rot: [0.5 * (k % 2 ? 1 : -1), 0, 0] });
+    lp(sh, torus(0.1, 0.03, Math.PI * 2, 5, 14), m.cloth, { pos: [0, -0.18, 0], rot: [Math.PI / 2, 0, 0] });
+    for (let k = 0; k < 3; k++) lp(sh, rbox(0.012, 0.012, 0.09, 0.005), lineless({ color: 0xf1e2c4 }), { pos: [0.1, -0.26 - k * 0.05, 0], rot: [0.5 * (k % 2 ? 1 : -1), 0, 0] });
   },
   winged_boots: (sh, m, s) => {
     bootBase(sh, m.main, m.main, m.dark, s);
-    part(sh, torus(0.1, 0.02, Math.PI * 2, 4, 14), m.trim, { pos: [0, -0.19, 0], rot: [Math.PI / 2, 0, 0] });
+    lp(sh, torus(0.1, 0.02, Math.PI * 2, 4, 14), m.trim, { pos: [0, -0.19, 0], rot: [Math.PI / 2, 0, 0] });
     for (const sz of [-1, 1]) {
-      const wing = group(sh, [-0.05, -0.28, sz * 0.1], [sz * -0.35, 0, 0.75]);
+      const wing = group(sh.shin, [-0.05, -0.28, sz * 0.1], [sz * -0.35, 0, 0.75]);
       for (let k = 0; k < 3; k++) part(wing, rbox(0.03, 0.17 - k * 0.035, 0.012, 0.006), m.glow, { pos: [-k * 0.035, 0.06, 0], rot: [0, 0, 0.3 * k] });
     }
   },
   plate_greaves: (sh, m, s) => {
     bootBase(sh, m.main, m.main, m.dark, s);
-    part(sh, cyl(0.098, 0.088, 0.3, 12), m.main, { pos: [0.01, -0.13, 0], scale: [1.05, 1, 1] });
-    part(sh, sphere(0.1, 12, 8), m.main, { pos: [0.05, 0.0, 0], scale: [0.85, 1, 1] });
-    part(sh, octa(0.03), m.gem, { pos: [0.13, 0.0, 0] });
-    for (const y of [-0.04, -0.28]) part(sh, torus(0.097, 0.014, Math.PI * 2, 4, 14), m.trim, { pos: [0, y, 0], rot: [Math.PI / 2, 0, 0] });
-    for (let k = 0; k < 3; k++) part(sh, rbox(0.07, 0.04, 0.17, 0.015), m.main, { pos: [0.1 + k * 0.06, -0.39 + k * 0.012, 0] });
+    lp(sh, cyl(0.098, 0.088, 0.3, 12), m.main, { pos: [0.01, -0.13, 0], scale: [1.05, 1, 1] });
+    lp(sh, sphere(0.1, 12, 8), m.main, { pos: [0.05, 0.0, 0], scale: [0.85, 1, 1] });
+    lp(sh, octa(0.03), m.gem, { pos: [0.13, 0.0, 0] });
+    for (const y of [-0.04, -0.28]) lp(sh, torus(0.097, 0.014, Math.PI * 2, 4, 14), m.trim, { pos: [0, y, 0], rot: [Math.PI / 2, 0, 0] });
+    for (let k = 0; k < 3; k++) lp(sh, rbox(0.07, 0.04, 0.17, 0.015), m.main, { pos: [0.1 + k * 0.06, -0.39 + k * 0.012, 0] });
   },
   spiked_boots: (sh, m, s) => {
     bootBase(sh, m.main, m.main, m.dark, s);
-    for (let k = 0; k < 3; k++) part(sh, cone(0.025, 0.1, 4), m.steel, { pos: [0.1, -0.06 - k * 0.09, 0], rot: [0, 0, -1.4] });
-    part(sh, cone(0.03, 0.1, 4), m.steel, { pos: [0.27, -0.44, 0], rot: [0, 0, -1.57] });
-    part(sh, torus(0.1, 0.016, Math.PI * 2, 4, 14), m.glow, { pos: [0, -0.2, 0], rot: [Math.PI / 2, 0, 0] });
+    for (let k = 0; k < 3; k++) lp(sh, cone(0.025, 0.1, 4), m.steel, { pos: [0.1, -0.06 - k * 0.09, 0], rot: [0, 0, -1.4] });
+    lp(sh, cone(0.03, 0.1, 4), m.steel, { pos: [0.27, -0.44, 0], rot: [0, 0, -1.57] });
+    lp(sh, torus(0.1, 0.016, Math.PI * 2, 4, 14), m.glow, { pos: [0, -0.2, 0], rot: [Math.PI / 2, 0, 0] });
   },
   cloud_boots: (sh, m, s) => {
     bootBase(sh, m.cloth, m.cloth, m.trim, s);
-    part(sh, torus(0.1, 0.025, Math.PI * 2, 4, 14), m.trim, { pos: [0, -0.19, 0], rot: [Math.PI / 2, 0, 0] });
-    for (let k = 0; k < 4; k++) part(sh, sphere(0.06 - (k % 2) * 0.012, 8, 6), lineless({ color: 0xf4fbff, glow: 1.15 }), { pos: [-0.04 + k * 0.08, -0.52, (k % 2 ? 0.04 : -0.04)] });
+    lp(sh, torus(0.1, 0.025, Math.PI * 2, 4, 14), m.trim, { pos: [0, -0.19, 0], rot: [Math.PI / 2, 0, 0] });
+    for (let k = 0; k < 4; k++) lp(sh, sphere(0.06 - (k % 2) * 0.012, 8, 6), lineless({ color: 0xf4fbff, glow: 1.15 }), { pos: [-0.04 + k * 0.08, -0.52, (k % 2 ? 0.04 : -0.04)] });
   },
 };
 
 // --- specials ----------------------------------------------------------------------
 
-type SpecialFn = (s: GearSockets, m: Mats) => { orbiter?: Bone; phoenix?: Bone } | void;
+type SpecialFn = (s: GearSockets, m: Mats) => { orbiter?: Object3D; phoenix?: Object3D } | void;
 
-function orbiter(s: GearSockets): Bone {
-  return s.bone(s.root, 0, 1.5, 0);
+function orbiter(s: GearSockets): Object3D {
+  return s.orbiter();
 }
 
 const SPECIAL: Partial<Record<ArtKey, SpecialFn>> = {
@@ -606,9 +641,3 @@ const SPECIAL: Partial<Record<ArtKey, SpecialFn>> = {
     return { orbiter: ob };
   },
 };
-
-/** Which slot an equipped id is in (for callers that only have ids). */
-export function slotOf(gear: GearSet, id: GearId): GearSlot | null {
-  for (const k of Object.keys(gear) as GearSlot[]) if (gear[k] === id) return k;
-  return null;
-}

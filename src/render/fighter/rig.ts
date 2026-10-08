@@ -1,167 +1,50 @@
 import {
-  Bone, BoxGeometry, BufferGeometry, CapsuleGeometry, ConeGeometry, CylinderGeometry, ExtrudeGeometry, Group,
-  IcosahedronGeometry, LatheGeometry, Mesh, MeshBasicMaterial, Object3D, OctahedronGeometry, Shape, Skeleton,
-  SkinnedMesh, SphereGeometry, TorusGeometry, Vector2, type Material,
+  Bone, BufferAttribute, BufferGeometry, Color, Group, Matrix3, Mesh, MeshBasicMaterial, Object3D, Skeleton,
+  SkinnedMesh, Vector3, type Material,
 } from 'three';
-import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
-import type { GearId, GearSet } from '../../sim/types';
-import { authorGear } from '../gear/models';
-import type { Archetype } from './archetype';
+import { smoothstep } from '../../core/math';
 import {
   createFighterUniforms, fighterMaterial, glowVertexMaterial, outlineMaterial, type FighterUniforms,
 } from '../materials';
-import { MeshBuilder, type PartSpec } from '../meshBuilder';
-import { J, JOINT_COUNT } from './poses';
+import type { PartSpec } from '../meshBuilder';
+import { buildBody } from './body';
+import { bodyForm } from './forms';
+import { gearGeo } from './geo';
+import { buildFace, buildHair } from './head';
+import type { BodyMetrics, FighterLook, PartOpts, RigBuildApi, Sockets } from './look';
+import { J, JOINT_COUNT, JOINT_PARENT } from './poses';
 
-// -----------------------------------------------------------------------------
-// Cached authoring geometry
-// -----------------------------------------------------------------------------
+export { gearGeo };
 
-const geoCache = new Map<string, BufferGeometry>();
-function geo<T extends BufferGeometry>(key: string, make: () => T): T {
-  let g = geoCache.get(key);
-  if (!g) { g = make(); geoCache.set(key, g); }
-  return g as T;
+/** PartSpec plus rig-only options. */
+export interface RigPartSpec extends PartSpec {
+  /** Blend skin weights across joints so the part bends smoothly (body flesh, cloth sleeves). */
+  smooth?: boolean;
+  /** Per-vertex colour from the vertex position in the part's own geometry space. */
+  paint?: (p: Vector3) => number;
 }
-const capsule = (r: number, len: number) => geo(`cap${r}:${len}`, () => new CapsuleGeometry(r, len, 4, 12));
-const sphere = (r: number, w = 16, h = 12) => geo(`sph${r}:${w}:${h}`, () => new SphereGeometry(r, w, h));
-const halfSphere = (r: number) => geo(`hsph${r}`, () => new SphereGeometry(r, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2));
-const box = (x: number, y: number, z: number) => geo(`box${x}:${y}:${z}`, () => new BoxGeometry(x, y, z));
-const rbox = (x: number, y: number, z: number, r = 0.02) => geo(`rbox${x}:${y}:${z}:${r}`, () => new RoundedBoxGeometry(x, y, z, 2, Math.min(r, x / 2.01, y / 2.01, z / 2.01)));
-const cyl = (rt: number, rb: number, h: number, s = 14, open = false) =>
-  geo(`cyl${rt}:${rb}:${h}:${s}:${open}`, () => new CylinderGeometry(rt, rb, h, s, 1, open));
-const cone = (r: number, h: number, s = 12) => geo(`cone${r}:${h}:${s}`, () => new ConeGeometry(r, h, s));
-const torus = (r: number, t: number, arc = Math.PI * 2, rs = 8, ts = 22) => geo(`tor${r}:${t}:${arc}:${rs}:${ts}`, () => new TorusGeometry(r, t, rs, ts, arc));
-const ico = (r: number, d = 0) => geo(`ico${r}:${d}`, () => new IcosahedronGeometry(r, d));
-const octa = (r: number) => geo(`oct${r}`, () => new OctahedronGeometry(r, 0));
-
-/** Revolved profile: points are [radius, y]. */
-function lathe(key: string, pts: [number, number][], seg = 18): LatheGeometry {
-  return geo(`lathe${key}`, () => new LatheGeometry(pts.map(([r, y]) => new Vector2(r, y)), seg));
-}
-
-/** Tapered limb segment hanging down from its joint (length along -Y). */
-const limb = (r0: number, r1: number, len: number) => geo(`limb${r0}:${r1}:${len}`, () => {
-  const g = new CylinderGeometry(r1, r0, len, 14, 1, false);
-  g.translate(0, -len / 2, 0);
-  return g;
-});
-
-/** Blade along +Y, broad side in X, optionally curved towards +X. */
-function blade(len: number, width: number, thick: number, curve = 0, tip = 0.18): BufferGeometry {
-  return geo(`blade${len}:${width}:${thick}:${curve}:${tip}`, () => {
-    const s = new Shape();
-    const tipLen = len * tip;
-    s.moveTo(-width / 2, 0);
-    s.lineTo(width / 2, 0);
-    s.lineTo(width / 2, len - tipLen);
-    s.lineTo(width * 0.1, len);
-    s.lineTo(-width / 2, len - tipLen * 0.4);
-    s.lineTo(-width / 2, 0);
-    const g = new ExtrudeGeometry(s, { depth: thick, bevelEnabled: true, bevelThickness: thick * 0.4, bevelSize: Math.min(width * 0.18, 0.012), bevelSegments: 1, steps: 1, curveSegments: 1 });
-    g.translate(0, 0, -thick / 2);
-    if (curve) {
-      // Subdivide-free bend: offset x by a quadratic of height.
-      const p = g.getAttribute('position');
-      for (let i = 0; i < p.count; i++) {
-        const y = p.getY(i) / len;
-        p.setX(i, p.getX(i) + curve * y * y);
-      }
-      g.computeVertexNormals();
-    }
-    return g;
-  });
-}
-
-/** Heater shield outline extruded with a bevel. Face points -Z. */
-const heater = () => geo('heater', () => {
-  const s = new Shape();
-  s.moveTo(-0.3, 0.36);
-  s.lineTo(0.3, 0.36);
-  s.quadraticCurveTo(0.32, -0.08, 0, -0.44);
-  s.quadraticCurveTo(-0.32, -0.08, -0.3, 0.36);
-  const g = new ExtrudeGeometry(s, { depth: 0.05, bevelEnabled: true, bevelThickness: 0.025, bevelSize: 0.025, bevelSegments: 2, curveSegments: 8 });
-  g.rotateY(Math.PI);
-  return g;
-});
-const heaterInner = () => geo('heaterIn', () => {
-  const s = new Shape();
-  s.moveTo(-0.22, 0.28);
-  s.lineTo(0.22, 0.28);
-  s.quadraticCurveTo(0.24, -0.06, 0, -0.33);
-  s.quadraticCurveTo(-0.24, -0.06, -0.22, 0.28);
-  const g = new ExtrudeGeometry(s, { depth: 0.02, bevelEnabled: false, curveSegments: 8 });
-  g.rotateY(Math.PI);
-  return g;
-});
-
-/** Flat star (sun emblem / charms), facing +Z, extruded thinly. */
-const star = (points: number, r0: number, r1: number, depth = 0.02) => geo(`star${points}:${r0}:${r1}:${depth}`, () => {
-  const s = new Shape();
-  for (let i = 0; i <= points * 2; i++) {
-    const a = (i / (points * 2)) * Math.PI * 2 + Math.PI / 2;
-    const r = i % 2 === 0 ? r1 : r0;
-    if (i === 0) s.moveTo(Math.cos(a) * r, Math.sin(a) * r); else s.lineTo(Math.cos(a) * r, Math.sin(a) * r);
-  }
-  return new ExtrudeGeometry(s, { depth, bevelEnabled: false });
-});
-
-// -----------------------------------------------------------------------------
-// Authoring helpers
-// -----------------------------------------------------------------------------
-
-const AUTHOR_MAT = new MeshBasicMaterial();
-
-type Spec = PartSpec | number;
-interface PartOpts {
-  pos?: [number, number, number];
-  rot?: [number, number, number];
-  scale?: [number, number, number] | number;
-}
-
-function part(parent: Object3D, g: BufferGeometry, spec: Spec, o: PartOpts = {}): Mesh {
-  const mesh = new Mesh(g, AUTHOR_MAT);
-  mesh.userData.spec = typeof spec === 'number' ? { color: spec } : spec;
-  if (o.pos) mesh.position.set(...o.pos);
-  if (o.rot) mesh.rotation.set(...o.rot);
-  if (o.scale !== undefined) {
-    if (typeof o.scale === 'number') mesh.scale.setScalar(o.scale);
-    else mesh.scale.set(...o.scale);
-  }
-  parent.add(mesh);
-  return mesh;
-}
-
-function group(parent: Object3D, pos: [number, number, number] = [0, 0, 0], rot: [number, number, number] = [0, 0, 0]): Group {
-  const g = new Group();
-  g.position.set(...pos);
-  g.rotation.set(...rot);
-  parent.add(g);
-  return g;
-}
-
-const lineless = (color: number, extra: Partial<PartSpec> = {}): PartSpec => ({ color, outline: false, ...extra });
-const metal = (color: number, gloss = 0.8): PartSpec => ({ color, gloss });
-const glowS = (color: number, glow = 2.2): PartSpec => ({ color, glow });
-
-// -----------------------------------------------------------------------------
-// Rig
-// -----------------------------------------------------------------------------
 
 export interface Rig {
   root: Group;
-  /** Child of root that holds the body; used for KO falls and scale. */
+  /** Child of root that holds the body; carries the form scale. */
   body: Group;
   joints: Bone[];
+  sockets: Sockets;
+  metrics: BodyMetrics;
+  look: FighterLook;
   weaponBase: Object3D;
   weaponTip: Object3D;
   headTop: Object3D;
+  /** Second-hand grip on two-handed weapons (child of the main-hand socket), if any. */
+  offGrip: Object3D | null;
   /** Swaying cloth bones (cape, scarf, hair) animated by the view. */
   cloth: Bone[];
   /** Bones of item relics that orbit the fighter. */
-  orbiters: { item: GearId; bone: Bone }[];
+  orbiters: { item: string; bone: Bone }[];
+  /** Named bones registered by decorators. */
+  tags: Map<string, Object3D>;
   /** Bone of the phoenix feather (collapsed once the revive is spent). */
-  phoenix: Bone | null;
+  phoenix: Object3D | null;
   uniforms: FighterUniforms;
   materials: Material[];
   /** Material of the enchant-tinted glow (weapon edge). */
@@ -169,464 +52,356 @@ export interface Rig {
   meshes: SkinnedMesh[];
 }
 
-interface Palette {
-  skin: number;
-  main: number;
-  trim: number;
-  dark: number;
-  boots: number;
-  pants: number;
-  hair: number;
-  cloth: number;
-}
+const AUTHOR_MAT = new MeshBasicMaterial();
 
-const PALETTES: Record<Archetype, Palette> = {
-  vanguard: { skin: 0xf2c4a0, main: 0xc4cee2, trim: 0xf3c24f, dark: 0x1e2a5c, boots: 0x3b4466, pants: 0x2b3a7a, hair: 0x8a5a2b, cloth: 0x2f5be0 },
-  ronin: { skin: 0xf0c49c, main: 0xf2ecdf, trim: 0xd6283c, dark: 0x1b1a26, boots: 0x2b2633, pants: 0x2c2d4c, hair: 0x15121c, cloth: 0xd6283c },
-  arcanist: { skin: 0xe8c4b2, main: 0x6c3ad6, trim: 0x6ff3ff, dark: 0x22184f, boots: 0x2e2360, pants: 0x2e2360, hair: 0xe9ecff, cloth: 0x3d2596 },
-  brute: { skin: 0xc98a5c, main: 0x6b4428, trim: 0xff8a2a, dark: 0x3a2618, boots: 0x3d2a1e, pants: 0x4c3322, hair: 0xd8642a, cloth: 0x8a3a22 },
-};
-
-interface Ctx {
-  pal: Palette;
-  bones: Bone[];
-}
-
-function bone(ctx: Ctx, parent: Object3D, x: number, y: number, z: number): Bone {
-  const b = new Bone();
-  b.position.set(x, y, z);
-  parent.add(b);
-  ctx.bones.push(b);
-  return b;
-}
-
-/** Stylised face on the +X side of a head of radius r centred at cy. */
-function face(head: Object3D, cy: number, r: number, o: { eye?: number; glowEyes?: number; brows?: number; scar?: boolean; mouth?: boolean } = {}): void {
-  const ex = r * 0.86, ey = cy + r * 0.12, ez = r * 0.36;
-  for (const s of [-1, 1]) {
-    if (o.glowEyes) {
-      part(head, sphere(0.034, 10, 8), glowS(o.glowEyes, 2.6), { pos: [ex + 0.01, ey, s * ez], scale: [0.5, 1.15, 0.9] });
-    } else {
-      part(head, sphere(0.046, 12, 10), lineless(0xfbf8f2), { pos: [ex, ey, s * ez], scale: [0.45, 1.2, 0.95] });
-      part(head, sphere(0.027, 10, 8), lineless(o.eye ?? 0x1c1a2a), { pos: [ex + 0.017, ey - 0.004, s * ez * 0.94], scale: [0.5, 1.25, 0.9] });
-      part(head, sphere(0.008, 6, 4), lineless(0xffffff, { glow: 1.2 }), { pos: [ex + 0.03, ey + 0.016, s * ez * 0.9] });
-    }
-    if (o.brows !== undefined) {
-      part(head, rbox(0.022, 0.026, 0.085, 0.01), lineless(o.brows), { pos: [ex - 0.005, ey + 0.068, s * ez], rot: [-s * 0.38, 0, 0] });
-    }
-  }
-  // Nose and mouth.
-  if (o.mouth !== false) part(head, rbox(0.012, 0.012, 0.07, 0.005), lineless(0x6a2f2a), { pos: [r * 0.93, cy - r * 0.42, 0] });
-  if (o.scar) part(head, rbox(0.01, 0.11, 0.018, 0.005), lineless(0xb5645a), { pos: [ex + 0.012, ey - 0.01, -ez], rot: [0.35, 0, 0] });
+function makeMetrics(look: FighterLook): BodyMetrics {
+  const form = bodyForm(look.form);
+  const s = form.shape;
+  const ankleH = 0.085 * s.footS;
+  return {
+    form,
+    headR: s.headR,
+    headY: s.headR * 0.95,
+    shoulderW: s.shoulderW,
+    chestW: s.chestW,
+    chestD: s.chestD,
+    armR: s.armR,
+    foreR: s.foreR,
+    thighR: s.thighR,
+    calfR: s.calfR,
+    handS: s.handS,
+    footS: s.footS,
+    upperArm: s.upperArm,
+    forearm: s.forearm,
+    thigh: s.thigh,
+    shin: s.shin,
+    ankleH,
+    hipH: ankleH + s.thigh + s.shin + 0.06,
+  };
 }
 
 /**
- * Builds a stylised, chunky humanoid out of primitives, then bakes every part
- * into three skinned meshes (lit body, coloured outline, emissive glow) that
- * share one skeleton: a fully geared fighter costs ~4 draw calls. Forward is
- * +X, up is +Y, the fighter's right side is +Z.
+ * Builds a fighter: an anatomical body for the look's form, face and hair, and
+ * every decorator (gear, costume pieces), then bakes all parts into three
+ * skinned meshes (lit body, coloured outline, emissive glow) that share one
+ * skeleton, so a fully geared fighter costs ~4 draw calls. Body flesh gets
+ * blended weights across joints so elbows, knees and the spine bend smoothly.
+ * Forward is +X, up is +Y, the fighter's right side is +Z.
  */
-const ACCENT: Record<Archetype, number> = { vanguard: 0xffd36b, ronin: 0xf5f0e6, arcanist: 0x6ff3ff, brute: 0x5a3a22 };
-
-export function buildRig(classId: Archetype, items: GearId[] = [], big = classId === 'brute', gear?: GearSet): Rig {
-  // With a gear set, weapons, shields, hats and relics come from the gear
-  // models (src/render/gear); the archetype only supplies the outfit.
-  const gearHead = !!gear?.head;
-  const u = createFighterUniforms(ACCENT[classId]);
-  const pal = PALETTES[classId];
-  const ctx: Ctx = { pal, bones: [] };
+export function buildRig(look: FighterLook): Rig {
+  const u = createFighterUniforms(look.accent);
+  const metrics = makeMetrics(look);
+  const s = metrics.form.shape;
   const root = new Group();
   const body = new Group();
+  body.scale.setScalar(s.scale);
   root.add(body);
-  if (big) body.scale.setScalar(1.12);
+
+  const bones: Bone[] = [];
+  const mk = (parent: Object3D, x: number, y: number, z: number) => {
+    const b = new Bone();
+    b.position.set(x, y, z);
+    parent.add(b);
+    return b;
+  };
 
   // Skeleton (indices match the J table).
   const joints: Bone[] = new Array(JOINT_COUNT);
-  const reg = (i: number, b: Bone) => { joints[i] = b; return b; };
-  const hips = reg(J.HIPS, bone(ctx, body, 0, 0.98, 0));
-  const spine = reg(J.SPINE, bone(ctx, hips, 0, 0.1, 0));
-  const chest = reg(J.CHEST, bone(ctx, spine, 0, 0.24, 0));
-  const head = reg(J.HEAD, bone(ctx, chest, 0.02, 0.44, 0));
-  const shoulderW = big ? 0.37 : 0.3;
-  const uarmL = reg(J.UARM_L, bone(ctx, chest, 0, 0.34, -shoulderW));
-  const farmL = reg(J.FARM_L, bone(ctx, uarmL, 0, -0.31, 0));
-  const uarmR = reg(J.UARM_R, bone(ctx, chest, 0, 0.34, shoulderW));
-  const farmR = reg(J.FARM_R, bone(ctx, uarmR, 0, -0.31, 0));
-  const thighL = reg(J.THIGH_L, bone(ctx, hips, 0, -0.06, -0.13));
-  const shinL = reg(J.SHIN_L, bone(ctx, thighL, 0, -0.42, 0));
-  const thighR = reg(J.THIGH_R, bone(ctx, hips, 0, -0.06, 0.13));
-  const shinR = reg(J.SHIN_R, bone(ctx, thighR, 0, -0.42, 0));
-  const handR = reg(J.WEAPON, bone(ctx, farmR, 0, -0.3, 0));
-  const handL = reg(J.OFFHAND, bone(ctx, farmL, 0, -0.3, 0));
-  // Keep the J order in the bone list: rebuild it with joints first.
-  ctx.bones.length = 0;
-  ctx.bones.push(...joints);
+  const hips = joints[J.HIPS] = mk(body, 0, metrics.hipH, 0);
+  const spine = joints[J.SPINE] = mk(hips, 0, s.waistLen, 0);
+  const chest = joints[J.CHEST] = mk(spine, 0, s.chestLen, 0);
+  const neck = joints[J.NECK] = mk(chest, 0.012, s.neckLen, 0);
+  const head = joints[J.HEAD] = mk(neck, 0.018, 0.095 + s.neckR * 0.2, 0);
+  const clavY = s.neckLen * 0.8;
+  const clavL = joints[J.CLAV_L] = mk(chest, -0.01, clavY, -0.06);
+  const uarmL = joints[J.UARM_L] = mk(clavL, 0, 0.01, -(s.shoulderW - 0.06));
+  const farmL = joints[J.FARM_L] = mk(uarmL, 0, -s.upperArm, 0);
+  const handL = joints[J.HAND_L] = mk(farmL, 0, -s.forearm, 0);
+  const clavR = joints[J.CLAV_R] = mk(chest, -0.01, clavY, 0.06);
+  const uarmR = joints[J.UARM_R] = mk(clavR, 0, 0.01, s.shoulderW - 0.06);
+  const farmR = joints[J.FARM_R] = mk(uarmR, 0, -s.upperArm, 0);
+  const handR = joints[J.HAND_R] = mk(farmR, 0, -s.forearm, 0);
+  const thighL = joints[J.THIGH_L] = mk(hips, 0, -0.06, -s.hipW);
+  const shinL = joints[J.SHIN_L] = mk(thighL, 0, -s.thigh, 0);
+  const footL = joints[J.FOOT_L] = mk(shinL, 0, -s.shin, 0);
+  const thighR = joints[J.THIGH_R] = mk(hips, 0, -0.06, s.hipW);
+  const shinR = joints[J.SHIN_R] = mk(thighR, 0, -s.thigh, 0);
+  const footR = joints[J.FOOT_R] = mk(shinR, 0, -s.shin, 0);
+  bones.push(...joints);
 
+  // Sockets.
+  const sock = (parent: Object3D, pos: [number, number, number] = [0, 0, 0], rot: [number, number, number] = [0, 0, 0]) => {
+    const o = new Object3D();
+    o.position.set(...pos);
+    o.rotation.set(...rot);
+    parent.add(o);
+    return o;
+  };
+  const fist = 0.055 * s.handS;
+  const sockets: Sockets = {
+    hips: sock(hips),
+    belt: sock(hips, [0, 0.07, 0]),
+    spine: sock(spine),
+    chest: sock(chest),
+    back: sock(chest, [-s.chestD * 0.75, s.neckLen * 0.6, 0]),
+    neck: sock(neck),
+    head: sock(head),
+    skull: sock(head, [0, metrics.headY, 0]),
+    headTop: sock(head, [0, metrics.headY + s.headR, 0]),
+    face: sock(head, [s.headR * 0.9, metrics.headY + s.headR * 0.1, 0]),
+    shoulderL: sock(chest, [-0.01, clavY + 0.04, -s.shoulderW]),
+    shoulderR: sock(chest, [-0.01, clavY + 0.04, s.shoulderW]),
+    upperArmL: sock(uarmL),
+    upperArmR: sock(uarmR),
+    forearmL: sock(farmL),
+    forearmR: sock(farmR),
+    shieldArm: sock(farmL, [0, -s.forearm * 0.5, -(s.foreR + 0.06)], [0, 0, 0.08]),
+    mainHand: sock(handR, [0.008, -fist, 0], [0, 0, -Math.PI / 2]),
+    offHand: sock(handL, [0.008, -fist, 0], [0, 0, -Math.PI / 2]),
+    thighL: sock(thighL),
+    thighR: sock(thighR),
+    shinL: sock(shinL),
+    shinR: sock(shinR),
+    footL: sock(footL),
+    footR: sock(footR),
+  };
+
+  const headTop = sockets.headTop;
+  const weaponBase = sock(sockets.mainHand, [0, 0.2, 0]);
+  const weaponTip = sock(sockets.mainHand, [0, 1.0, 0]);
+  let offGrip: Object3D | null = null;
   const cloth: Bone[] = [];
-  const headTop = new Object3D();
-  headTop.position.set(0, 0.55, 0);
-  head.add(headTop);
-  const weaponBase = new Object3D();
-  const weaponTip = new Object3D();
-  const weapon = group(handR, [0, -0.02, 0], [0, 0, -Math.PI / 2]);
-  weapon.add(weaponBase, weaponTip);
+  const orbiters: { item: string; bone: Bone }[] = [];
+  const tags = new Map<string, Object3D>();
+  const hidden = new Set<string>();
 
-  // --- Base anatomy ----------------------------------------------------------
-  const P = pal;
-  const headR = big ? 0.19 : 0.215;
-  const headY = 0.18;
-  const armR = big ? 0.1 : 0.072;
-  const handS = big ? 1.35 : 1.12;
+  const api: RigBuildApi = {
+    look, metrics, sockets, appearance: look.appearance,
+    part(parent, g, spec, o: PartOpts = {}) {
+      const mesh = new Mesh(g, AUTHOR_MAT);
+      mesh.userData.spec = typeof spec === 'number' ? { color: spec } : spec;
+      if (o.pos) mesh.position.set(...o.pos);
+      if (o.rot) mesh.rotation.set(...o.rot);
+      if (o.scale !== undefined) {
+        if (typeof o.scale === 'number') mesh.scale.setScalar(o.scale);
+        else mesh.scale.set(...o.scale);
+      }
+      parent.add(mesh);
+      return mesh;
+    },
+    group(parent, pos = [0, 0, 0], rot = [0, 0, 0]) {
+      return sock(parent, pos, rot);
+    },
+    cloth(parent, x, y, z, stiffness = 1) {
+      const b = mk(parent, x, y, z);
+      b.userData.stiffness = stiffness;
+      bones.push(b);
+      cloth.push(b);
+      return b;
+    },
+    orbiter(id) {
+      const b = mk(root, 0, 1.5, 0);
+      bones.push(b);
+      orbiters.push({ item: id, bone: b });
+      return b;
+    },
+    setWeapon(base, tip) {
+      weaponBase.position.set(...base);
+      weaponTip.position.set(...tip);
+    },
+    setOffGrip(pos) {
+      if (!pos) { offGrip?.removeFromParent(); offGrip = null; return; }
+      offGrip ??= sock(sockets.mainHand);
+      offGrip.position.set(...pos);
+    },
+    hide(what) { hidden.add(what); },
+    isHidden(what) { return hidden.has(what); },
+    bone(parent, pos = [0, 0, 0], rot = [0, 0, 0]) {
+      const b = mk(parent, ...pos);
+      b.rotation.set(...rot);
+      bones.push(b);
+      return b;
+    },
+    tag(name, o) {
+      tags.set(name, o);
+    },
+  };
 
-  // Pelvis, belly, torso.
-  part(hips, sphere(0.2), P.pants, { scale: [0.85, 0.72, 1.18] });
-  part(spine, capsule(0.17, 0.12), classId === 'brute' ? P.skin : P.main, { pos: [0, 0.08, 0], scale: [0.88, 1, 1.12] });
-  const torsoProfile: [number, number][] = big
-    ? [[0.001, -0.08], [0.2, -0.06], [0.27, 0.06], [0.33, 0.22], [0.35, 0.34], [0.28, 0.44], [0.12, 0.5], [0.001, 0.5]]
-    : [[0.001, -0.06], [0.17, -0.04], [0.21, 0.08], [0.25, 0.24], [0.26, 0.33], [0.2, 0.42], [0.09, 0.46], [0.001, 0.46]];
-  part(chest, lathe(classId + 'torso', torsoProfile), classId === 'brute' ? P.skin : P.main, { pos: [0, 0, 0], scale: [0.78, 1, big ? 1.12 : 1.08] });
-  part(chest, cyl(big ? 0.1 : 0.075, big ? 0.12 : 0.085, 0.12), P.skin, { pos: [0.01, 0.48, 0] }); // neck
+  buildBody(api, joints);
+  buildFace(api);
+  for (const d of look.decorators) d(api);
+  if (!hidden.has('hair')) buildHair(api);
 
-  // Head.
-  part(head, sphere(headR, 20, 16), P.skin, { pos: [0, headY, 0], scale: [1, 1.04, 0.94] });
-  part(head, sphere(headR * 0.62, 14, 10), P.skin, { pos: [headR * 0.38, headY - headR * 0.42, 0], scale: [1, 0.8, 1.15] }); // jaw
-  part(head, sphere(0.034, 10, 8), P.skin, { pos: [headR * 1.0, headY - 0.01, 0], scale: [0.9, 1, 0.8] }); // nose
-  for (const s of [-1, 1]) part(head, sphere(0.045, 10, 8), P.skin, { pos: [-0.01, headY, s * headR * 0.92], scale: [0.7, 1, 0.5] }); // ears
-
-  // Arms.
-  for (const [ua, fa, hand, side] of [[uarmL, farmL, handL, -1], [uarmR, farmR, handR, 1]] as const) {
-    const sleeve = classId === 'brute' ? P.skin : classId === 'arcanist' ? P.main : classId === 'ronin' ? P.main : P.main;
-    part(ua, sphere(armR * 1.3), sleeve, { pos: [0, -0.02, 0] }); // shoulder ball
-    part(ua, limb(armR * 1.15, armR * 0.95, 0.3), sleeve, {});
-    part(fa, sphere(armR * 0.95), classId === 'brute' ? P.skin : sleeve, {});
-    part(fa, limb(armR * 1.0, armR * 0.78, 0.28), classId === 'arcanist' ? P.main : classId === 'vanguard' ? P.main : P.skin, {});
-    // Mitten fist + thumb.
-    const handCol = classId === 'vanguard' ? P.main : classId === 'brute' ? P.skin : classId === 'ronin' ? 0xe9e2d2 : P.skin;
-    part(hand, rbox(0.1 * handS, 0.12 * handS, 0.1 * handS, 0.035), classId === 'vanguard' ? metal(handCol) : handCol, { pos: [0.005, -0.03, 0] });
-    part(hand, capsule(0.024 * handS, 0.04 * handS), handCol, { pos: [0.05 * handS, -0.0, side * 0.035], rot: [0, 0, 0.6] });
-  }
-
-  // Legs.
-  for (const [th, sh] of [[thighL, shinL], [thighR, shinR]] as const) {
-    part(th, limb(big ? 0.13 : 0.105, big ? 0.1 : 0.085, 0.42), P.pants, {});
-    part(sh, sphere(big ? 0.1 : 0.085), P.pants, {});
-    part(sh, limb(big ? 0.1 : 0.085, big ? 0.075 : 0.065, 0.36), P.boots, {});
-    part(sh, cyl(big ? 0.105 : 0.09, big ? 0.095 : 0.08, 0.16), P.boots, { pos: [0, -0.3, 0] }); // boot shaft
-    part(sh, rbox(0.3, 0.11, 0.15, 0.045), P.boots, { pos: [0.07, -0.43, 0] });
-    part(sh, rbox(0.1, 0.06, 0.155, 0.025), P.dark, { pos: [0.2, -0.465, 0] }); // toe cap
-  }
-
-  const shoulderLA = group(chest, [0, 0.38, -shoulderW]);
-  const shoulderRA = group(chest, [0, 0.38, shoulderW]);
-
-  // --- Class identity --------------------------------------------------------
-  switch (classId) {
-    case 'vanguard': {
-      const steel = metal(P.main, 0.9);
-      const gold = metal(P.trim, 1);
-      // Breastplate over the torso, sun emblem, plated belt.
-      part(chest, lathe('vgPlate', [[0.001, 0.02], [0.2, 0.04], [0.245, 0.18], [0.262, 0.31], [0.21, 0.41], [0.001, 0.43]]), steel, { scale: [0.86, 1, 1.12] });
-      part(chest, torus(0.205, 0.024), gold, { pos: [0, 0.41, 0], rot: [Math.PI / 2, 0, 0], scale: [0.86, 1.12, 1] });
-      part(chest, star(8, 0.05, 0.1, 0.03), glowS(0xffd36b, 1.4), { pos: [0.205, 0.22, 0], rot: [0, Math.PI / 2, 0] });
-      part(chest, cyl(0.05, 0.05, 0.04, 16), gold, { pos: [0.215, 0.22, 0], rot: [0, 0, Math.PI / 2] });
-      part(hips, torus(0.2, 0.04), gold, { pos: [0, 0.07, 0], rot: [Math.PI / 2, 0, 0], scale: [0.88, 1.18, 1] });
-      // Tabard front/back flaps.
-      for (const fx of [1, -1]) {
-        const flap = bone(ctx, hips, fx * 0.15, 0.04, 0);
-        cloth.push(flap);
-        part(flap, rbox(0.03, 0.5, 0.24, 0.012), P.cloth, { pos: [0, -0.25, 0] });
-        part(flap, rbox(0.032, 0.05, 0.25, 0.012), gold, { pos: [0, -0.49, 0] });
-        if (fx > 0) part(flap, star(4, 0.02, 0.06, 0.01), lineless(P.trim), { pos: [0.02, -0.22, 0], rot: [0, Math.PI / 2, 0] });
-      }
-      if (!gearHead) {
-        // Helmet: rounded sallet with gold brow band, nose guard and a tall crest.
-        part(head, sphere(headR * 1.1, 20, 14), steel, { pos: [-0.01, headY + 0.03, 0], scale: [1.02, 0.94, 0.98] });
-        part(head, torus(headR * 1.08, 0.022), gold, { pos: [-0.01, headY + 0.02, 0], rot: [Math.PI / 2, 0, 0], scale: [1.02, 0.98, 1] });
-        part(head, rbox(0.03, 0.12, 0.035, 0.012), gold, { pos: [headR * 1.08, headY - 0.02, 0] });
-        for (const s of [-1, 1]) {
-          // Cheek guards and little gold wings.
-          part(head, rbox(0.12, 0.13, 0.03, 0.014), steel, { pos: [0.05, headY - 0.08, s * headR * 0.98] });
-          const wing = group(head, [-0.04, headY + 0.08, s * headR * 1.02], [s * -0.2, 0, 0.5]);
-          for (let k = 0; k < 3; k++) part(wing, rbox(0.04, 0.16 - k * 0.035, 0.016, 0.008), gold, { pos: [-k * 0.04, 0.07 - k * 0.01, 0], rot: [0, 0, 0.25 * k] });
-        }
-        // Crest: a fan of blue plume segments (also a cloth bone so it bobs).
-        const crest = bone(ctx, head, -0.02, headY + headR * 0.98, 0);
-        cloth.push(crest);
-        for (let k = 0; k < 6; k++) {
-          const a = -0.9 + k * 0.32;
-          part(crest, capsule(0.035, 0.16 + Math.sin((k / 5) * Math.PI) * 0.06), k % 2 ? 0x2f5be0 : 0x3f7bff, { pos: [Math.sin(a) * 0.12 - 0.04, Math.cos(a) * 0.1 + 0.04, 0], rot: [0, 0, -a * 1.1], scale: [1, 1, 0.7] });
-        }
-      } else {
-        part(head, sphere(headR * 1.04, 18, 12), P.hair, { pos: [-0.03, headY + 0.03, 0], scale: [1, 0.96, 1] });
-      }
-      face(head, headY, headR, { eye: 0x2a3f8a, brows: P.hair, mouth: true });
-      // Layered pauldrons.
-      for (const sa of [shoulderLA, shoulderRA]) {
-        part(sa, halfSphere(0.17), steel, { scale: [1.15, 0.85, 1.05] });
-        part(sa, halfSphere(0.15), steel, { pos: [0, -0.07, 0], scale: [1.2, 0.8, 1.15] });
-        part(sa, torus(0.165, 0.018), gold, { pos: [0, 0.0, 0], rot: [Math.PI / 2, 0, 0], scale: [1.15, 1.05, 1] });
-      }
-      // Gauntlet cuffs and knee guards.
-      for (const fa of [farmL, farmR]) part(fa, cyl(0.09, 0.075, 0.1), gold, { pos: [0, -0.22, 0] });
-      for (const sh of [shinL, shinR]) {
-        part(sh, sphere(0.095), steel, { pos: [0.04, 0, 0], scale: [0.9, 1, 1] });
-        part(sh, cyl(0.1, 0.09, 0.04), gold, { pos: [0, -0.22, 0] });
-      }
-      // Cape with a gold hem.
-      const cape = bone(ctx, chest, -0.2, 0.4, 0);
-      cloth.push(cape);
-      part(cape, rbox(0.04, 1.05, 0.56, 0.018), P.cloth, { pos: [-0.02, -0.52, 0] });
-      part(cape, rbox(0.042, 0.06, 0.58, 0.02), gold, { pos: [-0.02, -1.03, 0] });
-      part(cape, rbox(0.035, 1.0, 0.5, 0.018), 0x1d3a9e, { pos: [0.005, -0.5, 0], scale: [1, 1, 1] });
-      if (!gear) {
-        // Longsword: gem pommel, wide gold crossguard, blade with a glowing fuller.
-        part(weapon, sphere(0.045, 12, 10), gold, { pos: [0, -0.08, 0] });
-        part(weapon, cyl(0.028, 0.03, 0.2, 10), 0x4a2f1f, { pos: [0, 0.02, 0] });
-        part(weapon, rbox(0.34, 0.06, 0.07, 0.025), gold, { pos: [0, 0.14, 0] });
-        part(weapon, octa(0.04), glowS(0x6fc8ff, 2), { pos: [0, 0.14, 0.04] });
-        part(weapon, blade(0.95, 0.13, 0.025, 0, 0.16), metal(0xeef3fb, 1), { pos: [0, 0.17, 0] });
-        part(weapon, box(0.03, 0.78, 0.034), { color: 0xffffff, glow: 0.9, enchant: true }, { pos: [0, 0.56, 0] });
-        weaponBase.position.set(0, 0.2, 0);
-        weaponTip.position.set(0, 1.12, 0);
-        // Heater shield on the left forearm, sun emblem on the face.
-        const shield = group(farmL, [0, -0.15, -0.12], [0, 0, 0.08]);
-        part(shield, heater(), steel, {});
-        part(shield, heaterInner(), P.cloth, { pos: [0, 0, -0.08] });
-        part(shield, star(12, 0.07, 0.15, 0.02), metal(P.trim, 1), { pos: [0, 0.02, -0.105], rot: [0, Math.PI, 0] });
-        part(shield, sphere(0.05, 12, 10), glowS(0xffe08a, 1.6), { pos: [0, 0.02, -0.11], scale: [1, 1, 0.5] });
-      }
-      break;
-    }
-    case 'ronin': {
-      // Gi with crossed dark lapels and a red sash.
-      part(chest, rbox(0.03, 0.4, 0.07, 0.01), P.dark, { pos: [0.205, 0.2, 0.05], rot: [0.55, 0, 0] });
-      part(chest, rbox(0.03, 0.4, 0.07, 0.01), P.dark, { pos: [0.2, 0.2, -0.05], rot: [-0.55, 0, 0] });
-      part(hips, torus(0.2, 0.055), P.trim, { pos: [0, 0.07, 0], rot: [Math.PI / 2, 0, 0], scale: [0.9, 1.15, 1] });
-      part(hips, rbox(0.06, 0.08, 0.1, 0.02), P.trim, { pos: [0.18, 0.06, -0.08] }); // knot
-      // Hakama: wide pleated legs.
-      for (const th of [thighL, thighR]) {
-        part(th, lathe('hakama', [[0.001, 0.02], [0.13, 0.0], [0.16, -0.2], [0.2, -0.42], [0.21, -0.5], [0.001, -0.5]], 12), P.pants, {});
-      }
-      part(hips, cyl(0.2, 0.25, 0.22, 14), P.pants, { pos: [0, -0.08, 0], scale: [0.9, 1, 1.05] });
-      // Wide sleeves flare at the forearm.
-      for (const fa of [farmL, farmR]) {
-        part(fa, lathe('sleeve', [[0.08, 0.04], [0.1, -0.06], [0.115, -0.15], [0.1, -0.17], [0.065, -0.1]], 14), P.main, {});
-        part(fa, cyl(0.06, 0.055, 0.1, 10), 0xe9e2d2, { pos: [0, -0.22, 0] }); // wraps
-      }
-      // Hair, topknot and flowing ponytail.
-      part(head, sphere(headR * 1.04, 18, 12), P.hair, { pos: [-0.03, headY + 0.03, 0], scale: [1, 0.96, 1] });
-      for (let k = 0; k < 4; k++) {
-        part(head, cone(0.06, 0.16, 6), P.hair, { pos: [0.1 + k * 0.01, headY + 0.17 - k * 0.04, (k - 1.5) * 0.08], rot: [((k - 1.5) * 0.4), 0, -1.9] }); // bangs
-      }
-      const tail = bone(ctx, head, -0.15, headY + 0.14, 0);
-      cloth.push(tail);
-      part(tail, sphere(0.06, 10, 8), P.trim, {});
-      part(tail, cone(0.07, 0.34, 8), P.hair, { pos: [-0.12, -0.12, 0], rot: [0, 0, 2.3] });
-      face(head, headY, headR, { brows: P.hair, scar: true });
-      if (!gearHead) {
-        // Kasa: wide straw cone with a red band.
-        const hat = group(head, [0.0, headY + headR * 0.8, 0], [0, 0, 0.1]);
-        part(hat, lathe('kasa', [[0.001, 0.18], [0.07, 0.16], [0.3, 0.05], [0.52, -0.04], [0.54, -0.06], [0.001, -0.02]], 22), 0xd9b26a, {});
-        part(hat, torus(0.17, 0.018, Math.PI * 2, 6, 20), P.trim, { pos: [0, 0.1, 0], rot: [Math.PI / 2, 0, 0], scale: [1, 1, 1] });
-      }
-      // Long red scarf: knot at the neck, two trailing tails (cloth bones).
-      part(chest, torus(0.11, 0.045), P.trim, { pos: [0.01, 0.46, 0], rot: [Math.PI / 2, 0, 0] });
-      for (let k = 0; k < 2; k++) {
-        const sc = bone(ctx, chest, -0.1, 0.44, (k - 0.5) * 0.06);
-        cloth.push(sc);
-        part(sc, rbox(0.62 - k * 0.14, 0.05, 0.12, 0.02), P.trim, { pos: [-(0.31 - k * 0.07), -0.02 - k * 0.04, 0], rot: [0, 0, -0.18 - k * 0.12] });
-      }
-      if (!gear) {
-        // Katana: curved blade, gold habaki, round tsuba, wrapped hilt.
-        part(weapon, cyl(0.026, 0.026, 0.26, 8), 0x7a1824, { pos: [0, 0.0, 0] });
-        for (let k = 0; k < 4; k++) part(weapon, torus(0.028, 0.008, Math.PI * 2, 4, 8), lineless(0x1a1420), { pos: [0, -0.09 + k * 0.06, 0], rot: [Math.PI / 2, 0, 0] });
-        part(weapon, cyl(0.08, 0.08, 0.02, 16), metal(0x2a2430, 0.6), { pos: [0, 0.14, 0] });
-        part(weapon, cyl(0.03, 0.03, 0.05, 8), metal(0xd9b04a, 1), { pos: [0, 0.17, 0] });
-        part(weapon, blade(1.0, 0.07, 0.02, 0.09, 0.12), metal(0xf2f5fa, 1), { pos: [0, 0.18, 0] });
-        part(weapon, box(0.016, 0.82, 0.026), { color: 0xffe8e8, glow: 0.8, enchant: true }, { pos: [0.032, 0.6, 0], rot: [0, 0, -0.05] });
-        weaponBase.position.set(0, 0.2, 0);
-        weaponTip.position.set(0.09, 1.16, 0);
-        // Saya on the hip.
-        part(hips, rbox(0.06, 0.8, 0.07, 0.025), metal(0x2a1a20, 0.5), { pos: [0.02, -0.05, -0.25], rot: [0, 0, 1.25] });
-        part(hips, cyl(0.04, 0.04, 0.05, 8), metal(0xd9b04a), { pos: [0.33, 0.06, -0.25], rot: [0, 0, 1.25] });
-      }
-      break;
-    }
-    case 'arcanist': {
-      const gold = metal(0xf0c060, 1);
-      // Layered robe skirt with a glowing hem, high collar mantle.
-      part(hips, lathe('robe', [[0.001, 0.12], [0.2, 0.12], [0.26, -0.1], [0.36, -0.5], [0.46, -0.84], [0.001, -0.84]], 20), P.main, {});
-      part(hips, lathe('robeIn', [[0.001, 0.0], [0.24, -0.1], [0.4, -0.86], [0.001, -0.86]], 20), P.dark, { pos: [0.02, 0, 0], scale: [1.02, 1, 0.96] });
-      part(hips, torus(0.455, 0.022, Math.PI * 2, 6, 28), glowS(0x6ff3ff, 1.5), { pos: [0, -0.83, 0], rot: [Math.PI / 2, 0, 0] });
-      part(hips, torus(0.21, 0.035), gold, { pos: [0, 0.09, 0], rot: [Math.PI / 2, 0, 0], scale: [0.9, 1.1, 1] });
-      part(chest, rbox(0.03, 0.44, 0.09, 0.012), gold, { pos: [0.205, 0.16, 0] });
-      part(chest, lathe('collar', [[0.12, 0.0], [0.22, 0.05], [0.27, 0.15], [0.25, 0.18], [0.19, 0.08], [0.12, 0.03]], 18), P.dark, { pos: [-0.04, 0.36, 0], scale: [0.85, 1, 1.05] });
-      part(chest, torus(0.25, 0.016), gold, { pos: [-0.04, 0.53, 0], rot: [Math.PI / 2, 0, 0], scale: [0.85, 1.05, 1] });
-      // Wide sleeves.
-      for (const fa of [farmL, farmR]) {
-        part(fa, lathe('asleeve', [[0.08, 0.04], [0.13, -0.08], [0.17, -0.2], [0.15, -0.22], [0.08, -0.12]], 14), P.main, {});
-        part(fa, torus(0.16, 0.014), glowS(0x6ff3ff, 1.4), { pos: [0, -0.21, 0], rot: [Math.PI / 2, 0, 0] });
-      }
-      // Silver hair flowing out under the hat, glowing eyes.
-      part(head, sphere(headR * 1.03, 18, 12), P.hair, { pos: [-0.04, headY + 0.02, 0], scale: [1, 1, 1.02] });
-      const hairTail = bone(ctx, head, -0.16, headY - 0.02, 0);
-      cloth.push(hairTail);
-      part(hairTail, capsule(0.09, 0.3), P.hair, { pos: [-0.04, -0.16, 0], rot: [0, 0, 0.25], scale: [0.7, 1, 1.4] });
-      face(head, headY, headR, { glowEyes: 0x6ff3ff, brows: 0xc8ccec, mouth: false });
-      if (!gearHead) {
-        // Wizard hat: wide brim, gold band with gem, tall bent cone with a star charm.
-        part(head, cyl(0.46, 0.48, 0.035, 26), P.main, { pos: [0, headY + 0.13, 0], rot: [0, 0, 0.06] });
-        part(head, cyl(0.25, 0.27, 0.08, 18), gold, { pos: [0, headY + 0.18, 0] });
-        part(head, octa(0.045), glowS(0x6ff3ff, 2.4), { pos: [0.26, headY + 0.18, 0] });
-        const tip = bone(ctx, head, 0, headY + 0.2, 0);
-        tip.rotation.z = 0.0;
-        part(tip, lathe('hatA', [[0.25, 0], [0.19, 0.22], [0.13, 0.42], [0.001, 0.46]], 16), P.main, { rot: [0, 0, 0.18] });
-        const tip2 = bone(ctx, tip, -0.1, 0.4, 0);
-        cloth.push(tip2);
-        part(tip2, cone(0.09, 0.32, 12), P.main, { pos: [-0.1, 0.1, 0], rot: [0, 0, 0.9] });
-        part(tip2, star(5, 0.03, 0.07, 0.02), glowS(0xffe68a, 2.2), { pos: [-0.25, 0.12, 0] });
-      }
-      // Spellbook at the hip.
-      part(hips, rbox(0.2, 0.24, 0.07, 0.02), 0x6a2a1a, { pos: [0.0, -0.04, 0.24], rot: [0, 0, 0.1] });
-      part(hips, rbox(0.17, 0.21, 0.075, 0.01), lineless(0xf1e6c8), { pos: [0.02, -0.04, 0.24], rot: [0, 0, 0.1] });
-      if (!gear) {
-        // Gnarled staff with a crescent holding a floating crystal.
-        const staff = group(handR, [0, -0.02, 0], [0, 0, -Math.PI / 2 + 0.2]);
-        part(staff, cyl(0.032, 0.042, 1.75, 8), 0x5b3a22, { pos: [0, 0.25, 0] });
-        for (let k = 0; k < 3; k++) part(staff, torus(0.04, 0.012, Math.PI * 2, 5, 10), gold, { pos: [0, 0.6 + k * 0.32, 0], rot: [Math.PI / 2, 0, 0] });
-        part(staff, torus(0.15, 0.03, Math.PI * 1.35, 8, 18), gold, { pos: [0, 1.2, 0], rot: [0, 0, -0.65 - Math.PI / 2] });
-        part(staff, octa(0.11), glowS(0x9ff8ff, 3.2), { pos: [0, 1.24, 0], scale: [0.8, 1.3, 0.8] });
-        for (let k = 0; k < 3; k++) {
-          const a = (k / 3) * Math.PI * 2;
-          part(staff, octa(0.03), glowS(0x6ff3ff, 2.4), { pos: [Math.cos(a) * 0.2, 1.24 + Math.sin(a * 2) * 0.05, Math.sin(a) * 0.2] });
-        }
-        staff.add(weaponBase); staff.add(weaponTip);
-        weaponBase.position.set(0, 0.9, 0);
-        weaponTip.position.set(0, 1.24, 0);
-        weapon.visible = false;
-      }
-      break;
-    }
-    case 'brute': {
-      const iron = metal(0x7d8594, 0.7);
-      const leather = 0x5a3a22;
-      const fur = 0xe2d2b0;
-      // Belly muscles, war paint stripes, crossed strap.
-      part(chest, rbox(0.04, 0.12, 0.3, 0.02), lineless(P.trim), { pos: [0.26, 0.26, 0], rot: [0, 0, 0.1] });
-      part(chest, rbox(0.1, 0.7, 0.13, 0.03), leather, { pos: [0.19, 0.2, 0], rot: [0.75, 0, 0] });
-      part(chest, rbox(0.1, 0.7, 0.13, 0.03), leather, { pos: [-0.2, 0.2, 0], rot: [-0.75, 0, 0] });
-      // Fur mantle: ring of fluffy lumps over the shoulders.
-      for (let k = 0; k < 9; k++) {
-        const a = (k / 9) * Math.PI * 2;
-        part(chest, sphere(0.13, 10, 8), fur, { pos: [Math.cos(a) * 0.22 - 0.02, 0.44 + Math.sin(a * 2) * 0.02, Math.sin(a) * 0.32], scale: [1, 0.8, 1] });
-      }
-      // Belt with a big skull-ish buckle, loincloth flaps.
-      part(hips, torus(0.21, 0.065), leather, { pos: [0, 0.08, 0], rot: [Math.PI / 2, 0, 0], scale: [0.95, 1.2, 1] });
-      part(hips, sphere(0.08, 12, 10), metal(0xe8dcc0, 0.4), { pos: [0.22, 0.08, 0], scale: [0.6, 1, 1] });
-      part(hips, sphere(0.018, 6, 4), lineless(0x2a1a10), { pos: [0.27, 0.1, 0.03] });
-      part(hips, sphere(0.018, 6, 4), lineless(0x2a1a10), { pos: [0.27, 0.1, -0.03] });
-      for (const fx of [1, -1]) {
-        const flap = bone(ctx, hips, fx * 0.16, 0.02, 0);
-        cloth.push(flap);
-        part(flap, rbox(0.03, 0.42, 0.26, 0.012), P.cloth, { pos: [0, -0.2, 0] });
-      }
-      // Fur boot cuffs, iron knee caps.
-      for (const sh of [shinL, shinR]) {
-        part(sh, torus(0.1, 0.05, Math.PI * 2, 6, 12), fur, { pos: [0, -0.22, 0], rot: [Math.PI / 2, 0, 0] });
-        part(sh, sphere(0.1), iron, { pos: [0.05, 0, 0], scale: [0.8, 1, 1] });
-      }
-      // Horned helmet, braided beard, war paint.
-      if (!gearHead) {
-        part(head, sphere(headR * 1.12, 18, 12), iron, { pos: [-0.01, headY + 0.06, 0], scale: [1, 0.8, 1] });
-        part(head, torus(headR * 1.1, 0.025), metal(0xc9a24a, 0.9), { pos: [-0.01, headY + 0.02, 0], rot: [Math.PI / 2, 0, 0] });
-        part(head, rbox(0.03, 0.13, 0.04, 0.012), iron, { pos: [headR * 1.08, headY, 0] });
-      } else {
-        part(head, sphere(headR * 1.04, 18, 12), P.hair, { pos: [-0.03, headY + 0.03, 0], scale: [1, 0.96, 1] });
-      }
-      for (const s of [-1, 1]) {
-        if (!gearHead) {
-          const hj = group(head, [-0.02, headY + 0.1, s * 0.19], [s * 1.0, 0, 0]);
-          part(hj, cone(0.065, 0.24, 10), 0xf3ead6, { pos: [0, 0.1, 0], rot: [0, 0, -0.35] });
-          part(hj, cone(0.035, 0.16, 8), 0xf3ead6, { pos: [-0.03, 0.27, 0], rot: [0, 0, -0.9] });
-        }
-        part(head, rbox(0.012, 0.03, 0.06, 0.006), lineless(P.trim), { pos: [headR * 0.95, headY - 0.06, s * 0.08] });
-      }
-      face(head, headY, headR, { brows: P.hair, mouth: false });
-      // Beard: chunky lumps tapering into a ringed braid.
-      part(head, sphere(0.14, 12, 10), P.hair, { pos: [headR * 0.55, headY - headR * 0.62, 0], scale: [0.8, 0.8, 1.2] });
-      part(head, sphere(0.1, 10, 8), P.hair, { pos: [headR * 0.7, headY - headR * 1.15, 0], scale: [0.9, 1, 1] });
-      part(head, cone(0.07, 0.2, 8), P.hair, { pos: [headR * 0.75, headY - headR * 1.6, 0], rot: [0, 0, Math.PI - 0.2] });
-      part(head, torus(0.06, 0.018, Math.PI * 2, 5, 10), metal(0xc9a24a), { pos: [headR * 0.73, headY - headR * 1.38, 0], rot: [Math.PI / 2, 0, -0.2] });
-      // Spiked pauldron on one side, bracers both arms.
-      part(shoulderLA, halfSphere(0.21), iron, { scale: [1.15, 0.95, 1.1] });
-      for (let k = 0; k < 3; k++) part(shoulderLA, cone(0.045, 0.2, 6), 0xf3ead6, { pos: [(k - 1) * 0.1, 0.16 - Math.abs(k - 1) * 0.04, 0], rot: [0, 0, (1 - k) * 0.5] });
-      part(shoulderRA, sphere(0.15, 10, 8), fur, { scale: [1.1, 0.8, 1] });
-      for (const fa of [farmL, farmR]) {
-        part(fa, cyl(0.12, 0.13, 0.16, 10), leather, { pos: [0, -0.17, 0] });
-        part(fa, torus(0.125, 0.015, Math.PI * 2, 4, 12), iron, { pos: [0, -0.1, 0], rot: [Math.PI / 2, 0, 0] });
-        part(fa, torus(0.125, 0.015, Math.PI * 2, 4, 12), iron, { pos: [0, -0.24, 0], rot: [Math.PI / 2, 0, 0] });
-      }
-      if (!gear) {
-        // Warhammer: wrapped haft, iron head with a glowing rune band and spike.
-        part(weapon, cyl(0.042, 0.048, 1.3, 8), 0x6b4a2e, { pos: [0, 0.38, 0] });
-        for (let k = 0; k < 3; k++) part(weapon, cyl(0.052, 0.052, 0.06, 8), leather, { pos: [0, -0.1 + k * 0.1, 0] });
-        part(weapon, rbox(0.34, 0.36, 0.56, 0.06), iron, { pos: [0, 1.02, 0] });
-        part(weapon, rbox(0.38, 0.08, 0.6, 0.03), metal(0x4d5260, 0.6), { pos: [0, 0.88, 0] });
-        part(weapon, rbox(0.38, 0.08, 0.6, 0.03), metal(0x4d5260, 0.6), { pos: [0, 1.16, 0] });
-        part(weapon, rbox(0.345, 0.12, 0.2, 0.02), { color: 0xff8a2a, glow: 2.2, enchant: true }, { pos: [0, 1.02, 0] });
-        part(weapon, cone(0.06, 0.18, 6), iron, { pos: [0, 1.28, 0] });
-        weaponBase.position.set(0, 0.85, 0);
-        weaponTip.position.set(0, 1.2, 0);
-      }
-      break;
-    }
-  }
-
-  // --- Gear ------------------------------------------------------------------
-  let orbiters: { item: GearId; bone: Bone }[] = [];
-  let phoenix: Bone | null = null;
-  if (gear) {
-    const offGrip = group(handL, [0, -0.02, 0], [0, 0, -Math.PI / 2]);
-    const built = authorGear({
-      grip: weapon, offGrip, forearmL: farmL, forearmR: farmR, head, headY, headR, chest, hips,
-      shoulderL: shoulderLA, shoulderR: shoulderRA, shinL, shinR, root, big,
-      bone: (parent, x, y, z) => bone(ctx, parent, x, y, z), cloth,
-    }, gear);
-    weaponBase.position.set(...built.main.base);
-    weaponTip.position.set(...built.main.tip);
-    orbiters = built.orbiters;
-    phoenix = built.phoenix;
-  }
-  void items;
-
-  // --- Bake into skinned meshes ----------------------------------------------
-  const { meshes, materials, enchantMaterial } = bake(root, ctx.bones, u, classId);
+  const { meshes, materials, enchantMaterial } = bake(root, bones, u);
   return {
-    root, body, joints, weaponBase, weaponTip, headTop, cloth, orbiters, phoenix,
+    root, body, joints, sockets, metrics, look, weaponBase, weaponTip, headTop, offGrip, cloth, orbiters, tags,
+    phoenix: tags.get('phoenix') ?? null,
     uniforms: u, materials, enchantMaterial, meshes,
   };
 }
 
-function bake(root: Group, bones: Bone[], u: FighterUniforms, classId: Archetype): { meshes: SkinnedMesh[]; materials: Material[]; enchantMaterial: MeshBasicMaterial | null } {
+// -----------------------------------------------------------------------------
+// Baking
+// -----------------------------------------------------------------------------
+
+/** Primary child of each joint (where its flesh continues into). */
+const JOINT_CHILD: number[] = (() => {
+  const c = new Array(JOINT_COUNT).fill(-1);
+  c[J.HIPS] = J.SPINE; c[J.SPINE] = J.CHEST; c[J.CHEST] = J.NECK; c[J.NECK] = J.HEAD;
+  c[J.CLAV_L] = J.UARM_L; c[J.UARM_L] = J.FARM_L; c[J.FARM_L] = J.HAND_L;
+  c[J.CLAV_R] = J.UARM_R; c[J.UARM_R] = J.FARM_R; c[J.FARM_R] = J.HAND_R;
+  c[J.THIGH_L] = J.SHIN_L; c[J.SHIN_L] = J.FOOT_L;
+  c[J.THIGH_R] = J.SHIN_R; c[J.SHIN_R] = J.FOOT_R;
+  return c;
+})();
+
+/**
+ * Half-width of the soft blend at the joint between a bone and its parent
+ * (body-space metres; 0 = rigid) and how far from the bone axis it reaches.
+ * Shoulders stay rigid: they rotate up to ~200 degrees, which linear blend
+ * skinning would collapse; the deltoid hides the seam instead.
+ */
+const BLEND: Record<number, [number, number]> = {
+  [J.SPINE]: [0.08, 1], [J.CHEST]: [0.09, 1], [J.NECK]: [0.05, 0.13], [J.HEAD]: [0.035, 0.1],
+  [J.FARM_L]: [0.07, 1], [J.FARM_R]: [0.07, 1], [J.HAND_L]: [0.025, 1], [J.HAND_R]: [0.025, 1],
+  [J.THIGH_L]: [0.05, 0.16], [J.THIGH_R]: [0.05, 0.16], [J.SHIN_L]: [0.09, 1], [J.SHIN_R]: [0.09, 1],
+  [J.FOOT_L]: [0.035, 1], [J.FOOT_R]: [0.035, 1],
+};
+
+interface JointFrame { pos: Vector3; axis: Vector3 }
+
+const _v = new Vector3();
+const _n = new Vector3();
+const _d = new Vector3();
+const _m3 = new Matrix3();
+const _c = new Color();
+
+class SkinBuilder {
+  pos: number[] = [];
+  nor: number[] = [];
+  col: number[] = [];
+  gloss: number[] = [];
+  si: number[] = [];
+  sw: number[] = [];
+  idx: number[] = [];
+  count = 0;
+  get empty(): boolean { return this.count === 0; }
+
+  build(): BufferGeometry {
+    const g = new BufferGeometry();
+    g.setAttribute('position', new BufferAttribute(new Float32Array(this.pos), 3));
+    g.setAttribute('normal', new BufferAttribute(new Float32Array(this.nor), 3));
+    g.setAttribute('color', new BufferAttribute(new Float32Array(this.col), 3));
+    g.setAttribute('gloss', new BufferAttribute(new Float32Array(this.gloss), 1));
+    g.setAttribute('skinIndex', new BufferAttribute(new Uint16Array(this.si), 4));
+    g.setAttribute('skinWeight', new BufferAttribute(new Float32Array(this.sw), 4));
+    const IndexArray = this.count > 65535 ? Uint32Array : Uint16Array;
+    g.setIndex(new BufferAttribute(new IndexArray(this.idx), 1));
+    g.computeBoundingSphere();
+    return g;
+  }
+}
+
+function bake(root: Group, bones: Bone[], u: FighterUniforms): { meshes: SkinnedMesh[]; materials: Material[]; enchantMaterial: MeshBasicMaterial | null } {
   root.updateMatrixWorld(true);
   const index = new Map<Object3D, number>();
   bones.forEach((b, i) => index.set(b, i));
-  const lit = new MeshBuilder(true);
-  const line = new MeshBuilder(true);
-  const glowB = new MeshBuilder(true);
-  const ench = new MeshBuilder(true);
+
+  // Bind-pose frames of the anatomical joints.
+  const frames: JointFrame[] = [];
+  for (let j = 0; j < JOINT_COUNT; j++) frames.push({ pos: bones[j].getWorldPosition(new Vector3()), axis: new Vector3(0, 1, 0) });
+  for (let j = 0; j < JOINT_COUNT; j++) {
+    const c = JOINT_CHILD[j];
+    if (c >= 0) frames[j].axis.subVectors(frames[c].pos, frames[j].pos).normalize();
+    else if (JOINT_PARENT[j] >= 0 && j !== J.HEAD) frames[j].axis.subVectors(frames[j].pos, frames[JOINT_PARENT[j]].pos).normalize();
+  }
+  const scale = bones[J.HIPS].parent!.getWorldScale(new Vector3()).x;
+
+  const lit = new SkinBuilder();
+  const line = new SkinBuilder();
+  const glowB = new SkinBuilder();
+  const ench = new SkinBuilder();
   const authored: Mesh[] = [];
   root.traverse((o) => { if ((o as Mesh).isMesh && o.userData.spec) authored.push(o as Mesh); });
+
+  const w = [0, 0, 0];
+  const wi = [0, 0, 0];
+  /** Fills w/wi for a world-space vertex on bone b; returns the number of influences. */
+  const weigh = (b: number, p: Vector3): number => {
+    wi[0] = b; w[0] = 1; let n = 1;
+    if (b >= JOINT_COUNT) return n;
+    const f = frames[b];
+    const par = JOINT_PARENT[b];
+    const jb = BLEND[b];
+    if (par >= 0 && jb) {
+      const r = jb[0] * scale;
+      const sAx = _d.subVectors(p, f.pos).dot(f.axis);
+      const radial = _d.addScaledVector(f.axis, -sAx).length();
+      if (radial < jb[1] * scale) {
+        const wp = 1 - smoothstep(-r, r, sAx);
+        if (wp > 0.001) { wi[n] = par; w[n] = wp; n++; }
+      }
+    }
+    const c = JOINT_CHILD[b];
+    const jc = c >= 0 ? BLEND[c] : undefined;
+    if (c >= 0 && jc) {
+      const r = jc[0] * scale;
+      const sAx = _d.subVectors(p, frames[c].pos).dot(f.axis);
+      const radial = _d.addScaledVector(f.axis, -sAx).length();
+      if (radial < jc[1] * scale) {
+        const wc = smoothstep(-r, r, sAx);
+        if (wc > 0.001) { wi[n] = c; w[n] = wc; n++; }
+      }
+    }
+    let other = 0;
+    for (let i = 1; i < n; i++) other += w[i];
+    if (other > 1) { for (let i = 1; i < n; i++) w[i] /= other; w[0] = 0; }
+    else w[0] = 1 - other;
+    return n;
+  };
+
+  const add = (sb: SkinBuilder, m: Mesh, s: RigPartSpec, bone: number, colorScale: number, gloss: number) => {
+    const g = m.geometry;
+    const p = g.getAttribute('position');
+    const nAttr = g.getAttribute('normal');
+    const base = sb.count;
+    _m3.getNormalMatrix(m.matrixWorld);
+    _c.setHex(s.color);
+    let cr = _c.r * colorScale, cg = _c.g * colorScale, cb = _c.b * colorScale;
+    for (let i = 0; i < p.count; i++) {
+      _v.fromBufferAttribute(p, i);
+      if (s.paint) {
+        _c.setHex(s.paint(_v));
+        cr = _c.r * colorScale; cg = _c.g * colorScale; cb = _c.b * colorScale;
+      }
+      _v.applyMatrix4(m.matrixWorld);
+      sb.pos.push(_v.x, _v.y, _v.z);
+      if (nAttr) { _n.fromBufferAttribute(nAttr, i).applyMatrix3(_m3).normalize(); sb.nor.push(_n.x, _n.y, _n.z); }
+      else sb.nor.push(0, 1, 0);
+      sb.col.push(cr, cg, cb);
+      sb.gloss.push(gloss);
+      const n = s.smooth ? weigh(bone, _v) : (wi[0] = bone, w[0] = 1, 1);
+      for (let k = 0; k < 4; k++) {
+        sb.si.push(k < n ? wi[k] : 0);
+        sb.sw.push(k < n ? w[k] : 0);
+      }
+    }
+    const ix = g.getIndex();
+    if (ix) for (let i = 0; i < ix.count; i++) sb.idx.push(base + ix.getX(i));
+    else for (let i = 0; i < p.count; i++) sb.idx.push(base + i);
+    sb.count += p.count;
+  };
+
   for (const m of authored) {
     let a: Object3D | null = m.parent;
     while (a && !index.has(a)) a = a.parent;
     const bi = a ? index.get(a)! : J.HIPS;
-    const s = m.userData.spec as PartSpec;
-    if (s.enchant) ench.add(m.geometry, m.matrixWorld, s.color, 0, 0, bi, s.glow ?? 1);
-    else if (s.glow) glowB.add(m.geometry, m.matrixWorld, s.color, 0, 0, bi, s.glow);
+    const s = m.userData.spec as RigPartSpec;
+    if (s.enchant) add(ench, m, s, bi, s.glow ?? 1, 0);
+    else if (s.glow) add(glowB, m, s, bi, s.glow, 0);
     else {
-      lit.add(m.geometry, m.matrixWorld, s.color, s.gloss ?? 0, 0, bi);
-      if (s.outline !== false) line.add(m.geometry, m.matrixWorld, s.color, 0, 0, bi);
+      add(lit, m, s, bi, 1, s.gloss ?? 0);
+      if (s.outline !== false) add(line, m, s, bi, 1, 0);
     }
   }
   for (const m of authored) m.removeFromParent();
@@ -634,32 +409,27 @@ function bake(root: Group, bones: Bone[], u: FighterUniforms, classId: Archetype
   const skeleton = new Skeleton(bones);
   const meshes: SkinnedMesh[] = [];
   const materials: Material[] = [];
-  const add = (b: MeshBuilder, mat: Material, shadow: boolean, order = 0) => {
-    if (b.empty) return null;
+  const mkMesh = (b: SkinBuilder, mat: Material, shadow: boolean) => {
+    if (b.empty) return;
     const mesh = new SkinnedMesh(b.build(), mat);
     mesh.castShadow = shadow;
     mesh.frustumCulled = false;
-    mesh.renderOrder = order;
     root.add(mesh);
     mesh.bind(skeleton);
     meshes.push(mesh);
-    return mesh;
   };
-  const body = fighterMaterial(u);
-  materials.push(body);
-  add(lit, body, true);
-  add(line, outlineMaterial(), false);
+  const bodyMat = fighterMaterial(u);
+  materials.push(bodyMat);
+  mkMesh(lit, bodyMat, true);
+  mkMesh(line, outlineMaterial(), false);
   const gm = glowVertexMaterial();
   materials.push(gm);
-  add(glowB, gm, false);
+  mkMesh(glowB, gm, false);
   let enchantMaterial: MeshBasicMaterial | null = null;
   if (!ench.empty) {
     enchantMaterial = glowVertexMaterial();
     materials.push(enchantMaterial);
-    add(ench, enchantMaterial, false);
+    mkMesh(ench, enchantMaterial, false);
   }
-  void classId;
   return { meshes, materials, enchantMaterial };
 }
-
-export const gearGeo = { sphere, box, cone, torus, cyl, ico, capsule, octa, star, rbox };

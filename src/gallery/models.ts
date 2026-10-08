@@ -1,11 +1,12 @@
 import { Color, DirectionalLight, Group, HemisphereLight, PerspectiveCamera, Scene, type Object3D } from 'three';
-import { archetypeOf } from '../render/fighter/archetype';
-import { HIPS_Y, J, JOINT_COUNT, READY } from '../render/fighter/poses';
+import { bodyForm } from '../render/fighter/forms';
+import { lookFor } from '../render/fighter/look';
+import { HIPS_Y, J, JOINT_COUNT, stance } from '../render/fighter/poses';
 import { buildRig, type Rig } from '../render/fighter/rig';
 import { GameRenderer } from '../render/renderer';
 import { STYLE } from '../render/materials';
 import { GEAR, GEAR_SLOTS, type GearDef } from '../sim/gear';
-import type { GearSet, GearSlot } from '../sim/types';
+import type { FormId, GearSet, GearSlot } from '../sim/types';
 
 // 3D review: one row per slot, one fighter per gear piece, slowly turning.
 
@@ -16,13 +17,13 @@ function gearFor(slot: GearSlot, id: string): GearSet {
   return { ...BASE, [slot]: id } as GearSet;
 }
 
-function pose(rig: Rig, gear: GearSet): void {
-  const p = READY[archetypeOf(gear)];
+function pose(rig: Rig): void {
+  const p = stance(rig.look.grip, rig.look.offhand, bodyForm(rig.look.form));
   for (let i = 0; i < JOINT_COUNT; i++) rig.joints[i].rotation.set(p[i * 3], p[i * 3 + 1], p[i * 3 + 2]);
-  rig.joints[J.HIPS].position.y = 0.98 + p[HIPS_Y];
+  rig.joints[J.HIPS].position.y = rig.metrics.hipH + p[HIPS_Y];
 }
 
-export function mountModels(canvas: HTMLCanvasElement, only?: GearSlot, cols = 99): void {
+export function mountModels(canvas: HTMLCanvasElement, only?: GearSlot, cols = 99, form: FormId = 'balanced'): void {
   const renderer = new GameRenderer(canvas, 'high');
   const scene = new Scene();
   scene.background = new Color(0x4a5470);
@@ -38,7 +39,11 @@ export function mountModels(canvas: HTMLCanvasElement, only?: GearSlot, cols = 9
   const rim = new DirectionalLight(0xffbf86, 1.6);
   rim.position.set(-8, 6, -10);
   scene.add(rim);
-  renderer.setGrade({ sat: 1.12, contrast: 1.05, shadows: [-0.012, 0.0, 0.03], highlights: [0.035, 0.018, -0.012] });
+  renderer.setLook({
+    grade: { sat: 1.12, contrast: 1.05, shadows: [-0.012, 0.0, 0.03], highlights: [0.035, 0.018, -0.012] },
+    atmosphere: { fog: 0, sun: 0, sunDir: [0, 0, -1], density: 0, falloff: 0, baseY: 0, max: 0, glow: 0, ao: 0 },
+    usePostFog: () => {},
+  });
 
   const slots = only ? [only] : GEAR_SLOTS;
   const spacingX = 1.75, spacingY = 2.75;
@@ -55,8 +60,8 @@ export function mountModels(canvas: HTMLCanvasElement, only?: GearSlot, cols = 9
     maxCols = Math.max(maxCols, items.length);
     items.forEach((g, col) => {
       const gear = gearFor(slot, g.id);
-      const rig = buildRig(archetypeOf(gear), Object.values(gear) as never[], false, gear);
-      pose(rig, gear);
+      const rig = buildRig(lookFor({ form, gear }));
+      pose(rig);
       const holder = new Group();
       holder.position.set((col - (items.length - 1) / 2) * spacingX, -row * spacingY, 0);
       holder.add(rig.root);

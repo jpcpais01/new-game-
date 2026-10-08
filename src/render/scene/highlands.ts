@@ -1,11 +1,11 @@
-import { Color, CylinderGeometry, Mesh, PlaneGeometry, RingGeometry, type Scene, type ShaderMaterial, TorusGeometry, Vector3 } from 'three';
+import { AdditiveBlending, Color, CylinderGeometry, Mesh, PlaneGeometry, RingGeometry, type Scene, ShaderMaterial, TorusGeometry, Vector3 } from 'three';
 import { ARENA_HALF_WIDTH } from '../../sim/constants';
-import { glow, sceneToon, texturedMaterial } from '../materials';
+import { glow, sceneToon, STYLE, texturedMaterial } from '../materials';
 import { composeMatrix, MeshBuilder, prng } from '../meshBuilder';
-import type { GradeSettings } from '../renderer';
+import type { AtmosphereSettings, GradeSettings } from '../renderer';
 import { Arena, type ArenaFx, type ArenaOptions } from './arena';
 import {
-  canvasTexture, cloud, finish, G, godRays, makeLights, mountain, pine, rock, roundTree, skyDome, tuft,
+  canvasTexture, cloud, cloudSea, finish, G, godRays, lightPools, makeLights, mountain, pine, rock, roundTree, skyDome, tuft,
 } from './common';
 
 /** Light sandstone ring tiles with teal inlay, worn and overgrown at the rim. */
@@ -13,7 +13,7 @@ function floorTexture(size: number) {
   return canvasTexture(size, (g, S, rnd) => {
     const k = S / 1024;
     const cx = S / 2;
-    g.fillStyle = '#b9a58a';
+    g.fillStyle = '#6e604f';
     g.fillRect(0, 0, S, S);
     const rings = [0, 70, 140, 215, 290, 365, 440, 512].map((r) => r * k);
     for (let r = 1; r < rings.length - 1; r++) {
@@ -21,12 +21,19 @@ function floorTexture(size: number) {
       const n = 10 + r * 7;
       for (let i = 0; i < n; i++) {
         const a0 = (i / n) * Math.PI * 2, a1 = ((i + 1) / n) * Math.PI * 2;
-        g.fillStyle = `hsl(${30 + rnd() * 12}, ${18 + rnd() * 10}%, ${62 + rnd() * 9 - (r % 2) * 4}%)`;
+        const L = 55 + rnd() * 10 - (r % 2) * 4;
+        g.fillStyle = `hsl(${28 + rnd() * 14}, ${16 + rnd() * 12}%, ${L}%)`;
         g.beginPath();
         g.arc(cx, cx, r1 - 3 * k, a0 + 0.008, a1 - 0.008);
         g.arc(cx, cx, r0 + 3 * k, a1 - 0.008, a0 + 0.008, true);
         g.closePath();
         g.fill();
+        // Bevelled edges: light lip on the outer edge, shade on the inner one.
+        g.strokeStyle = `hsla(36, 30%, ${L + 12}%, 0.5)`;
+        g.lineWidth = 3 * k;
+        g.beginPath(); g.arc(cx, cx, r1 - 5 * k, a0 + 0.012, a1 - 0.012); g.stroke();
+        g.strokeStyle = `hsla(24, 25%, ${L - 16}%, 0.45)`;
+        g.beginPath(); g.arc(cx, cx, r0 + 5 * k, a0 + 0.012, a1 - 0.012); g.stroke();
       }
     }
     g.fillStyle = '#c9b597';
@@ -80,13 +87,42 @@ function floorTexture(size: number) {
   }, 11);
 }
 
+/** Additive ring of glowing rune dashes drifting around the floor inlay. */
+function runeRing(r: number, w: number, color: number): Mesh {
+  const geo = new RingGeometry(r - w / 2, r + w / 2, 160, 1);
+  geo.rotateX(-Math.PI / 2);
+  const mat = new ShaderMaterial({
+    transparent: true, depthWrite: false, blending: AdditiveBlending, fog: false,
+    polygonOffset: true, polygonOffsetFactor: -1,
+    uniforms: { uColor: { value: new Color(color) }, uTime: STYLE.uTime },
+    vertexShader: /* glsl */ `varying vec3 vP; void main() { vP = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+    fragmentShader: /* glsl */ `uniform vec3 uColor; uniform float uTime; varying vec3 vP;
+      void main() {
+        float a = atan(vP.z, vP.x);
+        float t = fract(a * 9.549 + uTime * 0.05);        // 60 glyph cells around the ring
+        float glyph = step(0.18, t) * step(t, 0.82) * (0.55 + 0.45 * step(0.5, fract(t * 3.0 + floor(a * 9.549) * 0.37)));
+        float pulse = 0.55 + 0.45 * sin(a * 2.0 - uTime * 1.3);
+        float k = glyph * pulse * 0.9;
+        gl_FragColor = vec4(uColor * k, 1.0);
+      }`,
+  });
+  mat.userData.own = true;
+  const m = new Mesh(geo, mat);
+  m.position.y = 0.02;
+  m.renderOrder = 2;
+  return m;
+}
+
 /**
  * Skyreach Highlands: a sun-washed stone ring on a mountain meadow, with
  * ruined columns, wind-blown grass and trees, and snowy peaks rising out of a
  * sea of clouds at golden hour. No crowd.
  */
 export class Highlands extends Arena {
-  readonly grade: GradeSettings = { sat: 1.12, contrast: 1.05, shadows: [-0.012, 0.0, 0.03], highlights: [0.035, 0.018, -0.012] };
+  readonly grade: GradeSettings = { sat: 1.1, contrast: 1.08, shadows: [-0.015, 0.0, 0.035], highlights: [0.035, 0.016, -0.015], bloom: 1.05, vignette: 0.5 };
+  readonly atmosphere: AtmosphereSettings = {
+    fog: 0xf2c9b4, sun: 0xffd29a, sunDir: [-0.5, 0.1, -1], density: 0.0045, falloff: 0.03, baseY: -18, max: 0.8, glow: 0.5, ao: 0.4,
+  };
   private readonly rays: ShaderMaterial | null;
 
   constructor(scene: Scene, opts: ArenaOptions) {
@@ -94,7 +130,8 @@ export class Highlands extends Arena {
     const d = opts.detail;
     this.brazierColor = 0x5ff0e0;
     this.setMood({
-      shadow: [0.42, 0.42, 0.68], mid: [0.8, 0.77, 0.86], lit: [1.06, 1.0, 0.9], skyFill: [0.07, 0.09, 0.15],
+      shadow: [0.4, 0.4, 0.68], mid: [0.8, 0.76, 0.86], lit: [1.08, 1.0, 0.88], skyFill: [0.07, 0.09, 0.16],
+      term: [0.2, 0.07, 0.0], groundY: -0.4,
     }, 0xeec7b4, 70, 420);
 
     this.key = makeLights(this.group, {
@@ -102,7 +139,8 @@ export class Highlands extends Arena {
       shadows: opts.shadows, shadowMapSize: opts.shadowMapSize,
     });
 
-    const sky = skyDome({ zenith: 0x2a5cc4, mid: 0x86b4ea, horizon: 0xffd0a6, ground: 0xeec7b4, sunDir: new Vector3(-0.5, 0.1, -1), sunColor: 0xfff0c8, sunSize: 1.4 });
+    const sky = skyDome({ zenith: 0x2a5cc4, mid: 0x86b4ea, horizon: 0xffd0a6, ground: 0xeec7b4, sunDir: new Vector3(-0.5, 0.1, -1), sunColor: 0xfff0c8, sunSize: 1.4,
+      clouds: { lit: 0xfff4ec, shade: 0xc9b2d6, cover: 0.56, scale: 1.1, speed: 1 } });
     sky.material.userData.own = true;
     this.group.add(sky);
 
@@ -157,6 +195,10 @@ export class Highlands extends Arena {
       for (const b of [near, lines]) b.put(G.cyl(8), 0x2fb5a8, x, 5.1, 0, { s: [0.35, 0.25, 0.35] });
     }
 
+    // Pools of crystal light at the gates and a slow rune circle in the inlay.
+    this.group.add(lightPools(this.braziers.map((b) => ({ x: b.x, z: b.z, r: 2.4 })), 0x5ff0e0, 0.5));
+    this.group.add(runeRing(10.7, 0.22, 0x5ff0e0));
+
     // --- Meadow ground ----------------------------------------------------------
     const ground = new PlaneGeometry(320, 130, 80, 32);
     ground.rotateX(-Math.PI / 2);
@@ -175,6 +217,7 @@ export class Highlands extends Arena {
     }
 
     // --- Sea of clouds and distant peaks ---------------------------------------
+    this.group.add(cloudSea(-19, -300, 1400, 520, 0xfff1e8, 0xc8a8c8, new Vector3(-0.5, 0.1, -1)));
     for (let i = 0; i < 70; i++) {
       const x = -260 + rnd() * 520, z = -90 - rnd() * 230;
       cloud(far, rnd, x, -16 + rnd() * 4, z, 9 + rnd() * 12, rnd() < 0.5 ? 0xfff2ea : 0xf8dfe8, 0.4);

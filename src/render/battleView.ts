@@ -4,9 +4,10 @@ import { Battle } from '../sim/battle';
 import type { BattleEvent, Projectile, ProjectileStyle } from '../sim/types';
 import type { FloatingText } from '../ui/floatingText';
 import type { FightCamera } from './camera';
+import { ContactShadow } from './fx/contactShadow';
 import { Lightning, Pulses, WeaponTrail } from './fx/effects';
 import type { Particles } from './fx/particles';
-import { accentOf } from './fighter/archetype';
+import { accentOf } from './fighter/look';
 import { FighterView, type FxContext } from './fighter/fighterView';
 import { elementImpact } from './gear/vfx';
 import { gearGeo } from './fighter/rig';
@@ -43,6 +44,7 @@ export class BattleView {
   battle: Battle | null = null;
   readonly fighters: [FighterView | null, FighterView | null] = [null, null];
   private readonly trails: [WeaponTrail, WeaponTrail];
+  private readonly shadows: [ContactShadow, ContactShadow] = [new ContactShadow(), new ContactShadow()];
   private readonly projectiles = new Map<number, ProjectileView>();
   private readonly projGroup = new Group();
   readonly pulses = new Pulses();
@@ -67,6 +69,7 @@ export class BattleView {
     scene.add(this.projGroup, this.pulses.group, this.lightning.group);
     this.trails = [new WeaponTrail(0xffffff), new WeaponTrail(0xffffff)];
     for (const t of this.trails) scene.add(t.mesh);
+    for (const c of this.shadows) scene.add(c.mesh);
   }
 
   /** Swap in a new battle and rebuild fighter models when loadouts change. */
@@ -114,7 +117,11 @@ export class BattleView {
     for (let i = 0; i < 2; i++) {
       const f = b.fighters[i];
       const v = this.fighters[i]!;
+      // Heads track each other (last frame's head position is close enough).
+      const foe = this.fighters[1 - i];
+      v.setLookAt(foe && b.fighters[1 - i].alive ? foe.headWorld : null);
       v.update(f, alpha, dt, this.fx, b.over, b.winner === i, xScale);
+      this.shadows[i].update((f.px + (f.x - f.px) * alpha) * xScale, f.y, f.alive);
       const a = f.action;
       const ab = a ? f.abilities[a.ability] : null;
       const swinging = !!a && !!ab && !a.feint && ab.power > 0 && ab.kind !== 'projectile' && ab.kind !== 'meteor'
@@ -384,8 +391,8 @@ export class BattleView {
           if (e.amount > 0) this.text.spawn(String(e.amount), e.x, e.y, e.ability === 'poison' ? 'dot poison' : e.ability === 'thorns' ? 'dot thorns' : 'dot', 0.75, 0.7);
           break;
         }
-        tv?.onHit(e.heavy);
         const att = b.fighters[e.attacker];
+        tv?.onHit(e.heavy || e.crit, att.x, e.blocked);
         const dir = Math.sign(e.x - att.x) || 1;
         const heavy = e.heavy || e.crit;
         // Weapon strikes carry the weapon's element: tinted sparks plus an element flourish.
@@ -420,6 +427,7 @@ export class BattleView {
         break;
       }
       case 'parry':
+        this.fighters[e.defender]?.onParry();
         this.pulses.spawn('ring', e.x, e.y, 1.4, 0xffffff, 0.3, 4);
         this.pulses.spawn('star', e.x, e.y, 1.6, 0xbfe4ff, 0.2, 3);
         add.burst({ x: e.x, y: e.y, count: 30, speed: [6, 12], life: [0.15, 0.35], size: [0.05, 0.1], color: 0xe8f4ff, intensity: 4, drag: 3, stretch: 0.06 });
