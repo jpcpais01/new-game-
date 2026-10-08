@@ -37,13 +37,13 @@
   --slant: -8deg;
   --hi: inset 0 1.5px 0 rgba(255, 240, 222, 0.16);
   --drop: 0 4px 0 var(--ink);
-  /* Edge to edge: the UI may sit over the status bar and camera cutout (the
-     panels' own padding keeps text off the very edge). Only the bottom keeps a
-     little of the system inset so nothing lands on the gesture bar. */
+  /* The UI ignores the system insets: a fixed 3% of the width on each side keeps
+     it clear of the screen edges and camera cutout in any orientation. Only the
+     bottom keeps a little of the system inset so nothing lands on the gesture bar. */
   --safe-t: 0px;
   --safe-b: min(env(safe-area-inset-bottom, 0px), 12px);
-  --safe-l: 0px;
-  --safe-r: 0px;
+  --safe-l: 3vw;
+  --safe-r: 3vw;
 }
 
 * { box-sizing: border-box; }
@@ -723,9 +723,8 @@ button.medal:active { transform: translateY(2px); box-shadow: inset 0 -3px 0 rgb
 /* The menu layer and its bottom row span the screen; only their contents should take taps. */
 #ui > .menu, .menu-bottom { pointer-events: none; }
 .menu-bottom > * { pointer-events: auto; }
-/* In battle only the label shows, tucked into the edge. */
-#ui:has(> .hud:not([hidden])) > .version { left: calc(6px + var(--safe-l)); bottom: calc(3px + var(--safe-b)); }
-#ui:has(> .hud:not([hidden])) .notes-btn { display: none; }
+/* Battles show neither the label nor the button. */
+#ui:has(> .hud:not([hidden])) > .version { display: none; }
 /* Portrait: the menu's bottom row and the creator sheet fill the bottom edge, so
    outside battles it moves to the top-left, the button under the label, clear of the title. */
 @media (orientation: portrait) {
