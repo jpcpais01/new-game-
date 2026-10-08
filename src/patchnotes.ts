@@ -12,6 +12,16 @@ export interface PatchNote {
 
 export const PATCH_NOTES: PatchNote[] = [
   {
+    version: '0.8.1',
+    date: '2026-10-08',
+    title: 'Blocking turns the right way',
+    notes: [
+      'Raising a shield now turns the shield shoulder into the attack instead of away from it.',
+      'Shield users always block with the shield, even with fists or a staff.',
+      'Dual blades guard with the off-hand blade in front, and a successful parry snaps the arm that actually parried.',
+    ],
+  },
+  {
     version: '0.8.0',
     date: '2026-10-08',
     title: 'Special auras',
