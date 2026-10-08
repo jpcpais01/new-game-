@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_APPEARANCE, EYE_STYLES, FACIAL_HAIR, HAIR_STYLES, JAW_STYLES, MOUTH_STYLES, NOSE_STYLES, type Appearance,
 } from '../../../character/appearance';
+import { OUTFIT_IDS } from '../../../character/outfits';
 import { FORM_IDS } from '../../../sim/forms';
 import { bodyForm } from '../forms';
 import { sculptBody } from './body';
@@ -23,15 +24,18 @@ function sane(m: SculptMesh): void {
 const tris = (m: SculptMesh | null) => (m ? m.idx.length / 3 : 0);
 
 describe('sculpted fighters', () => {
-  it('builds every form within the triangle budget of the game tiers', () => {
-    for (const id of FORM_IDS) {
-      const s = bodyForm(id).shape;
-      const ankleH = 0.085 * s.footS;
-      const b = sculptBody(`test:${id}`, s, ankleH + s.thigh + s.shin + 0.06, ankleH, 0);
-      for (const m of [b.torso, b.armR, b.legR, b.sash.mesh]) sane(m);
-      expect(tris(b.torso) + 2 * tris(b.armR) + 2 * tris(b.legR)).toBeLessThan(40000);
+  it('builds every form in every outfit within the triangle budget of the game tiers', () => {
+    for (const outfit of OUTFIT_IDS) {
+      for (const id of FORM_IDS) {
+        const s = bodyForm(id).shape;
+        const ankleH = 0.085 * s.footS;
+        const b = sculptBody(`test:${id}`, s, ankleH + s.thigh + s.shin + 0.06, ankleH, 0, outfit);
+        for (const m of [b.torso, b.armR, b.legR, ...b.cloth.map((c) => c.mesh)]) sane(m);
+        const total = tris(b.torso) + 2 * tris(b.armR) + 2 * tris(b.legR) + b.cloth.reduce((n, c) => n + tris(c.mesh), 0);
+        expect(total, `${outfit} on ${id}`).toBeLessThan(40000);
+      }
     }
-  }, 60000);
+  }, 240000);
 
   it('builds every hairstyle and face option without broken geometry', () => {
     const looks: Appearance[] = [

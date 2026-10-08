@@ -1,5 +1,7 @@
+import { OUTFIT_IDS, OUTFIT_SKINS, type OutfitId } from './outfits';
+
 /**
- * The look of a character: face, hair and colours. Pure data (no three.js) so
+ * The look of a character: face, hair, colours and outfit. Pure data (no three.js) so
  * it can be stored, validated and generated anywhere. The renderer turns it
  * into geometry in render/fighter/appearance.ts; the simulation never sees it.
  */
@@ -38,6 +40,8 @@ export interface Appearance {
   primary: number;
   /** Trim, sash and detail colour. */
   secondary: number;
+  /** Character skin: the outfit the body is sculpted in (see outfits.ts). */
+  outfit: OutfitId;
 }
 
 export const SKIN_TONES = [
@@ -57,7 +61,7 @@ export const OUTFIT_COLORS = [
 export const DEFAULT_APPEARANCE: Appearance = {
   skin: 0xf0c49c, hairStyle: 'swept', hairColor: 0x3a2418, eyes: 'round', eyeColor: 0x2a3f8a,
   brows: 'soft', mouth: 'neutral', nose: 'button', jaw: 'soft', facialHair: 'none', marking: 'none',
-  primary: 0x2f5be0, secondary: 0xf3c24f,
+  primary: 0x2f5be0, secondary: 0xf3c24f, outfit: 'tunic',
 };
 
 const pick = <T>(arr: readonly T[], r: () => number): T => arr[Math.floor(r() * arr.length) % arr.length];
@@ -85,6 +89,8 @@ export function randomAppearance(r: () => number = Math.random): Appearance {
     marking: r() < 0.6 ? 'none' : pick(MARKINGS.slice(1), r),
     primary,
     secondary,
+    // Some rivals show up in a character skin.
+    outfit: r() < 0.3 ? pick(OUTFIT_SKINS, r) : 'tunic',
   };
 }
 
@@ -109,5 +115,6 @@ export function sanitizeAppearance(raw: unknown): Appearance {
     marking: oneOf(a.marking, MARKINGS, d.marking),
     primary: isColor(a.primary) ? a.primary : d.primary,
     secondary: isColor(a.secondary) ? a.secondary : d.secondary,
+    outfit: oneOf(a.outfit, OUTFIT_IDS, d.outfit),
   };
 }

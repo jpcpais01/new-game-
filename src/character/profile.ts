@@ -47,7 +47,7 @@ export function saveCharacter(c: PlayerCharacter): void {
  */
 export function newCharacter(previous?: CharacterBuild): PlayerCharacter {
   const base = previous ?? DEFAULT_BUILDS[0];
-  return { name: '', form: 'balanced', gear: { ...base.gear }, look: randomAppearance(), skins: {} };
+  return { name: '', form: 'balanced', gear: { ...base.gear }, look: { ...randomAppearance(), outfit: 'tunic' }, skins: {} };
 }
 
 const FIRST = [

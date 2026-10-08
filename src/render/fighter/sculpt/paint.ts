@@ -13,6 +13,8 @@ export const M = {
   SKIN: 0, SHIRT: 1, TRIM: 2, PANTS: 3, BOOT: 4, SOLE: 5, WRAP: 6, HAIR: 7, LIP: 8, MOUTH: 9, TEETH: 10,
   EYE: 11, IRIS: 12, PUPIL: 13, LASH: 14, BROW: 15, METAL: 16, SASH: 17, CUFF: 18, NAIL: 19, HAIR_DARK: 20,
   SCAR: 21, PAINT: 22, GLOW: 23, SHIRT_DARK: 24, LINING: 25, SHAVE: 26, STUBBLE: 27, BLUSH: 28, FRECKLE: 29,
+  // Outfit materials (character skins).
+  PLATE: 30, FUR: 31, GLOW2: 32, LEATHER: 33, SUIT: 34, FUR_DARK: 35, PLATE_DARK: 36,
 } as const;
 
 export interface PaintColors {
@@ -27,6 +29,15 @@ export interface PaintColors {
   sash: number;
   /** Marking colour (war paint, tattoo). */
   mark: number;
+  /** Outfit extras (character skins); each falls back to a house colour. */
+  plate?: number;
+  fur?: number;
+  leather?: number;
+  metal?: number;
+  suit?: number;
+  /** Emissive colours: seams, circuits, gems. */
+  glow?: number;
+  glow2?: number;
 }
 
 interface MatStyle {
@@ -42,6 +53,12 @@ interface MatStyle {
 }
 
 const W = (r: number, g: number, b: number): [number, number, number] => [r, g, b];
+/**
+ * Gloss values of 2 and above are read by the fighter shader as self-lit
+ * (strength = gloss - 2), so glowing seams and circuits ride in the body mesh
+ * itself instead of costing their own draw call.
+ */
+const EMISSIVE: MatStyle = { gloss: 4.2, wash: 0, washTint: W(1, 1, 1), edge: 0 };
 const STYLE: Record<number, MatStyle> = {
   [M.SKIN]: { gloss: 0.12, wash: 0.55, washTint: W(0.62, 0.3, 0.26), edge: 0.16 },
   [M.BLUSH]: { gloss: 0.12, wash: 0.55, washTint: W(0.62, 0.3, 0.26), edge: 0.16 },
@@ -66,6 +83,14 @@ const STYLE: Record<number, MatStyle> = {
   [M.PUPIL]: { gloss: 1, wash: 0, washTint: W(1, 1, 1), edge: 0 },
   [M.TEETH]: { gloss: 0.6, wash: 0.5, washTint: W(0.7, 0.6, 0.55), edge: 0.05 },
   [M.NAIL]: { gloss: 0.6, wash: 0.3, washTint: W(0.6, 0.4, 0.4), edge: 0.1 },
+  [M.GLOW]: EMISSIVE,
+  [M.GLOW2]: EMISSIVE,
+  [M.PLATE]: { gloss: 0.85, wash: 0.75, washTint: W(0.32, 0.28, 0.36), edge: 0.5 },
+  [M.PLATE_DARK]: { gloss: 0.6, wash: 0.75, washTint: W(0.3, 0.26, 0.34), edge: 0.35 },
+  [M.FUR]: { gloss: 0.02, wash: 0.9, washTint: W(0.5, 0.5, 0.6), edge: 0.45, sheen: 0.12 },
+  [M.FUR_DARK]: { gloss: 0.02, wash: 0.9, washTint: W(0.45, 0.45, 0.55), edge: 0.35 },
+  [M.LEATHER]: { gloss: 0.35, wash: 0.75, washTint: W(0.4, 0.3, 0.3), edge: 0.3 },
+  [M.SUIT]: { gloss: 0.55, wash: 0.6, washTint: W(0.4, 0.4, 0.55), edge: 0.32 },
 };
 const CLOTH: MatStyle = { gloss: 0.04, wash: 0.75, washTint: W(0.45, 0.4, 0.55), edge: 0.22 };
 
@@ -105,11 +130,18 @@ export function baseColor(m: number, c: PaintColors): number {
     case M.IRIS: return c.eyes;
     case M.PUPIL: return 0x08070c;
     case M.LASH: return mixHex(c.hair, 0x0a0810, 0.75);
-    case M.METAL: return 0xd8b25a;
+    case M.METAL: return c.metal ?? 0xd8b25a;
     case M.NAIL: return mixHex(c.skin, 0xffffff, 0.25);
     case M.SCAR: return mixHex(c.skin, 0x8a3a3a, 0.35);
     case M.PAINT: return c.mark;
-    case M.GLOW: return c.eyes;
+    case M.GLOW: return c.glow ?? c.eyes;
+    case M.GLOW2: return c.glow2 ?? c.glow ?? c.eyes;
+    case M.PLATE: return c.plate ?? 0x8a8f9c;
+    case M.PLATE_DARK: return mixHex(c.plate ?? 0x8a8f9c, 0x0c0a12, 0.4);
+    case M.FUR: return c.fur ?? 0xd8d0c4;
+    case M.FUR_DARK: return mixHex(c.fur ?? 0xd8d0c4, 0x2a2430, 0.35);
+    case M.LEATHER: return c.leather ?? c.boot;
+    case M.SUIT: return c.suit ?? c.shirt;
     case M.SHAVE: return mixHex(c.hair, c.skin, 0.78);
     case M.STUBBLE: return mixHex(c.skin, c.hair, 0.38);
     case M.BLUSH: return mixHex(c.skin, 0xe0605a, 0.07);

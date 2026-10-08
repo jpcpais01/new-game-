@@ -12,6 +12,19 @@ export interface PatchNote {
 
 export const PATCH_NOTES: PatchNote[] = [
   {
+    version: '0.7.0',
+    date: '2026-10-08',
+    title: 'Character skins',
+    notes: [
+      'Three character skins that dress your fighter head to toe, fitted to every body form: Ember Warlord, Frost Warden and Neon Runner.',
+      'Ember Warlord: blackened plate with fire leaking from every seam, horned pauldrons and a crimson war tabard.',
+      'Frost Warden: a quilted greatcoat with a split tail, a heavy fur mantle and fur-topped boots.',
+      'Neon Runner: a black chrome bodysuit traced with light, a glowing chest core and a streaming data scarf.',
+      'Pick one under Outfit in the Skins tab when you create or edit your fighter. Rivals sometimes wear them too.',
+      'Skins only change how you look; stats and abilities stay the same.',
+    ],
+  },
+  {
     version: '0.6.1',
     date: '2026-10-08',
     title: 'Heads to match the body',
