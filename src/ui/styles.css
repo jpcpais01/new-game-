@@ -227,6 +227,14 @@ button:focus-visible { outline: 2px solid var(--ember-hi); outline-offset: 2px; 
   box-shadow: inset 0 -3px 0 rgba(0, 0, 0, 0.2), 0 2px 0 var(--ink);
 }
 .medal .ic { width: 58%; height: 58%; filter: drop-shadow(0 1.5px 0 rgba(23, 15, 29, 0.55)); }
+button.medal { position: relative; padding: 0; transition: transform 0.08s, box-shadow 0.08s; }
+button.medal:active { transform: translateY(2px); box-shadow: inset 0 -3px 0 rgba(0, 0, 0, 0.2), 0 0 0 var(--ink); }
+.medal-badge {
+  position: absolute; right: -5px; bottom: -4px; width: 17px; height: 17px; border-radius: 50%;
+  display: grid; place-items: center; color: var(--ink);
+  background: var(--ember-hi); border: 1.5px solid var(--ink);
+}
+.medal .medal-badge .ic { width: 10px; height: 10px; stroke-width: 3; filter: none; }
 
 /* Slanted label badge. */
 .tag, .chip, .res-names span, .cr-kicker {
@@ -381,6 +389,12 @@ button:focus-visible { outline: 2px solid var(--ember-hi); outline-offset: 2px; 
 }
 @keyframes pop { from { opacity: 0; transform: translateY(14px) scale(0.97); } }
 .settings-modal { width: min(460px, 100%); }
+.form-modal { width: min(440px, 100%); }
+.classes.form-sheet { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.form-sheet .class-btn { padding: 10px 4px 9px; font-size: 13px; gap: 4px; }
+.form-sheet .class-btn .glyph { width: 40px; height: 40px; }
+.form-sheet .class-btn .glyph .ic { width: 22px; height: 22px; }
+.form-sheet .class-btn small { max-width: 100%; font-size: 10px; font-weight: 600; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .modal-head {
   display: flex; align-items: center; gap: 10px; padding: 10px 10px 10px 16px;
   background: linear-gradient(180deg, rgba(255, 180, 60, 0.12), transparent);
@@ -578,8 +592,11 @@ button:focus-visible { outline: 2px solid var(--ember-hi); outline-offset: 2px; 
 .controls .btn { min-width: 40px; min-height: 38px; padding: 7px 11px; font-size: 13.5px; font-weight: 800; }
 .controls .btn .ic { font-size: 16px; }
 .controls .zoom { display: inline-flex; align-items: center; gap: 6px; }
-.speed-seg { display: flex; gap: 5px; }
-.speed-cycle { display: none; }
+.speed-cycle { min-width: 64px; gap: 5px; }
+.speed-cycle .glyph { font-size: 15px; opacity: 0.55; }
+.speed-cycle .val { min-width: 1.6em; text-align: left; }
+.speed-cycle.fast { color: var(--ember-hi); }
+.speed-cycle.fast .glyph { opacity: 1; }
 
 .banner {
   position: absolute; left: 50%; top: 42%; transform: translate(-50%, -50%);
@@ -940,8 +957,7 @@ button:focus-visible { outline: 2px solid var(--ember-hi); outline-offset: 2px; 
   .feed div { font-size: 11.5px; }
   .controls { align-self: center; gap: 6px; }
   .controls .btn { min-width: 48px; min-height: 44px; padding: 8px 10px; font-size: 14px; }
-  .controls .zoom .lbl, .speed-seg { display: none; }
-  .speed-cycle { display: inline-flex; }
+  .controls .zoom .lbl { display: none; }
   .ult-call { font-size: 19px; padding-block: 6px; top: 24%; }
   .fps { bottom: calc(76px + var(--safe-b)); }
 
@@ -991,7 +1007,7 @@ button:focus-visible { outline: 2px solid var(--ember-hi); outline-offset: 2px; 
 /* ---- phone landscape (the main phone layout once fullscreen): corners at the sides, duel in the middle */
 @media (orientation: landscape) and (max-height: 560px) {
   .menu {
-    grid-template-columns: minmax(0, clamp(196px, 28vw, 250px)) minmax(0, 1fr) minmax(0, clamp(196px, 28vw, 250px));
+    grid-template-columns: clamp(150px, 19vw, 188px) minmax(0, 1fr) clamp(150px, 19vw, 188px);
     grid-template-rows: auto minmax(0, 1fr) auto;
     gap: 8px;
     padding: calc(8px + var(--safe-t)) calc(10px + var(--safe-r)) calc(12px + var(--safe-b)) calc(10px + var(--safe-l));
@@ -1003,20 +1019,19 @@ button:focus-visible { outline: 2px solid var(--ember-hi); outline-offset: 2px; 
   .corner.side-1 { grid-column: 3; }
   .corner header { min-height: 36px; gap: 8px; }
   .medal { width: 32px; height: 32px; }
-  .corner .tag { font-size: 8.5px; padding: 1px 6px; letter-spacing: 0.12em; }
-  .corner .name { font-size: 18px; }
-  .corner .sub { display: none; }
-  .corner .edit { width: 36px; height: 36px; padding: 0; }
-  .corner .edit .lbl { display: none; }
-  /* Wide phones (over 900px) also land here: keep the same compact corner. */
-  .blurb, .stats, .abilities, .slot .slot-name { display: none; }
+  .corner .name { font-size: 17px; }
+  .corner .sub { font-size: 10.5px; }
+  /* Compact strips that keep the middle of the screen for the duel: the emblem
+     opens the editor (you) or the form sheet (rival), slots are icons only.
+     Wide phones (over 900px) also land here: keep the same compact corner. */
+  .corner .tag, .corner .edit, .classes.forms, .blurb, .stats, .abilities, .slot .slot-name, .slot .slot-item { display: none; }
   .class-btn { padding: 4px 1px; font-size: 9.5px; gap: 2px; border-radius: 10px; }
   .class-btn .glyph { width: 24px; height: 24px; }
   .class-btn .glyph .ic { width: 14px; height: 14px; }
   .classes.forms { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; }
   .gear-slots { gap: 6px; }
-  .gear-slots .slot { min-height: 0; padding: 4px 2px; gap: 2px; font-size: 9px; border-radius: 11px; }
-  .slot .ico { width: 30px; height: 30px; }
+  .gear-slots .slot { min-height: 0; aspect-ratio: 1; padding: 3px; border-radius: 11px; }
+  .slot .ico { width: 100%; height: 100%; max-width: 40px; max-height: 40px; }
   .menu-bottom { grid-row: 3; grid-column: 2; flex-wrap: nowrap; gap: 10px; }
   .menu-bottom .arena-pick, .menu-bottom .lbl { display: none; }
   .menu-bottom .icon-btn { width: 44px; height: 44px; padding: 0; flex: none; }
@@ -1061,7 +1076,6 @@ button:focus-visible { outline: 2px solid var(--ember-hi); outline-offset: 2px; 
   .feed div:nth-child(n + 3) { display: none; }
   .controls { gap: 4px; padding: 4px; border-radius: 13px; }
   .controls .btn { min-width: 40px; min-height: 36px; padding: 5px 9px; font-size: 13px; }
-  .speed-seg { gap: 4px; }
   .controls .zoom .lbl { display: none; }
   .ult-call { font-size: 19px; padding-block: 5px; top: 30%; }
   .banner { font-size: clamp(44px, 10vw, 90px); }
@@ -1107,10 +1121,6 @@ button:focus-visible { outline: 2px solid var(--ember-hi); outline-offset: 2px; 
 }
 @media (orientation: landscape) and (max-height: 560px) and (max-width: 700px) {
   .cr-tab .glyph { display: none; }
-  /* Corners this narrow can't fit item names: the icons carry them, the picker names them. */
-  .slot .slot-item { display: none; }
-  .slot .ico { width: 34px; height: 34px; }
-  .gear-slots .slot { padding: 5px 2px; }
 }
 
 /* Comfortable touch targets wherever the pointer is a finger. */
