@@ -6,7 +6,7 @@ import { clamp, damp, easeInCubic, easeOutCubic, smoothstep } from '../../core/m
 import { getStatus, stacksOf, type Fighter } from '../../sim/fighter';
 import { ITEMS } from '../../sim/items';
 import type { ClassId, ItemId } from '../../sim/types';
-import { glow, sceneToon } from '../materials';
+import { glow } from '../materials';
 import type { Particles } from '../fx/particles';
 import {
   actionPoses, HIPS_Y, HURT_ADD, J, JOINT_COUNT, lerpPose, POSE_SIZE, READY, VICTORY, type Pose,
@@ -90,7 +90,7 @@ export class FighterView {
 
   constructor(classId: ClassId, items: ItemId[], facing: 1 | -1, team: 0 | 1) {
     this.classId = classId;
-    this.rig = buildRig(classId);
+    this.rig = buildRig(classId, items);
     this.group = this.rig.root;
     // Team identity: coloured rim light and a glowing ring at the feet, so
     // mirror matches stay readable.
@@ -108,12 +108,13 @@ export class FighterView {
     this.scale = items.includes('giants_belt') ? 1.08 : 1;
     this.group.scale.setScalar(this.scale);
 
-    if (this.enchantColor) {
-      for (const m of this.rig.weaponGlow) {
-        if (this.classId === 'arcanist') continue;
-        m.material = glow(this.enchantColor.getHex(), 1.6);
-      }
+    if (this.rig.enchantMaterial) {
+      // Weapon edge glow takes the enchant colour (white-hot steel otherwise).
+      if (this.enchantColor) this.rig.enchantMaterial.color.copy(this.enchantColor).multiplyScalar(2.2);
+      else this.rig.enchantMaterial.color.setRGB(1, 1, 1);
     }
+    this.phoenix = this.rig.phoenix;
+    this.rig.orbiters.forEach((o, i) => this.orbiters.push({ item: o.item, mesh: o.bone, phase: i * 2.1, radius: 0.78 + i * 0.08 }));
 
     // Shield bubble (Aegis or any shield).
     bubbleGeo ??= new SphereGeometry(1, 24, 16);
@@ -150,89 +151,11 @@ export class FighterView {
     this.mark.rotation.x = Math.PI / 2;
     this.mark.visible = false;
     this.group.add(this.mark);
-
-    this.buildGear(items);
   }
 
   private yawFor(facing: number): number {
     // Turn slightly towards the camera so both fighters read in 3/4 view.
     return facing === 1 ? -0.42 : -Math.PI + 0.42;
-  }
-
-  private buildGear(items: ItemId[]): void {
-    const a = this.rig.anchors;
-    // Item gems on the belt — readable at a glance.
-    items.forEach((id, i) => {
-      const gem = new Mesh(gearGeo.ico(0.055), glow(ITEMS[id].color, 1.2));
-      gem.position.set(0.2, 0.06, (i - 1) * 0.12);
-      a.hips.add(gem);
-    });
-    for (const id of items) {
-      switch (id) {
-        case 'thornmail':
-          for (const sh of [a.shoulderL, a.shoulderR]) {
-            for (let k = 0; k < 3; k++) {
-              const c = new Mesh(gearGeo.cone(0.035, 0.18, 6), sceneToon(0x58c46b));
-              c.position.set((k - 1) * 0.08, 0.12, 0);
-              c.rotation.z = (1 - k) * 0.5;
-              sh.add(c);
-            }
-          }
-          break;
-        case 'swift_boots':
-          for (const f of [a.footL, a.footR]) {
-            const r = new Mesh(gearGeo.torus(0.1, 0.025), glow(0x5effc8, 1.2));
-            r.position.set(0, -0.32, 0);
-            r.rotation.x = Math.PI / 2;
-            f.add(r);
-          }
-          break;
-        case 'berserker_mask': {
-          const band = new Mesh(gearGeo.box(0.06, 0.06, 0.32), glow(0xff2020, 1.3));
-          band.position.set(0.2, 0.2, 0);
-          a.head.add(band);
-          break;
-        }
-        case 'iron_will':
-          for (const j of [this.rig.joints[J.FARM_L], this.rig.joints[J.FARM_R]]) {
-            const r = new Mesh(gearGeo.torus(0.1, 0.025), sceneToon(0xa0a8b8));
-            r.position.y = -0.24;
-            r.rotation.x = Math.PI / 2;
-            j.add(r);
-          }
-          break;
-        case 'aegis_charm': {
-          const g = new Mesh(gearGeo.ico(0.07), glow(0xffe27a, 1.3));
-          g.position.set(0.23, 0.22, 0);
-          a.chest.add(g);
-          break;
-        }
-        case 'phoenix_feather': {
-          const f = new Mesh(gearGeo.cone(0.05, 0.38, 6), glow(0xff8a2e, 1.4));
-          f.position.set(-0.1, 0.5, 0.14);
-          f.rotation.z = 0.8;
-          a.head.add(f);
-          this.phoenix = f;
-          break;
-        }
-        case 'giants_belt': {
-          const b = new Mesh(gearGeo.torus(0.22, 0.06), sceneToon(0xb98a4a));
-          b.position.y = 0.02;
-          b.rotation.x = Math.PI / 2;
-          b.scale.set(0.95, 1.2, 1);
-          a.hips.add(b);
-          break;
-        }
-        case 'mirror_ward': case 'storm_sigil': case 'echo_stone': case 'hourglass': {
-          const geo = id === 'mirror_ward' ? gearGeo.cyl(0.12, 0.12, 0.02, 6) : id === 'hourglass' ? gearGeo.cone(0.07, 0.16, 4) : gearGeo.ico(0.08);
-          const m = new Mesh(geo, glow(ITEMS[id].color, 1.5));
-          if (id === 'mirror_ward') m.rotation.x = Math.PI / 2;
-          this.group.add(m);
-          this.orbiters.push({ item: id, mesh: m, phase: this.orbiters.length * 2.1, radius: 0.75 + this.orbiters.length * 0.08 });
-          break;
-        }
-      }
-    }
   }
 
   onHit(heavy: boolean): void {
@@ -440,10 +363,10 @@ export class FighterView {
       let on = 1;
       if (o.item === 'mirror_ward') on = f.mirrorCd <= 0 ? 1 : 0.35;
       if (o.item === 'storm_sigil') on = 0.5 + f.stormCounter * 0.35;
-      o.mesh.scale.setScalar(on * (1 + Math.sin(this.time * 6) * 0.05 * on));
-      o.mesh.visible = f.alive;
+      o.mesh.scale.setScalar(Math.max(0.01, (f.alive ? 1 : 0) * on * (1 + Math.sin(this.time * 6) * 0.05 * on)));
     }
-    if (this.phoenix) this.phoenix.visible = !f.phoenixUsed;
+    // Collapse the spent feather into the head (never scale to exactly zero: NaN normals).
+    if (this.phoenix) this.phoenix.scale.setScalar(f.phoenixUsed ? 0.01 : 1);
   }
 
   private updateCloth(f: Fighter, dt: number): void {
@@ -493,6 +416,10 @@ export class FighterView {
       _v2.copy(this.headWorld);
       fx.add.emit(_v2.x, _v2.y - 0.1, _v2.z, (Math.random() - 0.5) * 0.3, 0.6, 0, 0.6, 2.5, 1.0, 0.25, 0.07, -1, 0.5, 0.2, 0);
     }
+    // Footstep dust while running on the ground.
+    if (y < 0.05 && Math.abs(f.vx) > 2.6 && Math.random() < 0.35) {
+      fx.smoke.emit(x - Math.sign(f.vx) * 0.2, 0.08, (Math.random() - 0.5) * 0.3, -f.vx * 0.12, 0.35, 0, 0.55, 0.85, 0.8, 0.72, 0.22, 0, 2, 1.6, 0);
+    }
     // Zephyr boots afterimage dust.
     if (f.has.has('swift_boots') && Math.abs(f.vx) > 3) {
       fx.add.emit(x, y + 0.1, 0, -f.vx * 0.1, 0.3, 0, 0.4, 0.4, 2.2, 1.6, 0.12, 0, 2, 0.1, 0);
@@ -502,6 +429,7 @@ export class FighterView {
   dispose(): void {
     this.group.removeFromParent();
     for (const m of this.rig.materials) m.dispose();
+    for (const m of this.rig.meshes) { m.geometry.dispose(); m.skeleton.dispose(); }
     this.shieldMat.dispose();
   }
 }

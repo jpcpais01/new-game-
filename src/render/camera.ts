@@ -1,5 +1,9 @@
 import { PerspectiveCamera, Vector3 } from 'three';
 import { clamp, damp } from '../core/math';
+import { STYLE } from './materials';
+
+export type Zoom = 'close' | 'normal' | 'distant';
+export const ZOOM_FACTOR: Record<Zoom, number> = { close: 0.7, normal: 1, distant: 1.42 };
 
 /**
  * Side-on fight camera. Frames both fighters, eases between targets, and
@@ -16,6 +20,9 @@ export class FightCamera {
   private readonly look = new Vector3();
   /** 0 = battle framing, 1 = menu/showcase framing. */
   showcase = 1;
+  /** Player zoom preference (battle framing only). */
+  zoom: Zoom = 'normal';
+  private zoomK = 1;
 
   constructor(aspect: number) {
     this.camera = new PerspectiveCamera(30, aspect, 0.1, 400);
@@ -26,6 +33,7 @@ export class FightCamera {
     // Wider lens in portrait so the duel still fits.
     this.camera.fov = aspect < 1 ? 46 : aspect < 1.4 ? 36 : 30;
     this.camera.updateProjectionMatrix();
+    STYLE.uAspect.value = 1 / Math.max(0.01, aspect);
   }
 
   shake(amount: number): void {
@@ -41,10 +49,16 @@ export class FightCamera {
     const cam = this.camera;
     const tanHalf = Math.tan((cam.fov * Math.PI) / 360);
     const sep = Math.abs(ax - bx);
-    const margin = 2.6 + this.showcase * 1.2;
+    // Close zoom crops tighter around the duel; distant shows the whole arena.
+    this.zoomK = damp(this.zoomK, ZOOM_FACTOR[this.zoom], 4, dt);
+    const zk = this.zoomK + (1 - this.zoomK) * this.showcase;
+    // Both fighters always stay in frame: close zoom only trims the margins
+    // and the height headroom, distant pulls the whole shot back.
+    const tight = zk < 1 ? (zk - 0.7) / 0.3 : 1; // 0 at Close, 1 at Normal
+    const margin = (2.6 + this.showcase * 1.2) * (0.55 + 0.45 * tight);
     const needW = (sep / 2 + margin) / (tanHalf * cam.aspect);
     const needH = (2.7 + Math.max(ay, by) * 0.5) / tanHalf;
-    const target = clamp(Math.max(needW, needH), 9, 44) * (1 - this.punch * 0.09);
+    const target = clamp(Math.max(needW, needH * Math.min(1, zk)) * Math.max(1, zk), 6.5, 60) * (1 - this.punch * 0.09);
     const midX = (ax + bx) / 2;
 
     this.dist = damp(this.dist, target, 2.6, dt);
@@ -60,6 +74,8 @@ export class FightCamera {
     const sy = (Math.sin(t * 1.3 + 2) * 0.6 + Math.sin(t * 2.9) * 0.4) * t2 * 0.3;
 
     const height = 1.7 + this.dist * 0.11 + this.showcase * 0.3;
+    // Lines stay crisp: slightly thinner far away, slightly bolder up close.
+    STYLE.uOutlineWidth.value = 0.0034 * clamp(15 / this.dist, 0.65, 1.35);
     cam.position.set(this.focusX + sway + sx, height + sy, this.dist);
     this.look.set(this.focusX + sx * 0.5, this.focusY + sy * 0.5, 0);
     cam.lookAt(this.look);

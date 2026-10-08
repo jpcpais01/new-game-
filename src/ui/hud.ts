@@ -27,6 +27,7 @@ export interface HudCallbacks {
   onSpeed(s: number): void;
   onPause(): void;
   onExit(): void;
+  onZoom(): void;
 }
 
 /**
@@ -42,6 +43,8 @@ export class Hud {
   private ultCalls: HTMLElement[] = [];
   private speedBtns: HTMLButtonElement[] = [];
   private pauseBtn!: HTMLButtonElement;
+  private zoomBtn!: HTMLButtonElement;
+  private zoomLabel = 'Normal';
   private lastClock = -1;
   private battle: Battle | null = null;
 
@@ -80,13 +83,19 @@ export class Hud {
     this.feed = h('div.feed');
     this.speedBtns = [1, 2, 4].map((s) => h<HTMLButtonElement>('button.btn' + (s === speed ? '.on' : ''), { onclick: () => this.cb.onSpeed(s) }, `${s}×`));
     this.pauseBtn = h<HTMLButtonElement>('button.btn', { onclick: () => this.cb.onPause(), title: 'Pause' }, '❚❚');
-    const controls = h('div.controls', null, ...this.speedBtns, this.pauseBtn,
+    this.zoomBtn = h<HTMLButtonElement>('button.btn', { onclick: () => this.cb.onZoom(), title: 'Camera zoom (Z)' }, `🔍 ${this.zoomLabel}`);
+    const controls = h('div.controls', null, this.zoomBtn, ...this.speedBtns, this.pauseBtn,
       h('button.btn', { onclick: () => this.cb.onExit(), title: 'Back to loadout' }, '✕'));
     const bottom = h('div.hud-bottom', null, this.feed, controls);
     this.banner = h('div.banner');
     this.ultCalls = [0, 1].map((s) => h(`div.ult-call.side-${s}`));
     this.el.replaceChildren(top, bottom, this.banner, ...this.ultCalls);
     this.lastClock = -1;
+  }
+
+  setZoom(label: string): void {
+    this.zoomLabel = label;
+    if (this.zoomBtn) this.zoomBtn.textContent = `🔍 ${label}`;
   }
 
   setSpeed(s: number): void {

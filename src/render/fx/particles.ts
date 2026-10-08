@@ -87,6 +87,7 @@ export class Particles {
         varying vec3 vColor;
         varying float vAlpha;
         varying vec2 vUv;
+        varying float vT;
         void main() {
           float age = uTime - aPos.w;
           float life = aVel.w;
@@ -113,25 +114,38 @@ export class Particles {
           vColor = aCol.rgb;
           vAlpha = smoothstep(0.0, 0.08, t) * max(0.0, 1.0 - t * t);
           vUv = corner + 0.5;
+          vT = t;
         }`,
+      // Additive: soft halo plus a white-hot core (reads as energy, not fuzz).
+      // Normal: cartoon puffs with a lit top-left and a hard edge that eats
+      // inwards as the puff dies, instead of a blurry fade.
       fragmentShader: additive ? /* glsl */ `
         varying vec3 vColor;
         varying float vAlpha;
         varying vec2 vUv;
+        varying float vT;
         void main() {
           float d = length(vUv - 0.5) * 2.0;
-          float a = pow(max(0.0, 1.0 - d), 1.6) * vAlpha;
-          if (a < 0.003) discard;
-          gl_FragColor = vec4(vColor * a, a);
+          float f = max(0.0, 1.0 - d);
+          float halo = f * f * vAlpha;
+          if (halo < 0.003) discard;
+          float core = f * f * f * f * vAlpha;
+          vec3 c = max(vColor, vec3(0.0));
+          gl_FragColor = vec4(c * halo + vec3(core) * min(1.0, dot(c, vec3(0.3333))) * 0.9, halo);
         }` : /* glsl */ `
         varying vec3 vColor;
         varying float vAlpha;
         varying vec2 vUv;
+        varying float vT;
         void main() {
-          float d = length(vUv - 0.5) * 2.0;
-          float a = (1.0 - smoothstep(0.35, 1.0, d)) * vAlpha * 0.75;
-          if (a < 0.01) discard;
-          gl_FragColor = vec4(vColor, a);
+          vec2 p = (vUv - 0.5) * 2.0;
+          float d = length(p);
+          float r = mix(0.95, 0.15, vT * vT);
+          float edge = 1.0 - smoothstep(r - 0.08, r, d);
+          if (edge < 0.02) discard;
+          float lit = smoothstep(-0.25, 0.1, dot(p, vec2(-0.45, 0.89)) + 0.15);
+          vec3 c = max(vColor, vec3(0.0)) * mix(0.68, 1.12, lit);
+          gl_FragColor = vec4(c, edge * min(1.0, vAlpha * 1.6) * 0.92);
         }`,
     });
     this.mesh = new Mesh(g, this.material);

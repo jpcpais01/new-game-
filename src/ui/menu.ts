@@ -5,6 +5,12 @@ import { computeBaseStats } from '../sim/fighter';
 import { ITEMS, ITEM_IDS, MAX_ITEMS } from '../sim/items';
 import type { ClassId, ItemId } from '../sim/types';
 import { h, hex } from './dom';
+import { ARENA_IDS, ARENA_NAMES, type ArenaId } from '../render/scene/arena';
+import type { Zoom } from '../render/camera';
+
+export const ZOOM_LABEL: Record<Zoom, string> = { close: 'Close', normal: 'Normal', distant: 'Distant' };
+export const ZOOM_ORDER: Zoom[] = ['close', 'normal', 'distant'];
+const ARENA_GLYPH: Record<ArenaId, string> = { highlands: '🏔️', colosseum: '🏛️' };
 
 export interface Loadout {
   classId: ClassId;
@@ -17,6 +23,8 @@ export interface MenuSettings {
   quality: 'auto' | 'high' | 'medium' | 'low';
   sound: boolean;
   fps: boolean;
+  arena: ArenaId;
+  zoom: Zoom;
 }
 
 export interface MenuCallbacks {
@@ -56,11 +64,21 @@ export class Menu {
       this.corner(0),
       this.corner(1),
       h('div.menu-bottom', null,
+        this.arenaRow(),
         h('button.btn', { onclick: () => { sfx.play('ui'); this.loadouts = [randomLoadout(), randomLoadout()]; this.changed(); } }, '🎲 Random duel'),
         h('button.btn-fight', { onclick: () => this.cb.onFight() }, 'FIGHT'),
         this.settingsRow(),
       ),
     );
+  }
+
+  private arenaRow(): HTMLElement {
+    const s = this.settings;
+    return h('div.arena-pick', null, ...ARENA_IDS.map((id) =>
+      h('button.btn' + (s.arena === id ? '.on' : ''), {
+        title: ARENA_NAMES[id],
+        onclick: () => { if (s.arena === id) return; sfx.play('ui'); this.settings = { ...s, arena: id }; this.cb.onSettings(this.settings); this.render(); },
+      }, h('span.glyph', null, ARENA_GLYPH[id]), ARENA_NAMES[id])));
   }
 
   private settingsRow(): HTMLElement {
@@ -74,6 +92,7 @@ export class Menu {
     };
     return h('div.settings', null,
       h('button.btn', { title: 'Graphics quality', onclick: () => set({ quality: order[(order.indexOf(s.quality) + 1) % order.length] }) }, `⚙ ${q}`),
+      h('button.btn', { title: 'Camera zoom (Z)', onclick: () => set({ zoom: ZOOM_ORDER[(ZOOM_ORDER.indexOf(s.zoom) + 1) % 3] }) }, `🔍 ${ZOOM_LABEL[s.zoom]}`),
       h('button.btn', { title: 'Sound', onclick: () => set({ sound: !s.sound }) }, s.sound ? '🔊' : '🔇'),
       h('button.btn' + (s.fps ? '.on' : ''), { title: 'Show FPS', onclick: () => set({ fps: !s.fps }) }, 'FPS'),
     );

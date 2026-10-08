@@ -212,6 +212,10 @@ button {
   grid-column: 1 / -1; display: flex; align-items: center; justify-content: center; gap: 12px; flex-wrap: wrap;
 }
 .settings { display: flex; gap: 6px; align-items: center; }
+.arena-pick { display: flex; gap: 4px; padding: 3px; border-radius: 12px; background: rgba(8,10,22,0.45); border: 1px solid var(--line); }
+.arena-pick .btn { padding: 7px 12px; font-size: 12px; display: flex; align-items: center; gap: 6px; border-color: transparent; background: transparent; }
+.arena-pick .btn.on { background: rgba(255, 211, 107, 0.18); border-color: var(--gold); }
+.arena-pick .glyph { font-size: 15px; }
 .settings .btn { padding: 8px 10px; font-size: 12px; }
 
 /* Item picker */
@@ -371,7 +375,8 @@ button {
   .blurb, .stats, .abilities { display: none; }
   .slot .ico { font-size: 18px; }
   .slot { font-size: 9px; }
-  .menu-bottom { grid-row: 4; }
+  .menu-bottom { grid-row: 4; gap: 6px; }
+  .arena-pick .btn { padding: 6px 8px; font-size: 11px; }
   .btn-fight { padding: 12px 36px; font-size: 20px; }
   .fbar .who { font-size: 14px; }
   .hp { height: 16px; }

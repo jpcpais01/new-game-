@@ -1,9 +1,9 @@
 import {
-  ACESFilmicToneMapping, HalfFloatType, NoToneMapping, PCFShadowMap, SRGBColorSpace, Vector2, WebGLRenderer,
-  type Camera, type Scene,
+  ACESFilmicToneMapping, Color, Matrix4, Uniform, Vector3, Vector4, HalfFloatType, NoToneMapping, PCFShadowMap, SRGBColorSpace,
+  WebGLRenderer, type Camera, type Scene,
 } from 'three';
 import {
-  BlendFunction, BloomEffect, Effect, ChromaticAberrationEffect, EffectComposer, EffectPass, RenderPass, SMAAEffect, ToneMappingEffect,
+  BlendFunction, BloomEffect, Effect, EffectAttribute, EffectComposer, EffectPass, RenderPass, SMAAEffect, ToneMappingEffect,
   ToneMappingMode, VignetteEffect,
 } from 'postprocessing';
 
@@ -32,6 +32,224 @@ class NanGuardEffect extends Effect {
   }
 }
 
+/**
+ * Stylised colour grade in one cheap pass: saturation, contrast, split toning
+ * (cool shadows, warm highlights) and a full-screen flash for big moments.
+ * Every input is clamped, so it can never emit NaN.
+ */
+export class GradeEffect extends Effect {
+  constructor() {
+    super('Grade', /* glsl */ `
+      uniform float uSat;
+      uniform float uContrast;
+      uniform vec3 uShadows;
+      uniform vec3 uHighlights;
+      uniform vec3 uFlash;
+      uniform float uGrain;
+      uniform vec4 uLines;    // centre uv, strength, seed
+      float gHash(vec2 p) { p = fract(p * vec2(443.897, 441.423)); p += dot(p, p.yx + 19.19); return fract((p.x + p.y) * p.x); }
+      void mainImage(const in vec4 inputColor, const in vec2 uv, out vec4 outputColor) {
+        vec3 c = clamp(inputColor.rgb, 0.0, 1.0);
+        float l = dot(c, vec3(0.299, 0.587, 0.114));
+        c = mix(vec3(l), c, uSat);
+        // Filmic S-curve around mid grey (keeps the extremes soft).
+        vec3 s = c * c * (3.0 - 2.0 * c);
+        c = clamp(mix(c, s, clamp(uContrast - 1.0, 0.0, 1.0) * 3.0), 0.0, 1.0);
+        c += uShadows * (1.0 - smoothstep(0.0, 0.5, l)) + uHighlights * smoothstep(0.5, 1.0, l);
+        // Fine film grain, strongest in the mid tones; it stops the flat toon
+        // gradients from banding and gives the image a painted texture.
+        float gr = gHash(floor(uv * resolution) + fract(time * 7.13) * 97.0) - 0.5;
+        c += gr * uGrain * (0.35 + l * (1.0 - l) * 2.6);
+        // Anime speed lines radiating from the action on the biggest hits.
+        if (uLines.z > 0.001) {
+          vec2 d = uv - uLines.xy;
+          d.x *= aspect;
+          float r = length(d);
+          float a = atan(d.y, d.x) * 38.0;
+          float n = gHash(vec2(floor(a), uLines.w));
+          float w = abs(fract(a) - 0.5) * 2.0;
+          float line = step(0.78, n) * smoothstep(1.0, 0.3 + n * 0.4, w) * smoothstep(0.22 + n * 0.12, 0.75, r);
+          c = mix(c, vec3(1.0, 0.98, 0.94), clamp(line * uLines.z, 0.0, 0.75));
+        }
+        c = clamp(c + uFlash, 0.0, 1.0);
+        outputColor = vec4(c, inputColor.a);
+      }`, {
+      blendFunction: BlendFunction.SRC,
+      uniforms: new Map<string, Uniform>([
+        ['uSat', new Uniform(1.12)],
+        ['uContrast', new Uniform(1.06)],
+        ['uShadows', new Uniform(new Vector3(-0.01, 0.0, 0.03))],
+        ['uHighlights', new Uniform(new Vector3(0.03, 0.015, -0.01))],
+        ['uFlash', new Uniform(new Vector3())],
+        ['uGrain', new Uniform(0.03)],
+        ['uLines', new Uniform(new Vector4(0.5, 0.55, 0, 0))],
+      ]),
+    });
+  }
+}
+
+/** Per-arena grade, also used when post-processing is off (no-op then). */
+export interface GradeSettings {
+  sat: number; contrast: number; shadows: [number, number, number]; highlights: [number, number, number];
+  /** Bloom strength and threshold override (defaults 1.0 / 0.9). */
+  bloom?: number; bloomThreshold?: number;
+  /** Vignette darkness (default 0.45). */
+  vignette?: number;
+}
+
+/**
+ * Aerial perspective for one arena, applied in the post pass from the depth
+ * buffer: exponential height fog that thickens near the ground and with
+ * distance, tinted towards the sun colour when looking into the light, plus a
+ * soft sun glow with a horizontal streak when the sun is on screen.
+ */
+export interface AtmosphereSettings {
+  /** Fog colour away from the sun (match the sky's horizon). */
+  fog: number;
+  /** In-scattered colour looking towards the sun. */
+  sun: number;
+  sunDir: [number, number, number];
+  /** Fog density at baseY and how fast it thins with height. */
+  density: number;
+  falloff: number;
+  baseY: number;
+  /** Maximum fog opacity (keeps distant shapes readable). */
+  max: number;
+  /** Sun glow strength on screen (0 = off). */
+  glow: number;
+  /** Strength of depth-crease ambient occlusion (high tier only). */
+  ao: number;
+}
+
+/** What an arena hands the renderer: its grade and atmosphere. */
+export interface ArenaLook {
+  grade: GradeSettings;
+  atmosphere: AtmosphereSettings;
+  /** Post-processing does the fog: switch the scene's own fog off (or back on). */
+  usePostFog(on: boolean): void;
+}
+
+const _m4 = new Matrix4();
+const _v4 = new Vector4();
+
+/**
+ * Depth-based atmosphere (see AtmosphereSettings) and, on the high tier, a
+ * cheap crease occlusion: pixels that sit just behind a nearer surface are
+ * darkened a touch, which grounds feet, props and crowd rows like baked AO.
+ * Works on the HDR scene colour before bloom and tone mapping.
+ */
+export class AtmosphereEffect extends Effect {
+  constructor(private readonly cam: Camera, ao: boolean) {
+    super('Atmosphere', /* glsl */ `
+      uniform mat4 uProjInv;
+      uniform mat4 uCamWorld;
+      uniform vec3 uFogCol;
+      uniform vec3 uSunCol;
+      uniform vec3 uSunDir;
+      uniform vec4 uFog;      // density, falloff, baseY, max
+      uniform vec4 uSun;      // screen uv x, y, on-screen visibility, glow strength
+      uniform float uAO;
+
+      float linDepth(float d) {
+        float z = getViewZ(d);
+        return -z;
+      }
+
+      void mainImage(const in vec4 inputColor, const in vec2 uv, const in float depth, out vec4 outputColor) {
+        vec3 col = max(inputColor.rgb, vec3(0.0));
+        bool sky = depth >= 0.99999;
+        vec4 vp = uProjInv * vec4(uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
+        vec3 view = vp.xyz / max(vp.w, 1e-6);
+        float dist = sky ? 420.0 : length(view);
+        vec3 camPos = uCamWorld[3].xyz;
+        vec3 dir = normalize(mat3(uCamWorld) * (view / max(length(view), 1e-6)));
+
+        #ifdef USE_AO
+        if (!sky && uAO > 0.0) {
+          float z0 = linDepth(depth);
+          float r = clamp(1.6 / max(z0, 1.0), 0.0015, 0.02);
+          vec2 st = vec2(r / aspect, r);
+          float occ = 0.0;
+          vec2 k[8];
+          k[0] = vec2(1.0, 0.0); k[1] = vec2(-1.0, 0.0); k[2] = vec2(0.0, 1.0); k[3] = vec2(0.0, -1.0);
+          k[4] = vec2(0.7, 0.7); k[5] = vec2(-0.7, 0.7); k[6] = vec2(0.7, -0.7); k[7] = vec2(-0.7, -0.7);
+          for (int i = 0; i < 8; i++) {
+            float s = i < 4 ? 1.0 : 2.1;
+            float zs = linDepth(readDepth(uv + k[i] * st * s));
+            float dz = z0 - zs;
+            occ += smoothstep(0.04, 0.45, dz) * (1.0 - smoothstep(1.2, 3.0, dz));
+          }
+          col *= 1.0 - clamp(occ / 8.0, 0.0, 1.0) * uAO;
+        }
+        #endif
+
+        // Height fog integrated along the view ray (closed form).
+        float fd = uFog.x, ff = uFog.y;
+        float h0 = camPos.y - uFog.z;
+        float dy = dir.y * dist;
+        float amount = fd * exp(-ff * h0) * dist;
+        if (abs(ff * dy) > 1e-3) amount *= (1.0 - exp(-ff * dy)) / (ff * dy);
+        float fog = clamp(1.0 - exp(-max(amount, 0.0)), 0.0, uFog.w);
+        if (sky) fog *= smoothstep(0.32, -0.02, dir.y);
+        float sunAmt = clamp(dot(dir, uSunDir), 0.0, 1.0);
+        vec3 fc = mix(uFogCol, uSunCol, pow(sunAmt, 5.0) * 0.85);
+        col = mix(col, fc, fog);
+
+        // Sun glow and a faint horizontal streak.
+        if (uSun.z > 0.0 && readDepth(clamp(uSun.xy, 0.001, 0.999)) >= 0.99999) {
+          vec2 d = uv - uSun.xy;
+          d.x *= aspect;
+          float r2 = dot(d, d);
+          float g = exp(-r2 * 7.0) * 0.55 + exp(-r2 * 60.0) * 0.8;
+          float streak = exp(-abs(d.y) * 90.0) * exp(-abs(d.x) * 2.2) * 0.35;
+          col += uSunCol * (g + streak) * uSun.z * uSun.w;
+        }
+        outputColor = vec4(col, inputColor.a);
+      }`, {
+      attributes: EffectAttribute.DEPTH,
+      blendFunction: BlendFunction.SRC,
+      defines: ao ? new Map([['USE_AO', '1']]) : undefined,
+      uniforms: new Map<string, Uniform>([
+        ['uProjInv', new Uniform(new Matrix4())],
+        ['uCamWorld', new Uniform(new Matrix4())],
+        ['uFogCol', new Uniform(new Color())],
+        ['uSunCol', new Uniform(new Color())],
+        ['uSunDir', new Uniform(new Vector3(0, 1, 0))],
+        ['uFog', new Uniform(new Vector4(0.01, 0.05, 0, 0.8))],
+        ['uSun', new Uniform(new Vector4())],
+        ['uAO', new Uniform(0)],
+      ]),
+    });
+  }
+
+  set(a: AtmosphereSettings): void {
+    const u = this.uniforms;
+    (u.get('uFogCol')!.value as Color).setHex(a.fog);
+    (u.get('uSunCol')!.value as Color).setHex(a.sun);
+    (u.get('uSunDir')!.value as Vector3).set(...a.sunDir).normalize();
+    (u.get('uFog')!.value as Vector4).set(a.density, a.falloff, a.baseY, a.max);
+    (u.get('uSun')!.value as Vector4).w = a.glow;
+    u.get('uAO')!.value = a.ao;
+  }
+
+  update(): void {
+    const c = this.cam;
+    const u = this.uniforms;
+    (u.get('uProjInv')!.value as Matrix4).copy(c.projectionMatrixInverse);
+    (u.get('uCamWorld')!.value as Matrix4).copy(c.matrixWorld);
+    // Project the sun to screen space; fade the glow out near the edges.
+    const sd = u.get('uSunDir')!.value as Vector3;
+    const sun = u.get('uSun')!.value as Vector4;
+    _m4.multiplyMatrices(c.projectionMatrix, c.matrixWorldInverse);
+    _v4.set(c.position.x + sd.x * 1000, c.position.y + sd.y * 1000, c.position.z + sd.z * 1000, 1).applyMatrix4(_m4);
+    if (_v4.w <= 0) { sun.z = 0; return; }
+    const x = _v4.x / _v4.w * 0.5 + 0.5, y = _v4.y / _v4.w * 0.5 + 0.5;
+    sun.x = x; sun.y = y;
+    const edge = Math.min(x + 0.3, 1.3 - x, y + 0.3, 1.3 - y);
+    sun.z = Math.max(0, Math.min(1, edge / 0.3));
+  }
+}
+
 export type Quality = 'high' | 'medium' | 'low';
 
 export interface QualitySettings {
@@ -42,15 +260,17 @@ export interface QualitySettings {
   shadowMapSize: number;
   maxPixelRatio: number;
   crowd: number;
+  /** Scenery detail 0..2 (grass, trees, ambient particles). */
+  detail: number;
 }
 
 export function settingsFor(q: Quality): QualitySettings {
   switch (q) {
     // No MSAA on any tier: multisampled half-float targets flicker black on
     // Chrome/Windows (ANGLE on Direct3D 11); SMAA in the merged pass is cheaper anyway.
-    case 'high': return { quality: q, post: true, msaa: 0, shadows: true, shadowMapSize: 2048, maxPixelRatio: 2, crowd: 700 };
-    case 'medium': return { quality: q, post: true, msaa: 0, shadows: true, shadowMapSize: 1024, maxPixelRatio: 1.5, crowd: 400 };
-    case 'low': return { quality: q, post: false, msaa: 0, shadows: false, shadowMapSize: 512, maxPixelRatio: 1, crowd: 160 };
+    case 'high': return { quality: q, post: true, msaa: 0, shadows: true, shadowMapSize: 2048, maxPixelRatio: 2, crowd: 1300, detail: 2 };
+    case 'medium': return { quality: q, post: true, msaa: 0, shadows: true, shadowMapSize: 1024, maxPixelRatio: 1.5, crowd: 900, detail: 1 };
+    case 'low': return { quality: q, post: false, msaa: 0, shadows: false, shadowMapSize: 512, maxPixelRatio: 1, crowd: 350, detail: 0 };
   }
 }
 
@@ -74,8 +294,15 @@ export class GameRenderer {
   settings: QualitySettings;
   private composer: EffectComposer | null = null;
   private composerSized = false;
-  private chroma: ChromaticAberrationEffect | null = null;
-  private chromaAmt = 0;
+  private grade: GradeEffect | null = null;
+  private atmosphere: AtmosphereEffect | null = null;
+  private bloom: BloomEffect | null = null;
+  private vignette: VignetteEffect | null = null;
+  private look: ArenaLook | null = null;
+  private flashColor = new Color();
+  private flashAmt = 0;
+  private linesAmt = 0;
+  private linesSeed = 0;
   /** Resolution multiplier from dynamic scaling (0.5 .. 1). */
   private scale = 1;
   private frameEma = 1 / 60;
@@ -129,7 +356,10 @@ export class GameRenderer {
     this.renderer.shadowMap.enabled = s.shadows;
     this.composer?.dispose();
     this.composer = null;
-    this.chroma = null;
+    this.grade = null;
+    this.atmosphere = null;
+    this.bloom = null;
+    this.vignette = null;
     if (s.post && this.debug.post) {
       this.renderer.toneMapping = NoToneMapping;
       this.composer = new EffectComposer(this.renderer, { frameBufferType: HalfFloatType, multisampling: this.msaaSamples });
@@ -146,24 +376,26 @@ export class GameRenderer {
   setupPasses(scene: Scene, camera: Camera): void {
     this.passScene = scene;
     this.passCamera = camera;
-    if (!this.composer) return;
+    if (!this.composer) { this.look?.usePostFog(false); return; }
     this.composer.removeAllPasses();
     this.composer.addPass(new RenderPass(scene, camera));
     const effects = [] as ConstructorParameters<typeof EffectPass>[1][];
-    const bloom = new BloomEffect({
+    this.atmosphere = new AtmosphereEffect(camera, this.settings.quality === 'high');
+    effects.push(this.atmosphere);
+    this.bloom = new BloomEffect({
       mipmapBlur: true,
       luminanceThreshold: 0.9,
       luminanceSmoothing: 0.25,
       intensity: 1.15,
       radius: 0.72,
     });
-    if (this.debug.bloom) effects.push(bloom);
-    if (this.settings.quality === 'high') {
-      this.chroma = new ChromaticAberrationEffect({ offset: new Vector2(0, 0), radialModulation: true, modulationOffset: 0.2 });
-      effects.push(this.chroma);
-    }
-    effects.push(new VignetteEffect({ offset: 0.32, darkness: 0.55 }));
+    if (this.debug.bloom) effects.push(this.bloom);
+    this.vignette = new VignetteEffect({ offset: 0.32, darkness: 0.45 });
+    effects.push(this.vignette);
     effects.push(new ToneMappingEffect({ mode: ToneMappingMode.ACES_FILMIC }));
+    this.grade = new GradeEffect();
+    effects.push(this.grade);
+    if (this.look) this.setLook(this.look);
     if (this.msaaSamples === 0) effects.push(new SMAAEffect());
     if (this.debug.nanGuard) effects.push(new NanGuardEffect());
     this.composer.addPass(new EffectPass(camera, ...effects));
@@ -183,9 +415,34 @@ export class GameRenderer {
     return this.composer?.inputBuffer ?? null;
   }
 
-  /** Brief chromatic split on heavy impacts. */
-  impact(amount: number): void {
-    this.chromaAmt = Math.min(1, this.chromaAmt + amount);
+  /** Brief screen flash on heavy impacts (white by default). */
+  impact(amount: number, color = 0xfff4e0): void {
+    if (amount * 0.12 >= this.flashAmt) this.flashColor.setHex(color);
+    this.flashAmt = Math.min(0.22, this.flashAmt + amount * 0.12);
+    if (amount >= 0.9) {
+      this.linesAmt = Math.min(1, Math.max(this.linesAmt, amount * 0.7));
+      this.linesSeed = (this.linesSeed + 1) % 97;
+    }
+  }
+
+  /** Applies an arena's grade and atmosphere (and hands fog to the post pass when it runs). */
+  setLook(look: ArenaLook): void {
+    this.look = look;
+    look.usePostFog(this.atmosphere !== null);
+    const g = look.grade;
+    if (this.grade) {
+      const u = this.grade.uniforms;
+      u.get('uSat')!.value = g.sat;
+      u.get('uContrast')!.value = g.contrast;
+      (u.get('uShadows')!.value as Vector3).set(...g.shadows);
+      (u.get('uHighlights')!.value as Vector3).set(...g.highlights);
+    }
+    if (this.bloom) {
+      this.bloom.intensity = 1.15 * (g.bloom ?? 1);
+      this.bloom.luminanceMaterial.threshold = g.bloomThreshold ?? 0.9;
+    }
+    if (this.vignette) this.vignette.darkness = g.vignette ?? 0.45;
+    this.atmosphere?.set(look.atmosphere);
   }
 
   /**
@@ -301,10 +558,14 @@ export class GameRenderer {
 
   render(scene: Scene, camera: Camera, dt: number): void {
     this.renderer.info.reset();
-    if (this.chroma) {
-      this.chromaAmt = Math.max(0, this.chromaAmt - dt * 4);
-      const a = this.chromaAmt * 0.0022;
-      this.chroma.offset.set(a, a * 0.6);
+    this.flashAmt = Math.max(0, this.flashAmt - dt * 1.6);
+    if (this.grade) {
+      const f = this.grade.uniforms.get('uFlash')!.value as Vector3;
+      f.set(this.flashColor.r, this.flashColor.g, this.flashColor.b).multiplyScalar(this.flashAmt);
+      this.linesAmt = Math.max(0, this.linesAmt - dt * 3.2);
+      const l = this.grade.uniforms.get('uLines')!.value as Vector4;
+      l.z = this.linesAmt;
+      l.w = this.linesSeed;
     }
     if (this.composer) this.composer.render(dt);
     else this.renderer.render(scene, camera);
