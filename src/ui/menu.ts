@@ -7,7 +7,9 @@ import {
 import type { FormId, GearId, GearSlot } from '../sim/types';
 import { h, hex } from './dom';
 import { fmtMult } from './format';
-import { emptySlotIcon, gearIcon } from './itemIcons';
+import { emptySlotIcon } from './itemIcons';
+import { skinStrip, wornIcon } from './skinIcons';
+import { withSkin } from '../gear/skins';
 import { ARENA_IDS, ARENA_NAMES, type ArenaId } from '../render/scene/arena';
 import type { Zoom } from '../render/camera';
 
@@ -147,7 +149,7 @@ export class Menu {
         return h('button.slot' + (it ? `.filled.r-${it.rarity}` : ''), {
           title: it ? `${SLOT_NAMES[slot]} · ${it.name}: ${it.desc}` : `${SLOT_NAMES[slot]}: choose`,
           onclick: () => { sfx.play('ui'); this.openPicker(side, slot); },
-        }, h('span.slot-name', null, SLOT_NAMES[slot]), h('span.ico', null, id ? gearIcon(id) : emptySlotIcon(slot)), it ? it.name : 'Empty');
+        }, h('span.slot-name', null, SLOT_NAMES[slot]), h('span.ico', null, id ? wornIcon(id, lo.skins) : emptySlotIcon(slot)), it ? it.name : 'Empty');
       })),
     );
   }
@@ -163,15 +165,24 @@ export class Menu {
       this.changed();
     };
     const current = lo.gear[slot];
+    // Skins of the equipped piece: picking one keeps the picker open so the
+    // preview behind it updates.
+    const strip = current ? skinStrip(current, lo.skins, (skin) => {
+      sfx.play('ui');
+      this.loadouts[side] = { ...lo, skins: withSkin(lo.skins, current, skin) };
+      this.changed();
+      this.openPicker(side, slot);
+    }) : null;
     const wrap: HTMLDivElement = h<HTMLDivElement>('div.picker-wrap', { onclick: (e: Event) => { if (e.target === wrap) close(); } },
       h('div.picker.glass', null,
         h('h3', null, `${SLOT_NAMES[slot]} — ${lo.name}`),
+        strip ? h('div.picker-skins', null, h('h4', null, `${gearOf(current!).name} skins`), strip) : null,
         h('div.picker-grid', null,
           ...gearIdsFor(slot).map((id) => {
             const it = gearOf(id);
             const grants = [...(it.abilities ?? []), ...(it.evade ? [it.evade] : [])].map((a) => a.name);
             return h(`button.item.r-${it.rarity}` + (id === current ? '.sel' : ''), { onclick: () => choose(id) },
-              h('span.ico', null, gearIcon(id)), h('span.nm', null, it.name),
+              h('span.ico', null, wornIcon(id, lo.skins)), h('span.nm', null, it.name),
               h('span.ds', null, it.desc, grants.length ? h('em.grants', null, grants.join(' · ')) : null));
           }),
           current && slot !== 'main'

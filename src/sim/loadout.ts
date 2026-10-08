@@ -2,7 +2,7 @@ import { sanitizeAppearance, type Appearance } from '../character/appearance';
 import type { Rng } from '../core/rng';
 import { EVADE } from './abilities';
 import { FORMS, FORM_IDS, type Personality } from './forms';
-import { GEAR, GEAR_SLOTS, gearIdsFor, gearOf, type GearDef } from './gear';
+import { GEAR, GEAR_BY_ID, GEAR_SLOTS, gearIdsFor, gearOf, type GearDef } from './gear';
 import type { AbilityDef, FormId, GearId, GearSet, GearSlot, Stats } from './types';
 
 /** Cosmetic look of a character: the sim carries it, the renderer draws it. */
@@ -17,7 +17,12 @@ export interface CharacterBuild {
   form: FormId;
   gear: GearSet;
   look?: Appearance;
+  /** Cosmetic skin chosen per gear piece (ids from gear/skins.ts; the sim only carries them). */
+  skins?: SkinChoice;
 }
+
+/** Skin id per gear piece. Purely cosmetic: validated and drawn by the renderer. */
+export type SkinChoice = Partial<Record<GearId, string>>;
 
 /** Fighting habits the AI derives from form + gear. */
 export interface CombatProfile {
@@ -127,7 +132,13 @@ export function sanitizeBuild(raw: unknown, fallback: CharacterBuild): Character
   if (!gear.main) return fallback;
   const name = typeof o.name === 'string' && o.name.trim() ? o.name.trim().slice(0, 16) : fallback.name;
   const look = o.look && typeof o.look === 'object' ? sanitizeAppearance(o.look) : fallback.look;
-  return { name, form, gear, look };
+  const skins: SkinChoice = {};
+  if (o.skins && typeof o.skins === 'object') {
+    for (const [k, v] of Object.entries(o.skins as Record<string, unknown>)) {
+      if (typeof v === 'string' && v.length <= 40 && k in GEAR_BY_ID) (skins as Record<string, string>)[k] = v;
+    }
+  }
+  return { name, form, gear, look, skins };
 }
 
 /** Replaces one slot, keeping the rest. Passing null empties it (not allowed for `main`). */

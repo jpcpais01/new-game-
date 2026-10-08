@@ -1,6 +1,7 @@
 import type { Object3D } from 'three';
 import { resolveArt, type ArtKey, type ResolvedArt } from '../../gear/art';
 import { ITEM_ART } from '../../gear/itemArt';
+import { skinnedArt, type SkinDef } from '../../gear/skins';
 import { gearOf } from '../../sim/gear';
 import type { GearId } from '../../sim/types';
 import type { RigBuildApi, RigDecorator } from '../fighter/look';
@@ -42,6 +43,8 @@ export interface GearSockets {
   clothBone(parent: Object3D, x: number, y: number, z: number): Object3D;
   /** A bone orbiting the fighter for this item. */
   orbiter(): Object3D;
+  /** A bone the view spins about its own Y axis (halos, rings, rotors), `speed` in rad/s. */
+  spin(parent: Object3D, x: number, y: number, z: number, speed?: number): Object3D;
   /** Names a bone the animator drives (bow string, nocked arrow). */
   tag(name: string, o: Object3D): void;
 }
@@ -87,6 +90,8 @@ function unproxied(parent: Object3D, x: number, y: number, z: number): [Object3D
   return [parent.parent, [o.x + x * sc.x, o.y + y * sc.y, o.z + z * sc.z]];
 }
 
+let spinCount = 0;
+
 function socketsFrom(api: RigBuildApi, id: GearId): GearSockets {
   const k = api.sockets, m = api.metrics, sh = m.form.shape;
   // The new torso carries muscle and cloth volume, so worn pieces sit a little proud of it.
@@ -120,13 +125,35 @@ function socketsFrom(api: RigBuildApi, id: GearId): GearSockets {
     bone: (parent, x, y, z) => { const [p, pos] = unproxied(parent, x, y, z); return api.bone(p, pos); },
     clothBone: (parent, x, y, z) => { const [p, pos] = unproxied(parent, x, y, z); return api.cloth(p, ...pos); },
     orbiter: () => api.orbiter(id),
+    spin: (parent, x, y, z, speed = 1) => {
+      const [p, pos] = unproxied(parent, x, y, z);
+      const b = api.bone(p, pos);
+      b.userData.spin = speed;
+      api.tag(`spin:${spinCount++}`, b);
+      return b;
+    },
     tag: (name, o) => api.tag(name, o),
   };
 }
 
+/**
+ * A skin's own model: replaces the base model of its slot. Any slot it leaves
+ * out falls back to the base model in the skin's colours.
+ */
+export interface SkinModel {
+  weapon?: WeaponFn;
+  offhand?: OffhandFn;
+  defense?: DefenseFn;
+  head?: HeadFn;
+  /** Body parts a head piece covers. */
+  hides?: ('hair' | 'ears')[];
+  boots?: BootFn;
+  special?: SpecialFn;
+}
+
 /** Rig decorator that models one gear piece (registered in fighter/gearModels.ts). */
-export function gearDecorator(id: GearId): RigDecorator {
-  const look = lookOf(id);
+export function gearDecorator(id: GearId, skin: SkinDef | null = null, model: SkinModel | null = null): RigDecorator {
+  const look = resolveArt(skinnedArt(id, skin));
   const slot = gearOf(id).slot;
   return (api) => {
     const s = socketsFrom(api, id);
@@ -136,34 +163,39 @@ export function gearDecorator(id: GearId): RigDecorator {
     const leftFree = grip === 'oneHand' && (api.look.offhand === 'none' || api.look.offhand === 'focus');
     switch (slot) {
       case 'main': {
-        const w = WEAPONS[look.art] ?? WEAPONS.sword!;
+        const w = model?.weapon ?? WEAPONS[look.art] ?? WEAPONS.sword!;
         // A bow is held in the left hand; the right hand draws the string.
         const bow = grip === 'bow';
         const t = w(bow ? s.offGrip : s.grip, m, s);
-        if (look.art === 'twin_daggers') WEAPONS.dagger!(s.offGrip, m, s);
+        // A skinned twin-dagger model authors its own off-hand blade.
+        if (look.art === 'twin_daggers' && !model?.weapon) WEAPONS.dagger!(s.offGrip, m, s);
         api.setWeapon(t.base, t.tip, bow ? 'off' : 'main');
         if ((grip === 'twoHand' || grip === 'polearm') && !ONE_HANDED.includes(look.art)) api.setOffGrip(t.offGrip ?? [0, 0.24, 0]);
         else if (grip === 'twoHand' || grip === 'polearm') api.setOffGrip(t.offGrip ?? [0, -0.11, 0]);
         break;
       }
       case 'defense':
-        DEFENSE[look.art]?.(s, m);
+        (model?.defense ?? DEFENSE[look.art])?.(s, m);
         break;
       case 'offhand':
-        OFFHAND[look.art]?.(s, m, leftFree);
+        (model?.offhand ?? OFFHAND[look.art])?.(s, m, leftFree);
         break;
-      case 'head':
-        if (look.art === 'knight_helm' || look.art === 'hood') api.hide('hair');
-        if (look.art === 'knight_helm') api.hide('ears');
-        HEAD[look.art]?.(s, m);
+      case 'head': {
+        const hides = model?.head ? model.hides ?? [] : [
+          ...(look.art === 'knight_helm' || look.art === 'hood' ? ['hair' as const] : []),
+          ...(look.art === 'knight_helm' ? ['ears' as const] : []),
+        ];
+        for (const h of hides) api.hide(h);
+        (model?.head ?? HEAD[look.art])?.(s, m);
         break;
+      }
       case 'boots': {
-        const b = BOOTS[look.art] ?? BOOTS.leather_boots!;
+        const b = model?.boots ?? BOOTS[look.art] ?? BOOTS.leather_boots!;
         for (const leg of [s.legL, s.legR]) b(leg, m, s);
         break;
       }
       case 'special': {
-        const r = SPECIAL[look.art]?.(s, m);
+        const r = (model?.special ?? SPECIAL[look.art])?.(s, m);
         if (r?.phoenix) api.tag('phoenix', r.phoenix);
         break;
       }
@@ -176,9 +208,9 @@ export function gearDecorator(id: GearId): RigDecorator {
 /** Bow string geometry shared with the animator (grip space of the left hand). */
 export const BOW_STRING = { tipY: 0.86, arrowY: 0.03, arrowLen: 0.8 };
 
-type WeaponFn = (g: Object3D, m: Mats, s: GearSockets) => WeaponTrailPoints;
+export type WeaponFn = (g: Object3D, m: Mats, s: GearSockets) => WeaponTrailPoints;
 
-function hilt(g: Object3D, m: Mats, len = 0.2, pommel = 0.045): void {
+export function hilt(g: Object3D, m: Mats, len = 0.2, pommel = 0.045): void {
   part(g, cyl(0.026, 0.03, len, 8), m.wrap, { pos: [0, 0.02, 0] });
   for (let k = 0; k < 3; k++) part(g, torus(0.03, 0.007, Math.PI * 2, 4, 8), lineless(m.leather), { pos: [0, -0.05 + k * 0.06, 0], rot: [Math.PI / 2, 0, 0] });
   part(g, sphere(pommel, 10, 8), m.trim, { pos: [0, 0.02 - len / 2 - pommel * 0.6, 0] });
@@ -336,7 +368,7 @@ function handCrossbow(g: Object3D, m: Mats, s: GearSockets): void {
   s.tag('xbowBolt', bolt);
 }
 
-type OffhandFn = (s: GearSockets, m: Mats, inHand: boolean) => void;
+export type OffhandFn = (s: GearSockets, m: Mats, inHand: boolean) => void;
 
 const OFFHAND: Partial<Record<ArtKey, OffhandFn>> = {
   throwing_knives: (s, m, inHand) => {
@@ -405,9 +437,9 @@ const OFFHAND: Partial<Record<ArtKey, OffhandFn>> = {
 
 // --- defense ----------------------------------------------------------------------
 
-type DefenseFn = (s: GearSockets, m: Mats) => WeaponTrailPoints | void;
+export type DefenseFn = (s: GearSockets, m: Mats) => WeaponTrailPoints | void;
 
-function pauldrons(s: GearSockets, spec: Mats['main'], trim: Mats['trim']): void {
+export function pauldrons(s: GearSockets, spec: Mats['main'], trim: Mats['trim']): void {
   const k = s.big ? 1.25 : 1;
   for (const sa of [s.shoulderL, s.shoulderR]) {
     part(sa, halfSphere(0.17 * k), spec, { scale: [1.15, 0.85, 1.05] });
@@ -417,7 +449,7 @@ function pauldrons(s: GearSockets, spec: Mats['main'], trim: Mats['trim']): void
 }
 
 /** Inner face of a shield (seen when the shield arm is turned away): wood boards and leather straps. */
-function shieldBack(sh: Object3D, m: Mats, w: number, h: number): void {
+export function shieldBack(sh: Object3D, m: Mats, w: number, h: number): void {
   part(sh, rbox(w, h, 0.02, 0.01), m.wood, { pos: [0, 0, 0.035] });
   for (let k = -1; k <= 1; k++) part(sh, box(0.006, h * 0.96, 0.004), lineless(m.wrap), { pos: [k * w * 0.25, 0, 0.047] });
   for (const y of [h * 0.18, -h * 0.18]) part(sh, rbox(w * 0.85, 0.05, 0.03, 0.01), m.leather, { pos: [0, y, 0.05] });
@@ -506,7 +538,7 @@ const DEFENSE: Partial<Record<ArtKey, DefenseFn>> = {
 
 // --- head -------------------------------------------------------------------------
 
-type HeadFn = (s: GearSockets, m: Mats) => void;
+export type HeadFn = (s: GearSockets, m: Mats) => void;
 
 const HEAD: Partial<Record<ArtKey, HeadFn>> = {
   knight_helm: (s, m) => {
@@ -586,15 +618,15 @@ const HEAD: Partial<Record<ArtKey, HeadFn>> = {
 
 // --- boots ------------------------------------------------------------------------
 
-type BootFn = (leg: Leg, m: Mats, s: GearSockets) => void;
+export type BootFn = (leg: Leg, m: Mats, s: GearSockets) => void;
 
 /** Places a boot part on the shin or, below the ankle, on the foot. */
-function lp(leg: Leg, g: Parameters<typeof part>[1], spec: Parameters<typeof part>[2], o: Parameters<typeof part>[3] = {}): void {
+export function lp(leg: Leg, g: Parameters<typeof part>[1], spec: Parameters<typeof part>[2], o: Parameters<typeof part>[3] = {}): void {
   const y = o.pos?.[1] ?? 0;
   part(y < -0.38 ? leg.foot : leg.shin, g, spec, o);
 }
 
-function bootBase(shin: Leg, shaft: Mats['main'], foot: Mats['main'], sole: Mats['main'], s: GearSockets): void {
+export function bootBase(shin: Leg, shaft: Mats['main'], foot: Mats['main'], sole: Mats['main'], s: GearSockets): void {
   const k = s.big ? 1.18 : 1;
   lp(shin, cyl(0.1 * k, 0.092 * k, 0.24, 12), shaft, { pos: [0, -0.3, 0] });
   lp(shin, rbox(0.32, 0.12, 0.165 * k, 0.05), foot, { pos: [0.075, -0.43, 0] });
@@ -638,7 +670,7 @@ const BOOTS: Partial<Record<ArtKey, BootFn>> = {
 
 // --- specials ----------------------------------------------------------------------
 
-type SpecialFn = (s: GearSockets, m: Mats) => { orbiter?: Object3D; phoenix?: Object3D } | void;
+export type SpecialFn = (s: GearSockets, m: Mats) => { orbiter?: Object3D; phoenix?: Object3D } | void;
 
 function orbiter(s: GearSockets): Object3D {
   return s.orbiter();
