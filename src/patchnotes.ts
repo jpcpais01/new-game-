@@ -12,6 +12,19 @@ export interface PatchNote {
 
 export const PATCH_NOTES: PatchNote[] = [
   {
+    version: '0.8.0',
+    date: '2026-10-08',
+    title: 'Special auras',
+    notes: [
+      'Every special item now wears a signature aura: a glowing sigil on the ground under your fighter, themed particles around you and your orbiting relic.',
+      'Each one is its own: falling stars for the Meteor Sigil, rays of light for the Relic of Judgment, spectral cuts for the Phantom Blade, hopping pebbles for the Heart of the Mountain, a spiral of embers for the Phoenix Feather, echoing rings for the Echo Stone, a crimson pull for the Vampiric Fang, heat for the Ember Core and snowfall for the Frost Core.',
+      'Special skins get their own auras too: forge ash for Forgeheart, glittering ice for Heart of Winter, falling light feathers for Sunfall Relic, a swallowing rift for Abyssal Edge, leaves and petals for Heartseed, and data streams for Data Core.',
+      'Ultimates build up: the aura grows as your energy fills, shimmers when the ultimate is ready and erupts into a pillar of light when you cast it.',
+      'Passives flare when they trigger: an echo, a lifesteal heal, an ignite or chill, or the phoenix rebirth.',
+      'Auras use fewer particles on Low graphics quality.',
+    ],
+  },
+  {
     version: '0.7.0',
     date: '2026-10-08',
     title: 'Character skins',

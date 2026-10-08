@@ -50,10 +50,20 @@ const LEFTS: Partial<GearSet>[] = [
   { defense: 'tower_shield', offhand: 'hand_crossbow' }, { defense: 'parrying_blade', offhand: 'throwing_knives' },
   { defense: 'parrying_blade', offhand: 'hand_crossbow' },
 ];
+/**
+ * `?lab=auras&page=N`: special items and their skins, five per page, building
+ * charge and then firing (ultimates cast, passives flare) to review the auras.
+ */
+const AURA_LIST: [GearSet['special'], string | null][] = [
+  ['meteor_sigil', null], ['judgment_relic', null], ['phantom_blade', null], ['earth_heart', null], ['phoenix_feather', null],
+  ['echo_stone', null], ['vampiric_fang', null], ['ember_core', null], ['frost_core', null], ['ember_core', 'hellforge_core'],
+  ['frost_core', 'rimeborn_core'], ['judgment_relic', 'dawn_relic'], ['phantom_blade', 'void_blade'], ['earth_heart', 'wild_heart'], ['echo_stone', 'neon_core'],
+];
+
 const FORMS_CYCLE: FormId[] = ['balanced', 'robust', 'mighty', 'slender', 'agile', 'ethereal', 'balanced'];
 
 /** Script of [seconds, what] the actors loop through. */
-type Beat = 'idle' | 'walkF' | 'walkB' | 'basic' | 'basic2' | 'skill' | 'skill2' | 'guard' | 'evade' | 'hit' | 'heavyHit' | 'ko' | 'run' | 'ranged' | 'ranged2';
+type Beat = 'ult' | 'idle' | 'walkF' | 'walkB' | 'basic' | 'basic2' | 'skill' | 'skill2' | 'guard' | 'evade' | 'hit' | 'heavyHit' | 'ko' | 'run' | 'ranged' | 'ranged2';
 const SCRIPT: [number, Beat][] = [
   [1.2, 'idle'], [1.0, 'walkF'], [0.9, 'basic'], [0.9, 'basic2'], [1.0, 'walkB'], [1.4, 'skill'], [0.6, 'hit'],
   [1.0, 'guard'], [1.0, 'evade'], [0.8, 'heavyHit'], [0.9, 'run'], [0.9, 'idle'], [2.6, 'ko'],
@@ -81,21 +91,28 @@ export function installLab(o: { scene: Scene; fx: FxContext; cam: FightCamera; h
   // &skins=<theme>: wear that theme's item skin on every piece that has one.
   const theme = q.get('skins');
   const skinsOf = (g: GearSet) => Object.fromEntries(SKINS.filter((k) => k.theme === theme && Object.values(g).includes(k.gear)).map((k) => [k.gear, k.id]));
-  const roster = o.mode === 'ranged' ? RANGED
+  const auraPage = o.mode === 'auras' ? AURA_LIST.slice((page % 3) * 5, (page % 3) * 5 + 5) : [];
+  const roster = o.mode === 'auras' ? auraPage.map(([special], i) => ({ form: FORMS_CYCLE[i], gear: { main: MAINS[i], special } as GearSet }))
+    : o.mode === 'ranged' ? RANGED
     : o.mode === 'combos' ? MAINS.map((main, i) => ({ form: FORMS_CYCLE[i], gear: { main, ...LEFTS[page % LEFTS.length] } as GearSet }))
       : ROSTER;
   const actors: Actor[] = roster.map((r, i) => {
     const gear: GearSet = q.has('bare') ? { main: r.gear.main } : r.gear;
-    const f = createFighter((i % 2) as 0 | 1, { name: r.form, form: r.form, gear, skins: skinsOf(gear), look: lookFor(i) });
+    const skin = auraPage[i]?.[1];
+    const skins = skin && gear.special ? { [gear.special]: skin } : skinsOf(gear);
+    const f = createFighter((i % 2) as 0 | 1, { name: r.form, form: r.form, gear, skins, look: lookFor(i) });
     const home = (i - (roster.length - 1) / 2) * 2.3;
     f.x = f.px = home;
     f.facing = q.has('flip') ? -1 : 1;
     // Portrait shots review the close-up detail tier.
     const v = withBodyDetail(q.has('shot') ? 2 : bodyDetail(), () => new FighterView(f, (i % 2) as 0 | 1));
     o.scene.add(v.group);
-    return { f, v, home, clock: o.mode === 'combos' ? 0 : i * 0.37 };
+    return { f, v, home, clock: o.mode === 'combos' || o.mode === 'auras' ? 0 : i * 0.37 };
   });
-  const script: [number, Beat][] = o.mode === 'idle' ? [[10, 'idle']] : o.mode === 'walk' ? [[1.5, 'walkF'], [1.5, 'walkB'], [1, 'run'], [1, 'idle']]
+  // Exposed for review scripts (pulse auras, read state).
+  (window as unknown as { __lab: unknown }).__lab = actors;
+  const script: [number, Beat][] = o.mode === 'auras' ? [[2.4, 'idle'], [2.2, 'ult'], [1.4, 'idle']]
+    : o.mode === 'idle' ? [[10, 'idle']] : o.mode === 'walk' ? [[1.5, 'walkF'], [1.5, 'walkB'], [1, 'run'], [1, 'idle']]
     : o.mode === 'ko' ? [[1, 'idle'], [3, 'ko']]
       : ['basic', 'skill', 'guard', 'evade', 'hit'].includes(o.mode) ? [[1, 'idle'], [1.2, o.mode as Beat]]
         : o.mode === 'ranged' ? [[0.9, 'idle'], [1.0, 'ranged'], [0.4, 'idle'], [1.4, 'ranged2'], [0.8, 'walkB']]
@@ -143,6 +160,7 @@ export function installLab(o: { scene: Scene; fx: FxContext; cam: FightCamera; h
       f.stagger = Math.max(0, f.stagger - dt);
       if (fresh) {
         f.action = null;
+        if (beat === 'ult') { startAction(f, 'ultimate'); ac.v.aura?.pulse('cast'); }
         if (beat === 'basic') startAction(f, 'basic');
         if (beat === 'basic2') startAction(f, 'basic');
         if (beat === 'skill') startAction(f, 'skill');
@@ -160,6 +178,8 @@ export function installLab(o: { scene: Scene; fx: FxContext; cam: FightCamera; h
       if (beat === 'run') f.vx = (Math.floor(ac.clock) % 2 ? -1 : 1) * sp;
       if (beat === 'heavyHit' && bt < 0.25) f.vx = -5;
       if (beat === 'ko') f.alive = bt > 0.3 ? false : true;
+      // Auras: the energy bar fills while idling and empties on the cast.
+      if (o.mode === 'auras') f.energy = ac.clock < 2.4 ? (ac.clock / 2.4) * 100 : 0;
       if (beat === 'ko' && bt < 0.3) f.vx = -3;
       // Drift back home when idle so the lineup stays tidy.
       if (beat === 'idle' || beat === 'ko') f.x += (ac.home - f.x) * Math.min(1, dt * (beat === 'idle' ? 1.5 : 0));

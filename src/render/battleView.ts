@@ -2,6 +2,7 @@ import { Group, Mesh, Object3D, Vector3, type Scene } from 'three';
 import { sfx } from '../audio/sfx';
 import { smoothstep } from '../core/math';
 import { Battle } from '../sim/battle';
+import { getStatus } from '../sim/fighter';
 import type { BattleEvent, Projectile, ProjectileStyle } from '../sim/types';
 import type { FloatingText } from '../ui/floatingText';
 import type { FightCamera } from './camera';
@@ -379,6 +380,7 @@ export class BattleView {
         const f = b.fighters[e.f];
         const ab = f.abilities[e.ability];
         if (ab.slot === 'ultimate') {
+          this.fighters[e.f]?.aura?.pulse('cast');
           this.renderer.impact(0.9, accentOf(f));
           this.cam.kick(0.5);
           this.arena.excite(0.5);
@@ -416,6 +418,7 @@ export class BattleView {
         }
         const att = b.fighters[e.attacker];
         tv?.onHit(e.heavy || e.crit, att.x, e.blocked);
+        if (e.echo) this.fighters[e.attacker]?.aura?.trigger('echo');
         const dir = Math.sign(e.x - att.x) || 1;
         const heavy = e.heavy || e.crit;
         // Weapon strikes carry the weapon's element: tinted sparks plus an element flourish.
@@ -463,6 +466,7 @@ export class BattleView {
         break;
       case 'evade': break;
       case 'heal':
+        this.fighters[e.f]?.aura?.trigger('heal');
         add.burst({ x: b.fighters[e.f].x, y: 1.0, count: 6, jitter: 0.4, dir: [0, 1, 0], spread: 0.3, speed: [0.8, 1.6], life: [0.5, 0.8], size: [0.08, 0.14], color: 0x6dff8a, intensity: 2 });
         if (e.amount >= 15) this.text.spawn(`+${fmtInt(e.amount)}`, b.fighters[e.f].x, this.headY(e.f), 'heal', 0.85);
         break;
@@ -476,6 +480,11 @@ export class BattleView {
         break;
       case 'status': {
         const f = b.fighters[e.f];
+        // Ignites and chills flare the aura of the item that caused them.
+        if (e.status === 'burn' || e.status === 'chill' || e.status === 'frozen') {
+          const src = getStatus(f, e.status)?.source;
+          if (src !== undefined) this.fighters[src]?.aura?.trigger(e.status);
+        }
         if (e.status === 'frozen') {
           add.burst({ x: f.x, y: 1.0, count: 40, jitter: 0.4, speed: [2, 6], life: [0.3, 0.7], size: [0.06, 0.14], color: 0xbff4ff, intensity: 3, gravity: 6 });
           sfx.play('freeze', this.pan(f.x));
@@ -498,6 +507,7 @@ export class BattleView {
         break;
       case 'revive': {
         const f = b.fighters[e.f];
+        this.fighters[e.f]?.aura?.trigger('revive');
         this.pulses.spawn('pillar', f.x, 0, 0.9, 0xff8a2a, 1.0, 3);
         this.pulses.spawn('ring', f.x, 0.05, 3.5, 0xff8a2a, 0.7, 3);
         add.burst({ x: f.x, y: 1, count: 80, jitter: 0.5, speed: [2, 9], life: [0.5, 1.1], size: [0.15, 0.35], color: 0xff7a1a, intensity: 3, gravity: -3, drag: 1.5 });
