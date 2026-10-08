@@ -7,7 +7,7 @@ import type { FightCamera } from './camera';
 import { ContactShadow } from './fx/contactShadow';
 import { Lightning, Pulses, WeaponTrail } from './fx/effects';
 import type { Particles } from './fx/particles';
-import { accentOf } from './fighter/archetype';
+import { accentOf } from './fighter/look';
 import { ENCHANTS, FighterView, type FxContext } from './fighter/fighterView';
 import { gearGeo } from './fighter/rig';
 import { glow, sceneToon } from './materials';
@@ -110,6 +110,9 @@ export class BattleView {
     for (let i = 0; i < 2; i++) {
       const f = b.fighters[i];
       const v = this.fighters[i]!;
+      // Heads track each other (last frame's head position is close enough).
+      const foe = this.fighters[1 - i];
+      v.setLookAt(foe && b.fighters[1 - i].alive ? foe.headWorld : null);
       v.update(f, alpha, dt, this.fx, b.over, b.winner === i, xScale);
       this.shadows[i].update((f.px + (f.x - f.px) * alpha) * xScale, f.y, f.alive);
       const a = f.action;
@@ -319,8 +322,8 @@ export class BattleView {
           if (e.amount > 0) this.text.spawn(String(e.amount), e.x, e.y, e.ability === 'poison' ? 'dot poison' : e.ability === 'thorns' ? 'dot thorns' : 'dot', 0.75, 0.7);
           break;
         }
-        tv?.onHit(e.heavy);
         const att = b.fighters[e.attacker];
+        tv?.onHit(e.heavy || e.crit, att.x, e.blocked);
         const dir = Math.sign(e.x - att.x) || 1;
         const heavy = e.heavy || e.crit;
         const color = e.blocked ? 0xbfd8ff : e.dtype === 'magic' ? 0xc58cff : e.ability === 'lightning' ? 0xaedcff : 0xffd27a;
@@ -349,6 +352,7 @@ export class BattleView {
         break;
       }
       case 'parry':
+        this.fighters[e.defender]?.onParry();
         this.pulses.spawn('ring', e.x, e.y, 1.4, 0xffffff, 0.3, 4);
         this.pulses.spawn('star', e.x, e.y, 1.6, 0xbfe4ff, 0.2, 3);
         add.burst({ x: e.x, y: e.y, count: 30, speed: [6, 12], life: [0.15, 0.35], size: [0.05, 0.1], color: 0xe8f4ff, intensity: 4, drag: 3, stretch: 0.06 });

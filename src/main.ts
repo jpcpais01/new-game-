@@ -184,6 +184,7 @@ let fpsT = 0;
 
 let cpuMs = 0;
 let debugHooks: import('./debug').DebugHooks | null = null;
+let lab: ((dt: number) => void) | null = null;
 let logicMs = 0;
 
 function frame(now: number): void {
@@ -226,7 +227,8 @@ function frame(now: number): void {
   fx.add.update(time);
   fx.smoke.update(time);
   arena.update(time, dt, fx);
-  view.update(dt, acc / DT, state !== 'menu');
+  if (lab) lab(realDt * (paused ? 0 : 1));
+  else view.update(dt, acc / DT, state !== 'menu');
   if (state !== 'menu') hud.update();
   floating.update(dt, cam.camera, window.innerWidth, window.innerHeight);
   const t1 = performance.now();
@@ -294,6 +296,13 @@ void boot().then(async () => {
   if (params.has('debug')) {
     const { installDebug } = await import('./debug');
     debugHooks = installDebug({ renderer, scene, getState: () => (paused ? `${state} (paused)` : state) });
+  }
+  if (params.has('lab')) {
+    const { installLab } = await import('./lab');
+    lab = installLab({
+      scene, fx, cam, mode: params.get('lab') ?? '', focus: params.has('focus') ? Number(params.get('focus')) : undefined,
+      hide: () => { menu.show(false); for (const v of view.fighters) if (v) v.group.visible = false; },
+    });
   }
   if (params.has('demo')) {
     loadouts = [randomLoadout(), randomLoadout()];
