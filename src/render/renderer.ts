@@ -46,7 +46,9 @@ export interface QualitySettings {
 
 export function settingsFor(q: Quality): QualitySettings {
   switch (q) {
-    case 'high': return { quality: q, post: true, msaa: 4, shadows: true, shadowMapSize: 2048, maxPixelRatio: 2, crowd: 700 };
+    // No MSAA on any tier: multisampled half-float targets flicker black on
+    // Chrome/Windows (ANGLE on Direct3D 11); SMAA in the merged pass is cheaper anyway.
+    case 'high': return { quality: q, post: true, msaa: 0, shadows: true, shadowMapSize: 2048, maxPixelRatio: 2, crowd: 700 };
     case 'medium': return { quality: q, post: true, msaa: 0, shadows: true, shadowMapSize: 1024, maxPixelRatio: 1.5, crowd: 400 };
     case 'low': return { quality: q, post: false, msaa: 0, shadows: false, shadowMapSize: 512, maxPixelRatio: 1, crowd: 160 };
   }
@@ -93,7 +95,7 @@ export class GameRenderer {
   private lastRaise = -99;
   private raiseLockedUntil = 0;
   /** Toggles for the ?debug panel. */
-  readonly debug = { post: true, bloom: true, dynRes: true, nanGuard: true };
+  readonly debug = { post: true, bloom: true, dynRes: true, nanGuard: true, msaa: false };
   private passScene: Scene | null = null;
   private passCamera: Camera | null = null;
 
@@ -130,7 +132,7 @@ export class GameRenderer {
     this.chroma = null;
     if (s.post && this.debug.post) {
       this.renderer.toneMapping = NoToneMapping;
-      this.composer = new EffectComposer(this.renderer, { frameBufferType: HalfFloatType, multisampling: s.msaa });
+      this.composer = new EffectComposer(this.renderer, { frameBufferType: HalfFloatType, multisampling: this.msaaSamples });
     } else {
       this.renderer.toneMapping = ACESFilmicToneMapping;
       this.renderer.toneMappingExposure = 1.05;
@@ -162,9 +164,13 @@ export class GameRenderer {
     }
     effects.push(new VignetteEffect({ offset: 0.32, darkness: 0.55 }));
     effects.push(new ToneMappingEffect({ mode: ToneMappingMode.ACES_FILMIC }));
-    if (this.settings.msaa === 0) effects.push(new SMAAEffect());
+    if (this.msaaSamples === 0) effects.push(new SMAAEffect());
     if (this.debug.nanGuard) effects.push(new NanGuardEffect());
     this.composer.addPass(new EffectPass(camera, ...effects));
+  }
+
+  private get msaaSamples(): number {
+    return this.debug.msaa ? 4 : this.settings.msaa;
   }
 
   /** Re-applies settings after a debug toggle. */

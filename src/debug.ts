@@ -70,6 +70,7 @@ export function installDebug(ctx: DebugContext): DebugHooks {
     ['Post FX', () => gr.debug.post, (v) => { gr.debug.post = v; gr.rebuild(); }],
     ['Bloom', () => gr.debug.bloom, (v) => { gr.debug.bloom = v; gr.rebuild(); }],
     ['NaN guard', () => gr.debug.nanGuard, (v) => { gr.debug.nanGuard = v; gr.rebuild(); }],
+    ['MSAA (old High)', () => gr.debug.msaa, (v) => { gr.debug.msaa = v; gr.rebuild(); }],
     ['Dynamic res', () => gr.debug.dynRes, (v) => { gr.debug.dynRes = v; }],
     ['Glow FX', () => glowFx, (v) => { glowFx = v; }],
   ];
