@@ -1,4 +1,4 @@
-import { AdditiveBlending, CustomBlending, HalfFloatType, type Mesh, type Object3D, type Scene } from 'three';
+import { AdditiveBlending, CustomBlending, HalfFloatType, type Mesh, type Object3D, type PerspectiveCamera, type Scene } from 'three';
 import type { GameRenderer } from './render/renderer';
 import { h } from './ui/dom';
 
@@ -10,6 +10,8 @@ import { h } from './ui/dom';
 export interface DebugContext {
   renderer: GameRenderer;
   scene: Scene;
+  /** The view camera: its aspect must match the canvas, or the picture stretches. */
+  camera?: PerspectiveCamera;
   getState: () => string;
 }
 
@@ -41,9 +43,17 @@ export function installDebug(ctx: DebugContext): DebugHooks {
     `build: ${import.meta.env.MODE}`,
   ];
 
+  // Canvas shape vs camera aspect: any gap here is a stretched picture.
+  const camInfo = () => {
+    const c = ctx.camera;
+    if (!c) return '';
+    const shown = canvas.clientWidth / Math.max(1, canvas.clientHeight);
+    const gap = Math.abs(c.aspect / shown - 1);
+    return `\ncamera aspect ${c.aspect.toFixed(3)} · canvas ${shown.toFixed(3)} · fov ${c.fov.toFixed(1)}${c.view?.enabled ? ' · view offset' : ''}${gap > 0.01 ? ' · !!! STRETCHED' : ' · ok'}`;
+  };
   const sizes = () => {
     const t = gr.composerTarget;
-    return `css ${canvas.clientWidth}x${canvas.clientHeight} · buffer ${canvas.width}x${canvas.height} · drawingBuffer ${gl.drawingBufferWidth}x${gl.drawingBufferHeight} · dpr ${devicePixelRatio} · rendererPR ${gr.renderer.getPixelRatio()} · scale ${gr.renderScale.toFixed(2)} · target ${t ? `${t.width}x${t.height} s${t.samples}` : 'none'} · quality ${gr.settings.quality}`;
+    return `css ${canvas.clientWidth}x${canvas.clientHeight} · buffer ${canvas.width}x${canvas.height} · drawingBuffer ${gl.drawingBufferWidth}x${gl.drawingBufferHeight} · dpr ${devicePixelRatio} · rendererPR ${gr.renderer.getPixelRatio()} · scale ${gr.renderScale.toFixed(2)} · target ${t ? `${t.width}x${t.height} s${t.samples}` : 'none'} · quality ${gr.settings.quality}${camInfo()}`;
   };
 
   // --- Events --------------------------------------------------------------

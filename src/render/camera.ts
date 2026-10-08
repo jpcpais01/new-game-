@@ -35,6 +35,8 @@ export class FightCamera {
 
   resize(aspect: number): void {
     this.camera.aspect = aspect;
+    const view = this.camera.view;
+    if (view?.enabled) { view.fullWidth = aspect; view.width = aspect; }
     // One lens for every screen shape: never wider than 16:9 at 30° (51° across)
     // nor taller than 34°. Wide phones and portrait screens pull the camera back
     // to fit the duel instead of widening the lens, which stretched everything
@@ -60,7 +62,12 @@ export class FightCamera {
     if (v === this.lift) return;
     this.lift = v;
     if (v === 0) this.camera.clearViewOffset();
-    else this.camera.setViewOffset(1, 1, 0, v, 1, 1);
+    // setViewOffset also sets aspect = fullWidth / fullHeight, so pass the real
+    // aspect (a 1×1 frame here once squashed the whole picture to a square).
+    else {
+      const a = this.camera.aspect;
+      this.camera.setViewOffset(a, 1, 0, v, a, 1);
+    }
   }
 
   shake(amount: number): void {
