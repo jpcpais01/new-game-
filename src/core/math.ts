@@ -14,3 +14,19 @@ export const easeOutBack = (t: number) => {
   const c1 = 1.70158, c3 = c1 + 1;
   return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2);
 };
+
+const TAU = Math.PI * 2;
+const HALF_PI = Math.PI / 2;
+/**
+ * Sine from plain IEEE arithmetic (+, *, round), so every browser engine gets
+ * bit-identical results. Math.sin is only as exact as each engine's libm, and
+ * online matches simulate the same battle on two different devices.
+ */
+export function dsin(x: number): number {
+  let r = x - Math.round(x / TAU) * TAU;
+  if (r > HALF_PI) r = Math.PI - r;
+  else if (r < -HALF_PI) r = -Math.PI - r;
+  const r2 = r * r;
+  return r * (1 + r2 * (-1 / 6 + r2 * (1 / 120 + r2 * (-1 / 5040 + r2 * (1 / 362880
+    + r2 * (-1 / 39916800 + r2 * (1 / 6227020800 + r2 * (-1 / 1307674368000))))))));
+}

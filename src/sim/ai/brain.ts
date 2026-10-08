@@ -1,4 +1,4 @@
-import { clamp, lerp } from '../../core/math';
+import { clamp, dsin, lerp } from '../../core/math';
 import type { Battle } from '../battle';
 import { ARENA_HALF_WIDTH, DT, ROUND_TIME } from '../constants';
 import { getStatus, isDisabled, stacksOf, type Fighter } from '../fighter';
@@ -1013,7 +1013,7 @@ export class Brain implements FighterBrain {
       case 'bait': {
         // Hover just outside their reach, swaying in and out.
         this.bobPhase += DT * 4;
-        desired = Math.max(m.engage, c.enemyReach + 0.45) + Math.sin(this.bobPhase) * 0.45;
+        desired = Math.max(m.engage, c.enemyReach + 0.45) + dsin(this.bobPhase) * 0.45;
         break;
       }
       case 'turtle':

@@ -26,6 +26,12 @@ import { setAuraDetail } from './render/gear/aura';
 import {
   generateRival, loadCharacter, newCharacter, randomName, saveCharacter, type PlayerCharacter,
 } from './character/profile';
+import { ROUND_TIME } from './sim/constants';
+import type { CharacterBuild } from './sim/loadout';
+import { GuestSession, HostSession, savedMatch, type OnlineSession } from './net/session';
+import { matchWinner, normalizeCode, scoreOf, CODE_LENGTH, type RoundResult, type Snapshot } from './net/protocol';
+import { confirmLeave, Lobby, NetBanner, openOnlineSheet } from './ui/online';
+import type { OnlinePick } from './ui/menu';
 
 type State = 'create' | 'menu' | 'intro' | 'battle' | 'ending' | 'results';
 
@@ -109,16 +115,25 @@ const hud = new Hud({
   onZoom: () => cycleZoom(),
   onSpeed: (s) => { speed = s; hud.setSpeed(s); sfx.play('ui'); },
   onPause: () => togglePause(),
-  onExit: () => toMenu(),
+  onExit: () => (session ? askLeave() : toMenu()),
 });
 const results = new Results({
   onReplay: () => startFight(lastSeed),
   onRematch: () => startFight(randomSeed()),
   onLoadout: () => toMenu(),
+  onNextRound: () => { sfx.play('ui'); session?.finishedWatching(netRound); },
+  onAskRematch: () => { sfx.play('ui'); session?.rematch(); },
+  onLeaveMatch: () => { sfx.play('ui'); askLeave(); },
 });
 const menu = new Menu(loadouts, settings, {
   onChange: (l) => {
     loadouts = l;
+    if (session) {
+      // An online pick is just for this round: the saved character stays as it is.
+      session.draft = l[session.you];
+      newBattle(randomSeed());
+      return;
+    }
     // Gear and skin changes on the blue corner belong to the persistent character.
     if (player) { player = { ...player, gear: { ...l[0].gear }, skins: { ...l[0].skins } }; saveCharacter(player); }
     newBattle(randomSeed());
@@ -132,6 +147,13 @@ const menu = new Menu(loadouts, settings, {
   },
   onFight: () => startFight(randomSeed()),
   onSettings: (s) => applySettings(s),
+  onOnline: () => openOnlineSheet(ui, { onHost: () => startOnline('host'), onJoin: (code) => startOnline('guest', code) }),
+  onReady: () => {
+    const s = session;
+    if (!s?.snap) return;
+    if (s.snap.ready[s.you]) s.unlock(); else s.lock(s.draft);
+  },
+  onLeave: () => askLeave(),
 });
 const creator = new Creator({
   onPreview: (c, cheer) => { stage.set(c); if (cheer) stage.cheer(); },
@@ -141,11 +163,15 @@ const creator = new Creator({
     saveCharacter(c);
     loadouts = [c, loadouts[1].name === c.name ? generateRival(c.name) : loadouts[1]];
     closeCreator();
+    // Arrived through an invite link before having a fighter: join now.
+    if (pendingRoom) { const code = pendingRoom; pendingRoom = ''; startOnline('guest', code); }
   },
   onCancel: () => closeCreator(),
 });
 const fpsEl = h('div.fps');
-ui.append(hud.el, menu.el, results.el, creator.el, fpsEl);
+const lobby = new Lobby({ onCancel: () => endOnline(true), onRetry: () => retryOnline() });
+const netBanner = new NetBanner();
+ui.append(hud.el, menu.el, results.el, creator.el, lobby.el, netBanner.el, fpsEl);
 // First in #ui so every panel paints over it instead of the other way round.
 ui.prepend(versionBadge(__APP_VERSION__));
 hud.show(false);
@@ -171,7 +197,8 @@ function applySettings(s: MenuSettings): void {
 }
 
 function togglePause(): void {
-  if (state !== 'battle' && state !== 'intro') return;
+  // Online fights run on both devices at once: no pausing.
+  if (session || (state !== 'battle' && state !== 'intro')) return;
   paused = !paused;
   hud.setPaused(paused);
   sfx.play('ui');
@@ -250,6 +277,174 @@ view.listener = {
 };
 
 // -----------------------------------------------------------------------------
+// Online matches: best of five against a friend. Both devices run the same
+// fights from the host's seed; this side only follows the session's state.
+// -----------------------------------------------------------------------------
+
+let session: OnlineSession | null = null;
+/** Invite code waiting for the first character to be made. */
+let pendingRoom = '';
+/** The match and round whose fight is loaded here, and the round being picked. */
+let netMatch = '';
+let netRound = 0;
+let netPick = '';
+let netPickShown = '';
+
+function startOnline(role: 'host' | 'guest', code = '', resume?: ReturnType<typeof savedMatch>): void {
+  if (!player) { pendingRoom = role === 'guest' ? code : ''; openCreator(); return; }
+  endOnline(false);
+  sfx.unlock();
+  const me: CharacterBuild = { name: player.name, form: player.form, gear: { ...player.gear }, look: player.look, skins: { ...player.skins } };
+  const s: OnlineSession = role === 'host' ? new HostSession(me, resume ?? undefined) : new GuestSession(code, me, resume ?? undefined);
+  session = s;
+  netMatch = ''; netRound = 0; netPick = ''; netPickShown = '';
+  s.onChange = () => { if (session === s) syncOnline(); };
+  // The duel preview stays behind the lobby.
+  state = 'menu';
+  paused = false;
+  menu.show(false);
+  results.hide();
+  hud.show(false);
+  syncOnline();
+  void (s as HostSession | GuestSession).start();
+}
+
+function retryOnline(): void {
+  const s = session as HostSession | GuestSession | null;
+  s?.retry();
+}
+
+/** Ends the online session (telling the rival when `bye`) and goes back to the menu. */
+function endOnline(bye: boolean): void {
+  const s = session;
+  if (!s) return;
+  session = null;
+  if (bye) s.leave(); else s.close();
+  lobby.hide();
+  netBanner.hide();
+  menu.online = null;
+  hud.setMatch(null);
+  loadouts = [player ?? guest, generateRival(player?.name)];
+  toMenu();
+}
+
+function askLeave(): void {
+  if (!session) return;
+  // Nothing left to lose: leave straight away.
+  if (!session.snap || session.conn === 'left' || session.conn === 'error') { endOnline(true); return; }
+  confirmLeave(ui, () => endOnline(true));
+}
+
+/** Brings the screens in line with the session after every change. */
+function syncOnline(): void {
+  const s = session;
+  if (!s) return;
+  const snap = s.snap;
+  if (!snap) {
+    netBanner.hide();
+    if (s.conn === 'error') lobby.show({ kind: 'error', code: s.code, error: s.error ?? 'offline', canRetry: true });
+    else if (s.role === 'host') lobby.show(s.conn === 'starting' ? { kind: 'opening' } : { kind: 'waiting', code: s.code });
+    else lobby.show({ kind: 'joining', code: s.code });
+    return;
+  }
+  lobby.hide();
+  syncBanner(s, snap);
+  if (snap.phase === 'pick') {
+    const key = `${snap.id}:${snap.round}`;
+    if (netPick !== key) enterPick(s, snap, key);
+    else updatePick(s, snap);
+  } else if (netMatch !== snap.id || netRound !== snap.round) {
+    // A new fight (or the last one, when coming back to a finished match).
+    startNetFight(snap);
+  } else if (state === 'results') {
+    results.updateOnline(onlineOutcome(s, snap));
+  }
+}
+
+function syncBanner(s: OnlineSession, snap: Snapshot): void {
+  const rivalName = snap.builds[s.rival].name;
+  const leave = { label: 'Leave', icon: 'exit' as const, onClick: () => askLeave() };
+  const back = { label: 'Back to menu', primary: true, onClick: () => endOnline(false) };
+  if (s.conn === 'lost') {
+    netBanner.show(
+      s.role === 'host' ? `${rivalName} disconnected` : 'Connection lost',
+      s.role === 'host' ? 'Waiting for them to come back. The pick clock is paused.' : 'Getting you back into the match',
+      [leave], true);
+  } else if (s.conn === 'left') {
+    netBanner.show(`${rivalName} left the match`, '', [back], false);
+  } else if (s.conn === 'error') {
+    netBanner.show("Can't get back into the match", s.error === 'version' ? 'Your versions differ: both reload the game.' : '', [back], false);
+  } else {
+    netBanner.hide();
+  }
+}
+
+function pickInfo(s: OnlineSession, snap: Snapshot): OnlinePick {
+  return { you: s.you, round: snap.round, score: scoreOf(snap.results), ready: [snap.ready[0], snap.ready[1]], deadline: s.pickDeadline };
+}
+
+/** A new round: everyone picks a build, starting from what they fought with last. */
+function enterPick(s: OnlineSession, snap: Snapshot, key: string): void {
+  netPick = key;
+  const draft = s.draft;
+  loadouts = s.you === 0 ? [draft, snap.builds[1]] : [snap.builds[0], draft];
+  state = 'menu';
+  paused = false;
+  results.hide();
+  hud.show(false);
+  menu.online = pickInfo(s, snap);
+  menu.activeCorner(s.you);
+  netPickShown = JSON.stringify([snap.ready, snap.held, snap.builds[s.rival].name]);
+  menu.loadouts = loadouts;
+  menu.render();
+  menu.show(true);
+  newBattle(randomSeed());
+}
+
+function updatePick(s: OnlineSession, snap: Snapshot): void {
+  menu.online = pickInfo(s, snap);
+  const shown = JSON.stringify([snap.ready, snap.held, snap.builds[s.rival].name]);
+  if (shown === netPickShown || state !== 'menu') return;
+  netPickShown = shown;
+  menu.render();
+}
+
+/** Both builds are in: play the round from the host's seed. */
+function startNetFight(snap: Snapshot): void {
+  netMatch = snap.id;
+  netRound = snap.round;
+  netPick = '';
+  menu.online = null;
+  menu.show(false);
+  loadouts = [snap.builds[0], snap.builds[1]];
+  hud.setMatch({ round: snap.round, score: scoreOf(snap.results, snap.round - 1) });
+  newBattle(snap.seed);
+  startFight(snap.seed);
+}
+
+/** The round's result: the host's official one, or this device's own until it arrives. */
+function onlineOutcome(s: OnlineSession, snap: Snapshot) {
+  const official = snap.results.find((r) => r.round === netRound);
+  const local: RoundResult = { round: netRound, winner: battle.winner, reason: battle.time >= ROUND_TIME ? 'time' : 'ko' };
+  const r = official ?? local;
+  const all = official ? snap.results : [...snap.results, local];
+  const mw = matchWinner(all, netRound);
+  return {
+    you: s.you, round: netRound, winner: r.winner, reason: r.reason,
+    score: scoreOf(all, netRound), matchWinner: mw, desync: !!r.desync,
+    waiting: mw !== -1 ? snap.rematch[s.you] : snap.done[s.you] || snap.round !== netRound,
+    rivalRematch: snap.rematch[s.rival],
+    offline: s.conn !== 'open',
+  };
+}
+
+function showOnlineResults(): void {
+  const s = session;
+  if (!s?.snap) return;
+  results.showOnline(battle, onlineOutcome(s, s.snap));
+}
+
+// -----------------------------------------------------------------------------
 // Main loop: fixed-step simulation, interpolated rendering.
 // -----------------------------------------------------------------------------
 
@@ -299,7 +494,8 @@ function frame(now: number): void {
     phaseT += realDt;
     if (phaseT > 2.6) {
       state = 'results';
-      results.show(battle, battle.time >= 99 ? 'time' : 'ko', !params.has('demo'));
+      if (session) showOnlineResults();
+      else results.show(battle, battle.time >= 99 ? 'time' : 'ko', !params.has('demo'));
       sfx.play('win');
     }
   }
@@ -313,6 +509,7 @@ function frame(now: number): void {
   else if (state === 'create') stage.update(realDt, cam.camera);
   else view.update(dt, acc / DT, state !== 'menu');
   if (state !== 'menu' && state !== 'create') hud.update();
+  else if (session && state === 'menu') menu.tick();
   floating.update(dt, cam.camera, window.innerWidth, window.innerHeight);
   const t1 = performance.now();
   debugHooks?.beforeRender();
@@ -346,6 +543,13 @@ document.addEventListener('fullscreenchange', onResize);
 
 window.addEventListener('keydown', (e) => {
   if (e.repeat || state === 'create') return;
+  if (session) {
+    // Online: only the view keys (speed, zoom); Escape asks before leaving.
+    if (e.key === '1' || e.key === '2' || e.key === '4') { speed = Number(e.key); hud.setSpeed(speed); }
+    else if (e.key.toLowerCase() === 'z') cycleZoom();
+    else if (e.key === 'Escape') askLeave();
+    return;
+  }
   if (e.key === ' ' ) { e.preventDefault(); togglePause(); }
   else if (e.key === '1' || e.key === '2' || e.key === '4') { speed = Number(e.key); hud.setSpeed(speed); }
   else if (e.key === 'Escape' && state !== 'menu') toMenu();
@@ -419,9 +623,21 @@ void boot().then(async () => {
       });
     }
     startFight(randomSeed());
+  } else if (!lab && params.has('room')) {
+    // An invite link: join the room (after making a fighter on a first visit).
+    const code = normalizeCode(params.get('room') ?? '');
+    params.delete('room');
+    history.replaceState(null, '', location.pathname + (params.size ? '?' + params.toString() : '') + location.hash);
+    if (code.length !== CODE_LENGTH) { if (!player) openCreator(); }
+    else if (player) startOnline('guest', code);
+    else { pendingRoom = code; openCreator(); }
   } else if (!lab && (!player || params.has('create'))) {
     // First launch: meet your fighter before anything else.
     openCreator();
+  } else if (!lab) {
+    // A reload mid-match picks the match back up.
+    const saved = savedMatch();
+    if (saved && player) startOnline(saved.role, saved.code, saved);
   }
 });
 if (import.meta.env.PROD) registerSW({ immediate: true });
