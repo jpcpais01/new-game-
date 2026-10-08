@@ -1,5 +1,6 @@
 import type { BufferGeometry, Object3D, Vector3 } from 'three';
 import { DEFAULT_APPEARANCE } from '../../character/appearance';
+import { SPECIES } from '../../character/species';
 import { GEAR } from '../../sim/gear';
 import { gearIds, type Appearance as SimAppearance, type SkinChoice } from '../../sim/loadout';
 import { skinOf, SKIN_THEMES } from '../../gear/skins';
@@ -82,11 +83,15 @@ export interface Appearance {
   leather: number;
   /** Character skin the body is sculpted in (character/outfits.ts); the house tunic when unset. */
   outfit?: string;
+  /** Species (character/species.ts); paints its horns, tails and markings. */
+  species?: string;
 }
 
 export interface FighterLook {
   /** Form id (see forms.ts). */
   form: string;
+  /** Species id (character/species.ts): proportions, head, ears, horns, tail. */
+  species: string;
   appearance: Appearance;
   grip: GripStyle;
   offhand: OffhandStyle;
@@ -211,21 +216,23 @@ const FORM_LOOKS: Record<FormId, Appearance> = {
   mighty: { skin: 0xb07a52, hair: 0xd8642a, eyes: 0x2a3a1a, primary: 0x2f7a5a, secondary: 0x3a3226, accent: 0xff8a2a, leather: 0x4a3020 },
   ethereal: { skin: 0xf6e0d4, hair: 0xb8e8ff, eyes: 0x3a8ab8, primary: 0xe8f2ff, secondary: 0x5a7ab0, accent: 0x7fd8ff, leather: 0x6a5a7a },
 };
-/** Default faces for fighters without a saved look (the animation lab, old saves). */
+/** Default faces for fighters without a saved look (the animation lab, old saves): one species per form. */
 const FORM_HEAD: Record<FormId, Partial<SimAppearance>> = {
-  balanced: { hairStyle: 'short', eyes: 'round', brows: 'soft', jaw: 'soft' },
-  robust: { hairStyle: 'buzz', eyes: 'narrow', brows: 'thick', jaw: 'square', facialHair: 'beard', nose: 'round' },
-  agile: { hairStyle: 'bun', eyes: 'sharp', brows: 'angry', jaw: 'narrow', mouth: 'grin' },
-  slender: { hairStyle: 'long', eyes: 'wide', brows: 'soft', jaw: 'narrow', mouth: 'smile', nose: 'long' },
-  mighty: { hairStyle: 'mohawk', eyes: 'sharp', brows: 'angry', jaw: 'square', facialHair: 'stubble', marking: 'scar', mouth: 'frown' },
-  ethereal: { hairStyle: 'ponytail', eyes: 'glow', brows: 'straight', jaw: 'soft', marking: 'tattoo' },
+  balanced: { species: 'kitsu', hairStyle: 'short', eyes: 'round', brows: 'soft', jaw: 'soft' },
+  robust: { species: 'ogrin', hairStyle: 'buzz', eyes: 'narrow', brows: 'thick', jaw: 'square', facialHair: 'beard', nose: 'round' },
+  agile: { species: 'lop', hairStyle: 'bun', eyes: 'wide', brows: 'soft', jaw: 'soft', mouth: 'smile' },
+  slender: { species: 'imp', hairStyle: 'long', eyes: 'sharp', brows: 'angry', jaw: 'narrow', mouth: 'grin', nose: 'long' },
+  mighty: { species: 'golem', hairStyle: 'mohawk', eyes: 'sharp', brows: 'none', jaw: 'square', mouth: 'frown' },
+  ethereal: { species: 'wisp', hairStyle: 'ponytail', eyes: 'round', brows: 'none', jaw: 'soft', marking: 'tattoo' },
 };
 
 function defaultAppearance(form: FormId): SimAppearance {
   const c = FORM_LOOKS[form] ?? FORM_LOOKS.balanced;
+  const head = FORM_HEAD[form] ?? {};
+  const sp = SPECIES[head.species ?? 'kitsu'];
   return {
-    ...DEFAULT_APPEARANCE, ...(FORM_HEAD[form] ?? {}),
-    skin: c.skin, hairColor: c.hair, eyeColor: c.eyes, primary: c.primary, secondary: c.accent,
+    ...DEFAULT_APPEARANCE, ...head,
+    skin: sp.skins[0], hairColor: sp.hair[0], eyeColor: sp.eyes, primary: c.primary, secondary: c.accent,
   };
 }
 
@@ -250,21 +257,23 @@ export function offhandOf(gear: GearSet, hands: HandPlan = handPlan(gear)): Offh
 
 /** Builds the render look for a character: form, colours, stance and gear models. */
 export function lookFor(src: LookSource): FighterLook {
-  const base = FORM_LOOKS[src.form] ?? FORM_LOOKS.balanced;
-  const sim = src.look;
-  // A creator look sets the skin, eye and hair colours and derives the outfit from its two colours.
-  const pal = sim ? lookPalette(sim) : null;
-  const appearance: Appearance = sim && pal
-    ? { skin: sim.skin, hair: sim.hairColor, eyes: sim.eyeColor, primary: pal.main, secondary: pal.pants, accent: pal.trim, leather: pal.boots, outfit: sim.outfit }
-    : base;
+  // Fighters without a saved look (the lab, old saves) get their form's default creature.
+  const sim = src.look ?? defaultAppearance(src.form);
+  // The look sets the skin, eye and hair colours and derives the outfit from its two colours.
+  const pal = lookPalette(sim);
+  const appearance: Appearance = {
+    skin: sim.skin, hair: sim.hairColor, eyes: sim.eyeColor, primary: pal.main, secondary: pal.pants, accent: pal.trim,
+    leather: pal.boots, outfit: sim.outfit, species: sim.species,
+  };
   const grip = gripOf(src.gear);
   const hands = handPlan(src.gear);
   const decorators: RigDecorator[] = [];
   for (const id of gearIds(src.gear)) decorators.push(gearModel(id, src.skins?.[id]));
   return {
     form: src.form,
+    species: sim.species,
     appearance,
-    head: headLook(sim ?? defaultAppearance(src.form)),
+    head: headLook(sim),
     grip,
     offhand: offhandOf(src.gear, hands),
     hands,

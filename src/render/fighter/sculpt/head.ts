@@ -1,4 +1,6 @@
 import type { Appearance } from '../../../character/appearance';
+import { SPECIES, type SpeciesId } from '../../../character/species';
+import { SPECIES_HEAD, type EyeSpec } from '../species';
 import { cullInside, meshSdf, type SculptMesh } from './mesher';
 import { M } from './paint';
 import {
@@ -9,11 +11,15 @@ import {
 /**
  * Sculpted heads. Everything is authored in units of the skull radius R (the
  * creator's reference head), centred on the skull, face towards +X, the
- * character's right towards +Z. A head is several cached meshes so that a
- * change in the creator only remeshes what changed:
- *  - face: skull, jaw, cheekbones, nose, lips, ears, brows, eye openings,
+ * character's right towards +Z. Every species shares the cranium (so every
+ * hairstyle fits every head) and builds its own face on it: a fox muzzle, an
+ * ogre's jaw and tusks, a spirit's smooth mask, a stone block. A head is
+ * several cached meshes so that a change in the creator only remeshes what
+ * changed:
+ *  - face: skull, jaw, muzzle, nose, ears, eye openings,
  *  - hair: the hairstyle on the scalp (plus facial hair),
- *  - tails: swaying pieces (ponytail, long hair, braids), each on its own bone.
+ *  - horns: horns and crystal crests (hidden under helmets with the hair),
+ *  - tails: swaying pieces (ponytail, long hair, braids, lop ears), each on its own bone.
  * Eyeballs are small primitive meshes added by the caller (crisp irises).
  */
 
@@ -22,10 +28,28 @@ export const HEAD_R = 0.215;
 /** Grid spacing per detail tier, in metres at the reference head size. */
 export const HEAD_DETAIL = [0.011, 0.0085, 0.0062];
 
-type FaceKey = Pick<Appearance, 'jaw' | 'nose' | 'mouth' | 'eyes' | 'brows'>;
+type FaceKey = Pick<Appearance, 'species' | 'jaw' | 'nose' | 'mouth' | 'eyes' | 'brows'>;
 
-/** Where the eyeballs sit (R units, right eye) and how big they are. */
-export const EYE = { x: 0.64, y: -0.05, z: 0.37, r: 0.2 };
+/** Where a species' eyeballs sit (R units, right eye) and how big they are. */
+export const eyeOf = (species: SpeciesId): EyeSpec => SPECIES_HEAD[species]?.eye ?? SPECIES_HEAD.kitsu.eye;
+
+/**
+ * A look as its species can wear it: stone always has glowing eyes and no
+ * brows, spirits no brows, only bearded species grow facial hair, and
+ * species with their own nose ignore the nose option (so caches share it).
+ */
+export function faceOf(a: Appearance): Appearance {
+  const sp = SPECIES[a.species] ?? SPECIES.kitsu;
+  const h = SPECIES_HEAD[sp.id];
+  return {
+    ...a,
+    eyes: h.glowEyes ? 'glow' : a.eyes,
+    brows: sp.brows ? a.brows : 'none',
+    facialHair: sp.beards ? a.facialHair : 'none',
+    nose: sp.noses ? a.nose : 'button',
+    marking: a.marking,
+  };
+}
 
 const S = HEAD_R;
 const P = (x: number, y: number, z: number): Vec3 => [x * S, y * S, z * S];
@@ -53,9 +77,9 @@ export const EYE_LIDS: Record<Appearance['eyes'], { up: number; lo: number; tilt
  * face plane: `u` outwards from the eye centre, `v` up. Each lid is an arc
  * of a big circle through both corners.
  */
-function almond(style: Appearance['eyes']): (u: number, v: number) => number {
+function almond(style: Appearance['eyes'], eye: EyeSpec): (u: number, v: number) => number {
   const l = EYE_LIDS[style];
-  const w = EYE.r * 0.97, hu = Math.sin(l.up) * EYE.r + 0.03, hl = Math.sin(l.lo) * EYE.r + 0.025;
+  const w = eye.r * 0.97, hu = Math.sin(l.up) * eye.r + 0.03, hl = Math.sin(l.lo) * eye.r + 0.025;
   const cu = (w * w - hu * hu) / (2 * hu), ru = hu + cu;
   const cl = (w * w - hl * hl) / (2 * hl), rl = hl + cl;
   const c = Math.cos(l.tilt), sn = Math.sin(l.tilt);
@@ -90,39 +114,180 @@ export interface FaceFeature {
   flat: number;
 }
 
+/** A flat blade (ears, fins): a tapered cone from `a` to `b`, thinned to `thin` across `axis`. */
+function blade(a: Vec3, b: Vec3, r0: number, r1: number, thin: number, axis: 0 | 1 | 2, m: number = M.SKIN): Sdf {
+  const c: Vec3 = [(a[0] + b[0]) / 2 * S, (a[1] + b[1]) / 2 * S, (a[2] + b[2]) / 2 * S];
+  const k: Vec3 = [1, 1, 1];
+  k[axis] = thin;
+  return new Squash(cone(P(...a), P(...b), r0 * S, r1 * S, m), c, k);
+}
+
 /**
- * The face: a smooth, simple head in a clean stylised look. A round cranium,
- * full cheeks and a soft chin (shaped by the jaw option), a small nose, ears
- * and sockets for the eyes. The eyes, lids, brows and mouth line are crisp
- * meshes laid on top (see FaceFeature), so the sculpt itself stays smooth.
+ * The lower face of a species: jaw, cheeks and muzzle on the shared cranium.
+ * The jaw option shapes the chin under it.
  */
-function faceField(a: FaceKey, ears: boolean): { face: Sdf; jaw: Sdf } {
-  const cranium = skull(M.SKIN);
-  const lower = ell(P(0.28, -0.3, 0), [0.68 * S, 0.66 * S, 0.74 * S], M.SKIN);
-  const cheeks = new MirrorZ(ball(P(0.5, -0.36, 0.4), 0.3 * S, M.SKIN));
+function lowerFace(species: SpeciesId, jawStyle: Appearance['jaw']): Sdf {
   const chin = ({
     soft: ell(P(0.52, -0.74, 0), [0.3 * S, 0.22 * S, 0.36 * S], M.SKIN),
     square: rbox(P(0.44, -0.72, 0), [0.28 * S, 0.14 * S, 0.44 * S], 0.14 * S, M.SKIN),
     narrow: ell(P(0.58, -0.8, 0), [0.24 * S, 0.24 * S, 0.2 * S], M.SKIN),
-  } as const)[a.jaw];
-  const jaw = union(0.22 * S, lower, chin, cheeks);
+  } as const)[jawStyle];
+  switch (species) {
+    case 'ogrin':
+      // A wide, heavy jaw with an underbite, the cheeks pushed up and out.
+      return union(0.2 * S,
+        ell(P(0.3, -0.45, 0), [0.76 * S, 0.62 * S, 0.98 * S], M.SKIN),
+        rbox(P(0.6, -0.74, 0), [0.26 * S, 0.17 * S, 0.54 * S], 0.14 * S, M.SKIN),
+        new MirrorZ(ball(P(0.5, -0.3, 0.52), 0.3 * S, M.SKIN)),
+        new Squash(chin, P(0.5, -0.75, 0), [1.15, 1, 1.3]),
+      );
+    case 'wisp':
+      // A smooth mask tapering to a small pointed chin.
+      return union(0.24 * S,
+        ell(P(0.26, -0.32, 0), [0.64 * S, 0.62 * S, 0.66 * S], M.SKIN),
+        cone(P(0.36, -0.5, 0), P(0.6, -0.92, 0), 0.4 * S, 0.1 * S, M.SKIN),
+        new MirrorZ(ball(P(0.48, -0.38, 0.36), 0.27 * S, M.SKIN)),
+      );
+    case 'lop':
+      // Round and chubby: full cheeks, a small soft chin.
+      return union(0.24 * S,
+        ell(P(0.24, -0.34, 0), [0.68 * S, 0.62 * S, 0.8 * S], M.SKIN),
+        new MirrorZ(ball(P(0.44, -0.42, 0.44), 0.37 * S, M.SKIN)),
+        new Squash(chin, P(0.52, -0.74, 0), [1, 0.8, 1]),
+      );
+    case 'imp':
+      // Gaunt cheeks and a long, sharp chin.
+      return union(0.2 * S,
+        ell(P(0.26, -0.3, 0), [0.64 * S, 0.62 * S, 0.68 * S], M.SKIN),
+        cone(P(0.4, -0.55, 0), P(0.72, -1.02, 0), 0.34 * S, 0.06 * S, M.SKIN),
+        new MirrorZ(ball(P(0.5, -0.26, 0.42), 0.24 * S, M.SKIN)),
+        chin,
+      );
+    case 'golem':
+      // A block of stone with a heavy brow ridge.
+      return union(0.1 * S,
+        rbox(P(0.26, -0.36, 0), [0.66 * S, 0.5 * S, 0.84 * S], 0.22 * S, M.SKIN),
+        rbox(P(0.64, 0.2, 0), [0.24 * S, 0.12 * S, 0.74 * S], 0.08 * S, M.SKIN_DARK, [0, 0, -0.15]),
+        rbox(P(0.56, -0.72, 0), [0.3 * S, 0.14 * S, 0.5 * S], 0.1 * S, M.SKIN),
+      );
+    case 'kitsu':
+    default:
+      // A fox muzzle over a small human-ish jaw, tufts of fur at the cheeks.
+      return union(0.18 * S,
+        ell(P(0.24, -0.32, 0), [0.64 * S, 0.6 * S, 0.7 * S], M.SKIN),
+        new MirrorZ(ball(P(0.44, -0.38, 0.4), 0.28 * S, M.SKIN)),
+        union(0.12 * S,
+          ell(P(0.8, -0.4, 0), [0.32 * S, 0.19 * S, 0.24 * S], M.SKIN),
+          ell(P(0.74, -0.55, 0), [0.24 * S, 0.12 * S, 0.2 * S], M.SKIN),
+        ),
+        new MirrorZ(union(0.04 * S,
+          cone(P(0.2, -0.46, 0.64), P(0.12, -0.7, 0.98), 0.16 * S, 0.02 * S, M.SKIN),
+          cone(P(0.12, -0.36, 0.7), P(-0.02, -0.5, 1.02), 0.13 * S, 0.02 * S, M.SKIN),
+        )),
+        new Squash(chin, P(0.5, -0.74, 0), [0.9, 0.85, 0.85]),
+      );
+  }
+}
+
+/** A species' ears (lop ears hang on bones: see tails()). */
+function earsOf(species: SpeciesId): Sdf | null {
+  switch (species) {
+    case 'kitsu':
+      // Tall fox ears on top of the head, pink inside, dark at the tips.
+      return new MirrorZ(new Paint(
+        blade([-0.08, 0.66, 0.5], [-0.2, 1.62, 0.78], 0.3, 0.02, 0.4, 0),
+        (x, y, _z, m) => (y > 1.34 * S ? M.SKIN_DARK : x > (-0.12 - 0.05 * (y / S - 1.14)) * S && y < 1.3 * S && y > 0.84 * S ? M.INNER : m),
+      ));
+    case 'ogrin':
+      // Small pointed ears sticking out sideways.
+      return new MirrorZ(blade([-0.04, -0.06, 0.82], [-0.12, 0.3, 1.32], 0.17, 0.025, 0.45, 0));
+    case 'wisp':
+      // Swept-back fins, two per side.
+      return new MirrorZ(union(0.05 * S,
+        blade([-0.1, 0.0, 0.8], [-0.85, 0.42, 1.18], 0.2, 0.02, 0.35, 2),
+        blade([-0.12, -0.2, 0.78], [-0.65, -0.2, 1.08], 0.13, 0.015, 0.35, 2),
+      ));
+    case 'imp':
+      // Long pointed ears straight out to the sides.
+      return new MirrorZ(blade([-0.05, -0.02, 0.84], [-0.4, 0.14, 1.66], 0.17, 0.015, 0.42, 1));
+    case 'golem':
+    case 'lop':
+      return null;
+  }
+  return null;
+}
+
+/** Horns and crests: hidden with the hair when a helmet goes on. */
+function hornsOf(species: SpeciesId): Sdf | null {
+  switch (species) {
+    case 'ogrin':
+      // Two stubby horns at the top of the forehead.
+      return new MirrorZ(cone(P(0.3, 0.74, 0.4), P(0.46, 1.16, 0.62), 0.14 * S, 0.035 * S, M.HORN));
+    case 'imp': {
+      // Ridged horns sweeping back and curling up.
+      const pts = bezier(P(0.25, 0.72, 0.42), P(-0.25, 1.3, 0.62), P(-0.78, 1.12, 0.58), 6);
+      const rs = pts.map((_, i) => (0.15 - 0.125 * (i / 6)) * S);
+      return new MirrorZ(new Displace(strand(pts, rs, M.HORN, 0.01 * S),
+        (x, y) => -Math.abs(Math.sin((x - y) / S * 14)) * 0.012 * S, 0.012 * S));
+    }
+    case 'golem': {
+      // A crest of crystals growing from the back of the crown.
+      const xs: [Vec3, Vec3, number][] = [
+        [[-0.2, 0.7, 0], [-0.42, 1.55, 0], 0.2],
+        [[-0.05, 0.75, 0.32], [-0.18, 1.32, 0.56], 0.14],
+        [[-0.05, 0.75, -0.32], [-0.2, 1.26, -0.6], 0.13],
+        [[-0.5, 0.55, 0.15], [-0.85, 1.12, 0.3], 0.13],
+      ];
+      return union(0.02 * S, ...xs.map(([a, b, r]) => cone(P(...a), P(...b), r * S, 0.01 * S, M.CRYSTAL)));
+    }
+  }
+  return null;
+}
+
+/** A species' own nose, or the creator's nose option for species that use it. */
+function noseOf(species: SpeciesId, style: Appearance['nose']): Sdf | null {
+  const own = ({
+    button: union(0.06 * S, ball(P(0.95, -0.24, 0), 0.09 * S, M.SKIN), cone(P(0.84, -0.02, 0), P(0.94, -0.19, 0), 0.04 * S, 0.07 * S, M.SKIN)),
+    round: union(0.06 * S, ball(P(0.95, -0.24, 0), 0.12 * S, M.SKIN), new MirrorZ(ball(P(0.89, -0.29, 0.08), 0.075 * S, M.SKIN))),
+    long: union(0.05 * S, cone(P(0.84, 0.04, 0), P(1.06, -0.24, 0), 0.05 * S, 0.075 * S, M.SKIN), ball(P(1.04, -0.26, 0), 0.085 * S, M.SKIN)),
+  } as const)[style];
+  switch (species) {
+    case 'ogrin':
+      // Broad and flat, nostrils flared.
+      return new Squash(own, P(0.95, -0.24, 0), [0.85, 1, 1.7]);
+    case 'imp':
+      return own;
+    case 'kitsu':
+      // A black button at the tip of the muzzle.
+      return ell(P(1.1, -0.33, 0), [0.07 * S, 0.06 * S, 0.09 * S], M.NOSE);
+    case 'lop':
+      // A tiny pink nose.
+      return ell(P(0.99, -0.25, 0), [0.055 * S, 0.045 * S, 0.075 * S], M.INNER);
+  }
+  return null;
+}
+
+/**
+ * The face: the shared cranium with the species' lower face, nose and ears,
+ * and sockets for the eyes. The eyes, lids, brows and mouth line are crisp
+ * meshes laid on top (see FaceFeature), so the sculpt itself stays smooth.
+ */
+function faceField(a: FaceKey, ears: boolean): { face: Sdf; jaw: Sdf } {
+  const eye = eyeOf(a.species);
+  const cranium = skull(M.SKIN);
+  const jaw = lowerFace(a.species, a.jaw);
   let face: Sdf = union(0.25 * S, cranium, jaw);
 
   // Eye sockets: room for the eyeball and its lids, opened in an almond.
-  const E = P(EYE.x, EYE.y, EYE.z), er = EYE.r * S;
+  const E = P(eye.x, eye.y, eye.z), er = eye.r * S;
   const eyeD = (x: number, y: number, z: number) => Math.hypot(x - E[0], y - E[1], Math.abs(z) - E[2]);
-  const shape = almond(a.eyes);
+  const shape = almond(a.eyes, eye);
   const eb: [number, number, number, number, number, number] = [E[0] - er * 1.8, E[1] - er * 1.8, -E[2] - er * 1.8, E[0] + er * 1.8, E[1] + er * 1.8, E[2] + er * 1.8];
   face = sub(face, new Fn((x, y, z) => eyeD(x, y, z) - er * 1.06, eb, M.SKIN), 0.015 * S);
   face = sub(face, new Fn((x, y, z) => Math.max(shape((Math.abs(z) - E[2]) / S, (y - E[1]) / S) * S, E[0] - x), eb, M.SKIN), 0.04 * S);
 
-  // Nose: small and soft.
-  const nose = ({
-    button: union(0.06 * S, ball(P(0.95, -0.24, 0), 0.09 * S, M.SKIN), cone(P(0.84, -0.02, 0), P(0.94, -0.19, 0), 0.04 * S, 0.07 * S, M.SKIN)),
-    round: union(0.06 * S, ball(P(0.95, -0.24, 0), 0.12 * S, M.SKIN), new MirrorZ(ball(P(0.89, -0.29, 0.08), 0.075 * S, M.SKIN))),
-    long: union(0.05 * S, cone(P(0.84, 0.04, 0), P(1.04, -0.22, 0), 0.05 * S, 0.075 * S, M.SKIN), ball(P(1.02, -0.24, 0), 0.085 * S, M.SKIN)),
-  } as const)[a.nose];
-  face = union(0.08 * S, face, nose);
+  const nose = noseOf(a.species, a.nose);
+  if (nose) face = union(0.07 * S, face, nose);
 
   // An open grin is carved (with teeth); the other mouths are lines drawn on top.
   if (a.mouth === 'grin') {
@@ -131,18 +296,21 @@ function faceField(a: FaceKey, ears: boolean): { face: Sdf; jaw: Sdf } {
       const Y = y / S, Z = z / S;
       const d = Math.max(Y - my, Math.hypot((Y - my) / 0.12, Z / 0.18) - 1) * 0.1;
       return Math.max(d * S, 0.72 * S - x);
-    }, [0.6 * S, (my - 0.15) * S, -0.22 * S, 1.2 * S, (my + 0.03) * S, 0.22 * S], M.MOUTH);
+    }, [0.6 * S, (my - 0.15) * S, -0.22 * S, 1.3 * S, (my + 0.03) * S, 0.22 * S], M.MOUTH);
     face = sub(face, open, 0.025 * S, M.MOUTH);
     face = union(0.008 * S, face, ell(P(0.8, my - 0.02, 0), [0.07 * S, 0.035 * S, 0.15 * S], M.TEETH));
   }
-
-  // Ears: simple, with a soft bowl.
+  // Tusks, fangs and buck teeth.
+  if (a.species === 'ogrin') {
+    face = union(0.02 * S, face, new MirrorZ(cone(P(0.84, -0.7, 0.3), P(0.92, -0.36, 0.38), 0.075 * S, 0.018 * S, M.HORN)));
+  } else if (a.species === 'imp') {
+    face = union(0.01 * S, face, new MirrorZ(cone(P(0.86, -0.52, 0.1), P(0.88, -0.68, 0.1), 0.035 * S, 0.004 * S, M.TEETH)));
+  } else if (a.species === 'lop') {
+    face = union(0.01 * S, face, rbox(P(0.9, -0.64, 0), [0.03 * S, 0.055 * S, 0.075 * S], 0.02 * S, M.TEETH));
+  }
   if (ears) {
-    const ear = sub(
-      ell(P(-0.04, -0.06, 0.88), [0.16 * S, 0.25 * S, 0.1 * S], M.SKIN, [0.15, -0.25, 0]),
-      ell(P(-0.01, -0.05, 0.97), [0.09 * S, 0.15 * S, 0.06 * S], M.SKIN, [0.15, -0.25, 0]), 0.04 * S,
-    );
-    face = union(0.06 * S, face, new MirrorZ(ear));
+    const e = earsOf(a.species);
+    if (e) face = union(0.07 * S, face, e);
   }
   return { face, jaw };
 }
@@ -185,6 +353,9 @@ function feature(f: Sdf, kind: FaceFeature['kind'], yz: (t: number) => [number, 
 function faceFeatures(a: FaceKey, f: Sdf): FaceFeature[] {
   const out: FaceFeature[] = [];
   const taper = (t: number) => Math.pow(Math.max(0, Math.sin(Math.PI * t)), 0.45);
+  // Brows ride above the species' eyes.
+  const eye = eyeOf(a.species);
+  const dy = eye.y + eye.r - 0.15, kz = eye.z / 0.37;
   if (a.brows !== 'none') {
     const [inY, midY, outY, w0, w1] = ({
       soft: [0.24, 0.3, 0.25, 0.055, 0.034],
@@ -196,7 +367,7 @@ function faceFeatures(a: FaceKey, f: Sdf): FaceFeature[] {
       out.push(feature(f, 'brow', (t) => {
         // Quadratic through inner, middle and outer points; the inner end is a little lower and thicker.
         const y = (1 - t) * (1 - t) * inY + 2 * t * (1 - t) * (midY + (midY - (inY + outY) / 2)) + t * t * outY;
-        return [y, sd * (0.15 + t * 0.42)];
+        return [y + dy, sd * (0.15 + t * 0.42) * kz];
       }, (t) => (w0 + (w1 - w0) * t) * (t < 0.15 ? 0.6 + t / 0.15 * 0.4 : 1) * Math.max(0.25, taper(Math.min(1, t * 0.5 + 0.5))), 0.5));
     }
   }
@@ -455,6 +626,21 @@ export interface TailSpec {
   stiffness: number;
 }
 
+/** Long lop ears flopping down the sides of the head, on their own bones. */
+function lopEars(): TailSpec[] {
+  return [-1, 1].map((sd) => {
+    const k = 1 / 0.38;
+    const ear = strand(
+      [P(0, 0, 0), P(0.02, 0.22, sd * 0.14 * k), P(-0.04, -0.12, sd * 0.4 * k), P(-0.08, -0.68, sd * 0.46 * k), P(-0.1, -1.1, sd * 0.42 * k)],
+      [0.15 * S, 0.21 * S, 0.27 * S, 0.24 * S, 0.11 * S], M.SKIN, 0.06 * S,
+    );
+    const flat = new Squash(ear, [0, 0, 0], [1, 1, 0.38]);
+    // The inside of the ear, facing the head, is pink.
+    const field = new Paint(flat, (_x, y, z, m) => (y < 0.05 * S && z * sd < 0.15 * S ? M.INNER : m));
+    return { root: [0.0, 0.6, sd * 0.66] as Vec3, stiffness: 0.9, field };
+  });
+}
+
 function tails(style: Appearance['hairStyle']): TailSpec[] {
   const L = (a: Vec3, c: Vec3, b: Vec3, r0: number, r1: number, m: number = M.HAIR) => lock(a, c, b, r0, r1, m, 6);
   switch (style) {
@@ -503,6 +689,8 @@ function cached(key: string, make: () => SculptMesh | null): SculptMesh | null {
 export interface HeadSculpt {
   face: SculptMesh;
   hair: SculptMesh | null;
+  /** Horns and crests (none under a helmet). */
+  horns: SculptMesh | null;
   facial: SculptMesh | null;
   tails: { root: Vec3; stiffness: number; mesh: SculptMesh }[];
   /** Brows and mouth line, drawn as crisp tubes on the skin. */
@@ -510,7 +698,9 @@ export interface HeadSculpt {
 }
 const featureCache = new Map<string, FaceFeature[]>();
 
-export function sculptHead(a: Appearance, o: { noHair?: boolean; noEars?: boolean }, detail: number): HeadSculpt {
+export function sculptHead(look: Appearance, o: { noHair?: boolean; noEars?: boolean }, detail: number): HeadSculpt {
+  const a = faceOf(look);
+  const sp = a.species;
   const h = HEAD_DETAIL[Math.max(0, Math.min(HEAD_DETAIL.length - 1, detail))];
   const ears = !o.noEars;
   const style = o.noHair ? 'bald' : a.hairStyle;
@@ -518,7 +708,7 @@ export function sculptHead(a: Appearance, o: { noHair?: boolean; noEars?: boolea
   const fields = () => faceField(a, ears);
   const hairF = () => hairFields.get(style) ?? (hairFields.set(style, hairField(style)), hairFields.get(style)!);
   // The face is meshed per hairstyle so the scalp under the hair can be dropped.
-  const fk = `face:${a.jaw}:${a.nose}:${a.mouth === 'grin'}:${a.eyes}:${ears}`;
+  const fk = `face:${sp}:${a.jaw}:${a.nose}:${a.mouth === 'grin'}:${a.eyes}:${ears}`;
   const face = cached(`${fk}:${style}:${detail}`, () => {
     const f = cached(`${fk}:full:${detail}`, () => meshSdf(fields().face, { h, ao: 0.03 * S }))!;
     const cover = hairF();
@@ -528,7 +718,11 @@ export function sculptHead(a: Appearance, o: { noHair?: boolean; noEars?: boolea
     const f = hairF();
     return f ? meshSdf(f, { h, ao: 0.04 * S }) : null;
   });
-  const facial = cached(`facial:${a.facialHair}:${a.jaw}:${detail}`, () => {
+  const horns = o.noHair ? null : cached(`horns:${sp}:${detail}`, () => {
+    const f = hornsOf(sp);
+    return f ? meshSdf(f, { h, ao: 0.03 * S }) : null;
+  });
+  const facial = cached(`facial:${sp}:${a.facialHair}:${a.jaw}:${detail}`, () => {
     jaw ??= fields().jaw;
     const f = facialField(a.facialHair, jaw);
     return f ? meshSdf(f, { h, ao: 0.04 * S }) : null;
@@ -537,9 +731,15 @@ export function sculptHead(a: Appearance, o: { noHair?: boolean; noEars?: boolea
     root: t.root, stiffness: t.stiffness,
     mesh: cached(`tail:${style}:${i}:${detail}`, () => meshSdf(t.field, { h, ao: 0.04 * S }))!,
   }));
+  if (sp === 'lop' && ears) {
+    lopEars().forEach((t, i) => tl.push({
+      root: t.root, stiffness: t.stiffness,
+      mesh: cached(`lopEar:${i}:${detail}`, () => meshSdf(t.field, { h: h * 1.5, ao: 0.04 * S }))!,
+    }));
+  }
   const ftk = `${fk}:${a.mouth}:${a.brows}`;
   let features = featureCache.get(ftk);
   if (!features) { features = faceFeatures(a, fields().face); featureCache.set(ftk, features); }
-  return { face, hair, facial, tails: tl, features };
+  return { face, hair, horns, facial, tails: tl, features };
 }
 const hairFields = new Map<string, Sdf | null>();

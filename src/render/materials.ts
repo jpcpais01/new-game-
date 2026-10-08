@@ -25,6 +25,8 @@ export const STYLE = {
   uGroundY: { value: 0 },
   /** Outline width in normalised device units, and height/width of the canvas. */
   uOutlineWidth: { value: 0.0036 },
+  /** Characters' ink line: bolder, so they read as drawn even small on a phone. */
+  uInkWidth: { value: 0.0058 },
   uAspect: { value: 9 / 16 },
 } satisfies Record<string, IUniform>;
 
@@ -72,7 +74,33 @@ interface StyleOptions {
   fragmentColor?: string;
   /** Darken vertical surfaces close to the ground (contact occlusion). Not for instanced meshes. */
   ao?: boolean;
+  /**
+   * Cel shading: two flat tones (lit and a soft, hue-shifted shadow) split
+   * by a narrow soft edge, like an illustrated character, instead of the
+   * three painterly bands.
+   */
+  cel?: boolean;
 }
+
+const PAINTED_BANDS = /* glsl */ `
+  vec3 col = mix(mix(base * uShadowTint, base * uMidTint, t1), base * uLitTint, t2);
+  // Painterly terminator: a warm, saturated glow where light turns into shadow.
+  float term = smoothstep(uRamp.x - 0.2, uRamp.x, ratio) * (1.0 - smoothstep(uRamp.x + 0.02, uRamp.y + 0.06, ratio));
+  col += (base + 0.15) * uTermTint * term;
+`;
+
+const CEL_BANDS = /* glsl */ `
+  // Two tones split by a narrow soft edge; the shadow keeps the mood's hue
+  // but stays light and saturated, as in a cel-painted illustration.
+  t1 = smoothstep(uRamp.x - 0.012, uRamp.x + 0.03, ratio);
+  t2 = t1;
+  vec3 shade = base * mix(uShadowTint, vec3(1.0), 0.4);
+  shade = max(mix(vec3(dot(shade, vec3(0.299, 0.587, 0.114))), shade, 1.25), vec3(0.0));
+  vec3 col = mix(shade, base * uLitTint, t1);
+  // A thin warm line where light turns to shadow.
+  float term = smoothstep(uRamp.x - 0.09, uRamp.x, ratio) * (1.0 - smoothstep(uRamp.x, uRamp.x + 0.08, ratio));
+  col += (base + 0.1) * uTermTint * term * 0.7;
+`;
 
 /**
  * Patches a Lambert material into the house style. Lighting is still computed
@@ -134,10 +162,7 @@ varying float vGloss;
   float ndv = clamp(dot(normal, vdir), 0.0, 1.0);
   // Gloss 0..1 is shininess; 2 and above marks self-lit paint (see sculpt/paint.ts).
   float gl = clamp(vGloss, 0.0, 1.0);
-  vec3 col = mix(mix(base * uShadowTint, base * uMidTint, t1), base * uLitTint, t2);
-  // Painterly terminator: a warm, saturated glow where light turns into shadow.
-  float term = smoothstep(uRamp.x - 0.2, uRamp.x, ratio) * (1.0 - smoothstep(uRamp.x + 0.02, uRamp.y + 0.06, ratio));
-  col += (base + 0.15) * uTermTint * term;
+ ${o.cel ? CEL_BANDS : PAINTED_BANDS}
   // Sky fill brightens upward-facing shadow areas a touch (reads as bounce light).
   col += base * uSkyFill * (0.5 + 0.5 * normal.y) * (1.0 - t2);
   #if NUM_DIR_LIGHTS > 0
@@ -168,7 +193,7 @@ varying float vGloss;
     if (o.fighter) {
       fbody += `
   float fres = 1.0 - ndv;
-  col += uRim * smoothstep(0.58, 0.86, fres) * 0.5;
+  ${o.cel ? 'col += uRim * smoothstep(0.66, 0.74, fres) * (0.25 + 0.4 * t1);' : 'col += uRim * smoothstep(0.58, 0.86, fres) * 0.5;'}
   col = mix(col, uTint * (0.6 + fres), clamp(uTintAmt, 0.0, 1.0));
   col = mix(col, vec3(1.0), clamp(uFlash, 0.0, 1.0));
 `;
@@ -186,9 +211,9 @@ varying float vGloss;
   return m;
 }
 
-/** Vertex-coloured, skinned body material for one fighter. */
+/** Vertex-coloured, skinned, cel-shaded body material for one fighter. */
 export function fighterMaterial(u: FighterUniforms): MeshLambertMaterial {
-  return stylize(new MeshLambertMaterial({ vertexColors: true }), 'cb-fighter', { fighter: u });
+  return stylize(new MeshLambertMaterial({ vertexColors: true }), 'cb-fighter-cel', { fighter: u, cel: true });
 }
 
 /**
@@ -248,16 +273,16 @@ export function glowVertexMaterial(): MeshBasicMaterial {
 }
 
 let outline: ShaderMaterial | null = null;
+let ink: ShaderMaterial | null = null;
 
 /**
- * Inverted-hull outline drawn in a darker, more saturated shade of each
- * vertex's own colour (coloured line art rather than flat black). Works on
- * plain, skinned and instanced meshes; the hull is pushed out in clip space so
- * the line keeps a constant pixel width at any zoom.
+ * Inverted-hull outline: the hull is pushed out in clip space so the line
+ * keeps a constant pixel width at any zoom. `darkness` sets how much of each
+ * vertex's own colour the line keeps (coloured line art for scenery, near
+ * black ink for characters). Works on plain, skinned and instanced meshes.
  */
-export function outlineMaterial(): ShaderMaterial {
-  if (outline) return outline;
-  outline = new ShaderMaterial({
+function hullOutline(width: IUniform<number>, darkness: number, sat: number): ShaderMaterial {
+  const m = new ShaderMaterial({
     side: BackSide,
     vertexColors: true,
     fog: true,
@@ -285,9 +310,9 @@ export function outlineMaterial(): ShaderMaterial {
         d.x *= uAspect;
         gl_Position.xy += d * uWidth * gl_Position.w;
         #include <fog_vertex>
-        vec3 c = max(vColor.rgb, vec3(0.0)) * 0.22;
+        vec3 c = max(vColor.rgb, vec3(0.0)) * ${darkness.toFixed(3)};
         float g = dot(c, vec3(0.299, 0.587, 0.114));
-        vLine = max(mix(vec3(g), c, 1.5), vec3(0.0)) + vec3(0.008, 0.008, 0.02);
+        vLine = max(mix(vec3(g), c, ${sat.toFixed(2)}), vec3(0.0)) + vec3(0.008, 0.006, 0.016);
       }`,
     fragmentShader: /* glsl */ `
       varying vec3 vLine;
@@ -298,9 +323,19 @@ export function outlineMaterial(): ShaderMaterial {
         #include <fog_fragment>
       }`,
   });
-  outline.uniforms.uWidth = STYLE.uOutlineWidth;
-  outline.uniforms.uAspect = STYLE.uAspect;
-  return outline;
+  m.uniforms.uWidth = width;
+  m.uniforms.uAspect = STYLE.uAspect;
+  return m;
+}
+
+/** Coloured line art around scenery: a darker, more saturated shade of each surface. */
+export function outlineMaterial(): ShaderMaterial {
+  return (outline ??= hullOutline(STYLE.uOutlineWidth, 0.22, 1.5));
+}
+
+/** The bold, near-black ink line around characters and their gear. */
+export function inkOutlineMaterial(): ShaderMaterial {
+  return (ink ??= hullOutline(STYLE.uInkWidth, 0.08, 1.3));
 }
 
 export function disposeMaterial(m: Material | Material[]): void {

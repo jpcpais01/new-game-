@@ -1,8 +1,10 @@
 import { sfx } from '../audio/sfx';
 import {
   BROW_STYLES, EYE_COLORS, EYE_STYLES, FACIAL_HAIR, HAIR_COLORS, HAIR_STYLES, JAW_STYLES, MARKINGS, MOUTH_STYLES,
-  NOSE_STYLES, OUTFIT_COLORS, randomAppearance, SKIN_TONES, type Appearance,
+  NOSE_STYLES, OUTFIT_COLORS, randomAppearance, withSpecies, type Appearance,
 } from '../character/appearance';
+import { SPECIES, SPECIES_IDS, type SpeciesId } from '../character/species';
+import { speciesIcon } from './speciesIcons';
 import { cleanName, NAME_MAX, randomName, type PlayerCharacter } from '../character/profile';
 import { FORM_IDS, FORMS } from '../sim/forms';
 import { GEAR_SLOTS, gearOf, SLOT_NAMES } from '../sim/gear';
@@ -16,7 +18,7 @@ import { formIcon, icon, type IconName } from './icons';
 
 type Tab = 'form' | 'face' | 'hair' | 'colors' | 'skins';
 const TABS: { id: Tab; label: string; glyph: IconName }[] = [
-  { id: 'form', label: 'Form', glyph: 'body' },
+  { id: 'form', label: 'Body', glyph: 'body' },
   { id: 'face', label: 'Face', glyph: 'face' },
   { id: 'hair', label: 'Hair', glyph: 'hair' },
   { id: 'colors', label: 'Colours', glyph: 'palette' },
@@ -143,18 +145,29 @@ export class Creator {
   }
 
   private renderBody(): void {
+    const sp = SPECIES[this.draft.look.species] ?? SPECIES.kitsu;
     let content: (HTMLElement | null)[];
     switch (this.tab) {
       case 'form':
-        content = [h('div.form-grid', null, ...FORM_IDS.map((id) => this.formCard(id)))];
+        content = [
+          h('section.cr-row', null,
+            h('h4', null, 'Species'),
+            h('div.species-grid', null, ...SPECIES_IDS.map((id) => this.speciesCard(id))),
+            h('p.cr-note', null, `${SPECIES[sp.id].blurb} Looks only: your form decides your stats.`),
+          ),
+          h('section.cr-row', null,
+            h('h4', null, 'Form'),
+            h('div.form-grid', null, ...FORM_IDS.map((id) => this.formCard(id))),
+          ),
+        ];
         break;
       case 'face':
         content = [
-          this.swatches('Skin', SKIN_TONES, 'skin'),
-          this.chips('Eyes', EYE_STYLES, 'eyes'),
-          this.swatches('Eye colour', EYE_COLORS, 'eyeColor'),
-          this.chips('Brows', BROW_STYLES, 'brows'),
-          this.chips('Nose', NOSE_STYLES, 'nose'),
+          this.swatches(sp.id === 'golem' ? 'Stone' : sp.id === 'kitsu' || sp.id === 'lop' ? 'Fur' : 'Skin', sp.skins, 'skin'),
+          sp.id === 'golem' ? null : this.chips('Eyes', EYE_STYLES, 'eyes'),
+          this.swatches(sp.id === 'golem' ? 'Core glow' : 'Eye colour', [sp.eyes, ...EYE_COLORS.filter((c) => c !== sp.eyes)], 'eyeColor'),
+          sp.brows ? this.chips('Brows', BROW_STYLES, 'brows') : null,
+          sp.noses ? this.chips('Nose', NOSE_STYLES, 'nose') : null,
           this.chips('Mouth', MOUTH_STYLES, 'mouth'),
           this.chips('Jaw', JAW_STYLES, 'jaw'),
           this.chips('Marks', MARKINGS, 'marking'),
@@ -163,8 +176,9 @@ export class Creator {
       case 'hair':
         content = [
           this.chips('Style', HAIR_STYLES, 'hairStyle'),
-          this.swatches('Colour', HAIR_COLORS, 'hairColor'),
-          this.chips('Facial hair', FACIAL_HAIR, 'facialHair'),
+          this.swatches(sp.id === 'golem' ? 'Moss & crystals' : sp.id === 'wisp' ? 'Spirit flame' : 'Colour',
+            [...sp.hair, ...HAIR_COLORS.filter((c) => !sp.hair.includes(c))], 'hairColor'),
+          sp.beards ? this.chips('Facial hair', FACIAL_HAIR, 'facialHair') : null,
         ];
         break;
       case 'colors':
@@ -183,6 +197,19 @@ export class Creator {
     const scroll = this.body.scrollTop;
     this.body.replaceChildren(...content.filter(Boolean) as HTMLElement[]);
     this.body.scrollTop = scroll;
+  }
+
+  private speciesCard(id: SpeciesId): HTMLElement {
+    const sp = SPECIES[id];
+    return h('button.sp-card' + (this.draft.look.species === id ? '.sel' : ''), {
+      title: sp.blurb,
+      onclick: () => {
+        if (this.draft.look.species === id) return;
+        sfx.play('ui');
+        this.draft.look = withSpecies(this.draft.look, id);
+        this.changed(true);
+      },
+    }, speciesIcon(id, this.draft.look, 'sp-face'), h('b', null, sp.name), h('small', null, sp.title));
   }
 
   private formCard(id: FormId): HTMLElement {
@@ -303,8 +330,8 @@ export class Creator {
 
   private randomize(): void {
     sfx.play('ui');
-    // A new face, hair and colours; the outfit is a choice, so it stays.
-    this.draft.look = { ...randomAppearance(), outfit: this.draft.look.outfit };
+    // A new face, hair and colours; the species and outfit are choices, so they stay.
+    this.draft.look = { ...randomAppearance(Math.random, this.draft.look.species), outfit: this.draft.look.outfit };
     this.changed(true);
   }
 

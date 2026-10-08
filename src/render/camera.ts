@@ -158,6 +158,7 @@ export class FightCamera {
     const height = 1.7 + this.dist * 0.11 + this.showcase * 0.3;
     // Lines stay crisp: slightly thinner far away, slightly bolder up close.
     STYLE.uOutlineWidth.value = 0.0034 * clamp(15 / this.dist, 0.65, 1.35);
+    STYLE.uInkWidth.value = 0.0054 * clamp(15 / this.dist, 0.8, 1.4);
     cam.position.set(this.focusX + sway + sx, height + sy, this.dist);
     this.look.set(this.focusX + sx * 0.5, this.focusY + sy * 0.5, 0);
     this.yaw = damp(this.yaw, this.yawTarget, 10, dt);

@@ -12,6 +12,20 @@ export interface PatchNote {
 
 export const PATCH_NOTES: PatchNote[] = [
   {
+    version: '0.11.0',
+    date: '2026-10-08',
+    title: 'Fighters reborn: six species',
+    notes: [
+      'Every fighter has been redrawn from scratch as a fantasy creature. Pick a species in the Body tab of the creator: Kitsu the fox spirit, Ogrin the little ogre, Wisp the spirit being, Lop the long-eared burrower, Imp the horned trickster or Golem the living stone.',
+      'Each species has its own build, from short and wide to tall and reed-thin, its own head and face, and its own ears, horns, tusks, tails or crystals. They move differently too: ogres and golems stomp, wisps drift, lops bounce and imps hunch.',
+      'Species are looks only. Your body form still decides your stats and now reshapes the build of your creature on top.',
+      'A new cel-shaded art style: flat colours, soft two-tone shadows and bold ink outlines, so fighters read clearly even small on a phone screen. Big anime eyes with bold catch lights.',
+      'Skin, fur, stone, eye and hair colours in the creator follow your species. Stone has a glowing core instead of eyes and a crest of crystals, and spirit hair glows.',
+      'Your saved fighter becomes a Kitsu. Pick any species in the creator; your form, gear, outfit and colours stay.',
+      'Outfits, helmets and every piece of gear fit all six species. Helmets tuck horns and ears away.',
+    ],
+  },
+  {
     version: '0.10.1',
     date: '2026-10-08',
     title: 'Reset view button moved',

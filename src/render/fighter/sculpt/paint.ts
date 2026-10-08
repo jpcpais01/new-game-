@@ -2,12 +2,13 @@ import { BufferAttribute, BufferGeometry } from 'three';
 import type { SculptMesh } from './mesher';
 
 /**
- * Material ids carried by sculpted surfaces, and the "figurine paint" that
- * turns them into vertex colours: a base colour per material, a tinted wash in
- * the recesses (from the baked AO), and a dry-brushed highlight on raised
- * edges (from the baked curvature), the way painted collectible figures are
- * finished. Colours are applied per build, so one cached sculpt serves every
- * outfit.
+ * Material ids carried by sculpted surfaces, and the cel paint that turns
+ * them into vertex colours: flat base colours per material, as an illustrator
+ * would lay them, with only a faint tinted wash deep in the recesses (from the
+ * baked AO) so overlapping shapes still separate, and a crisp anime highlight
+ * band on hair. Light and shadow come from the cel shader (materials.ts), and
+ * the ink lines from the outline pass. Colours are applied per build, so one
+ * cached sculpt serves every outfit.
  */
 export const M = {
   SKIN: 0, SHIRT: 1, TRIM: 2, PANTS: 3, BOOT: 4, SOLE: 5, WRAP: 6, HAIR: 7, LIP: 8, MOUTH: 9, TEETH: 10,
@@ -15,6 +16,8 @@ export const M = {
   SCAR: 21, PAINT: 22, GLOW: 23, SHIRT_DARK: 24, LINING: 25, SHAVE: 26, STUBBLE: 27, BLUSH: 28, FRECKLE: 29,
   // Outfit materials (character skins).
   PLATE: 30, FUR: 31, GLOW2: 32, LEATHER: 33, SUIT: 34, FUR_DARK: 35, PLATE_DARK: 36,
+  // Species materials.
+  HORN: 37, SPIRIT: 38, TIP: 39, SKIN_DARK: 40, CRYSTAL: 41, NOSE: 42, INNER: 43,
 } as const;
 
 export interface PaintColors {
@@ -38,6 +41,11 @@ export interface PaintColors {
   /** Emissive colours: seams, circuits, gems. */
   glow?: number;
   glow2?: number;
+  /** Species: horns and tusks, spirit light (half self-lit), fur tips, crystals. */
+  horn?: number;
+  spirit?: number;
+  tip?: number;
+  crystal?: number;
 }
 
 interface MatStyle {
@@ -59,6 +67,9 @@ const W = (r: number, g: number, b: number): [number, number, number] => [r, g, 
  * itself instead of costing their own draw call.
  */
 const EMISSIVE: MatStyle = { gloss: 4.2, wash: 0, washTint: W(1, 1, 1), edge: 0 };
+/** Cel paint keeps only a whisper of the old figurine wash and edge highlight. */
+const CEL_WASH = 0.32;
+const CEL_EDGE = 0.2;
 const STYLE: Record<number, MatStyle> = {
   [M.SKIN]: { gloss: 0.12, wash: 0.55, washTint: W(0.62, 0.3, 0.26), edge: 0.16 },
   [M.BLUSH]: { gloss: 0.12, wash: 0.55, washTint: W(0.62, 0.3, 0.26), edge: 0.16 },
@@ -91,9 +102,20 @@ const STYLE: Record<number, MatStyle> = {
   [M.FUR_DARK]: { gloss: 0.02, wash: 0.9, washTint: W(0.45, 0.45, 0.55), edge: 0.35 },
   [M.LEATHER]: { gloss: 0.35, wash: 0.75, washTint: W(0.4, 0.3, 0.3), edge: 0.3 },
   [M.SUIT]: { gloss: 0.55, wash: 0.6, washTint: W(0.4, 0.4, 0.55), edge: 0.32 },
+  [M.HORN]: { gloss: 0.45, wash: 0.7, washTint: W(0.55, 0.42, 0.4), edge: 0.4 },
+  [M.SPIRIT]: { gloss: 2.55, wash: 0, washTint: W(1, 1, 1), edge: 0, sheen: 0.3 },
+  [M.TIP]: { gloss: 0.04, wash: 0.6, washTint: W(0.6, 0.55, 0.65), edge: 0.2 },
+  [M.SKIN_DARK]: { gloss: 0.08, wash: 0.6, washTint: W(0.5, 0.4, 0.45), edge: 0.15 },
+  [M.CRYSTAL]: { gloss: 3.0, wash: 0, washTint: W(1, 1, 1), edge: 0 },
+  [M.NOSE]: { gloss: 0.7, wash: 0, washTint: W(1, 1, 1), edge: 0 },
+  [M.INNER]: { gloss: 0.1, wash: 0.6, washTint: W(0.6, 0.4, 0.45), edge: 0.1 },
 };
 const CLOTH: MatStyle = { gloss: 0.04, wash: 0.75, washTint: W(0.45, 0.4, 0.55), edge: 0.22 };
 
+const smooth = (e0: number, e1: number, x: number) => {
+  const t = Math.max(0, Math.min(1, (x - e0) / (e1 - e0)));
+  return t * t * (3 - 2 * t);
+};
 const r8 = (c: number) => ((c >> 16) & 255) / 255;
 const g8 = (c: number) => ((c >> 8) & 255) / 255;
 const b8 = (c: number) => (c & 255) / 255;
@@ -142,6 +164,13 @@ export function baseColor(m: number, c: PaintColors): number {
     case M.FUR_DARK: return mixHex(c.fur ?? 0xd8d0c4, 0x2a2430, 0.35);
     case M.LEATHER: return c.leather ?? c.boot;
     case M.SUIT: return c.suit ?? c.shirt;
+    case M.HORN: return c.horn ?? 0xeadcbc;
+    case M.SPIRIT: return c.spirit ?? c.hair;
+    case M.TIP: return c.tip ?? mixHex(c.skin, 0xfffaf2, 0.82);
+    case M.SKIN_DARK: return mixHex(c.skin, 0x161220, 0.42);
+    case M.CRYSTAL: return c.crystal ?? c.hair;
+    case M.NOSE: return 0x2a1c24;
+    case M.INNER: return mixHex(c.skin, 0xf2a0aa, 0.55);
     case M.SHAVE: return mixHex(c.hair, c.skin, 0.78);
     case M.STUBBLE: return mixHex(c.skin, c.hair, 0.38);
     case M.BLUSH: return mixHex(c.skin, 0xe0605a, 0.07);
@@ -186,17 +215,18 @@ export function paintedGeometry(s: SculptMesh, c: PaintColors, o: PaintOpts = {}
     // Recess wash: occluded creases darken towards a tinted shade.
     const occ = 1 - s.ao[i];
     const cv = s.curv[i];
-    const wash = Math.min(1, occ * 1.25 + Math.max(0, -cv) * 0.45) * st.wash * washK;
+    const wash = Math.min(1, occ * 1.25 + Math.max(0, -cv) * 0.45) * st.wash * washK * CEL_WASH;
     r *= 1 - wash * (1 - st.washTint[0]);
     g *= 1 - wash * (1 - st.washTint[1]);
     b *= 1 - wash * (1 - st.washTint[2]);
     // Dry-brushed edges: raised ridges catch a lighter tone.
-    const edge = Math.max(0, cv) * st.edge * (o.edge ?? 1);
+    const edge = Math.max(0, cv) * st.edge * (o.edge ?? 1) * CEL_EDGE;
     r += (1 - r) * edge * 0.8; g += (1 - g) * edge * 0.8; b += (1 - b) * edge * 0.8;
     if (st.sheen) {
-      // A soft ring of light across the crown, broken up by the grooves.
+      // An anime highlight: a crisp band of light across the crown, broken by the grooves between locks.
       const ny = s.nor[i * 3 + 1];
-      const band = Math.exp(-(((ny - 0.55) / 0.2) ** 2)) * st.sheen * s.ao[i];
+      const ring = smooth(0.38, 0.44, ny) * (1 - smooth(0.62, 0.68, ny));
+      const band = ring * st.sheen * 2.2 * smooth(0.72, 0.86, s.ao[i]);
       r += (1 - r) * band; g += (1 - g) * band; b += (1 - b) * band;
     }
     col[i * 3] = lin(r); col[i * 3 + 1] = lin(g); col[i * 3 + 2] = lin(b);
