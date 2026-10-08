@@ -1,15 +1,20 @@
 import type { Scene } from 'three';
+import { DEFAULT_APPEARANCE, randomAppearance, type Appearance } from './character/appearance';
 import { createFighter, type Fighter } from './sim/fighter';
 import type { FormId, GearSet } from './sim/types';
 import { SKINS } from './gear/skins';
 import type { FightCamera } from './render/camera';
 import { FighterView, type FxContext } from './render/fighter/fighterView';
+import { bodyDetail, withBodyDetail } from './render/fighter/body';
 
 /**
  * Animation lab (`?lab`): every body form side by side, each with a different
  * weapon, cycling through idle, steps, attacks, guards, dodges, hits and a
  * knockout. Used to review bodies and motion without waiting for a duel.
  * `?lab=walk` only walks, `?lab=ko` loops knockouts, `?lab=<anim>` loops one action slot.
+ * Review options: `&focus=N` close-up on one actor, `&shot=body|bust|face` a
+ * portrait camera on it (with `&yaw=deg` to orbit), `&looks=random|N` gives
+ * the actors creator looks (seeded), `&bare` strips their gear.
  */
 
 interface Actor { f: Fighter; v: FighterView; home: number; clock: number }
@@ -56,6 +61,21 @@ const SCRIPT: [number, Beat][] = [
 export function installLab(o: { scene: Scene; fx: FxContext; cam: FightCamera; hide: () => void; mode: string; focus?: number }): (dt: number) => void {
   o.hide();
   const q = new URLSearchParams(location.search);
+  const looks = q.get('looks');
+  let seed = Number(looks) || 7;
+  const rnd = () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; };
+  const lookFor = (i: number): Appearance | undefined => {
+    if (looks === null) return undefined;
+    let a = looks === 'default' ? DEFAULT_APPEARANCE : randomAppearance(rnd);
+    if (i === 0 && looks === '') a = DEFAULT_APPEARANCE;
+    // Per-field overrides, e.g. `&hairStyle=long&eyes=sharp&skin=0xc08a60`.
+    const o: Record<string, unknown> = { ...a };
+    for (const k of Object.keys(DEFAULT_APPEARANCE)) {
+      const v = q.get(k);
+      if (v !== null) o[k] = typeof o[k] === 'number' ? Number(v) : v;
+    }
+    return o as unknown as Appearance;
+  };
   const page = Number(q.get('page')) || 0;
   // &skin=<theme>: wear that theme's skin on every piece that has one.
   const theme = q.get('skin');
@@ -64,11 +84,13 @@ export function installLab(o: { scene: Scene; fx: FxContext; cam: FightCamera; h
     : o.mode === 'combos' ? MAINS.map((main, i) => ({ form: FORMS_CYCLE[i], gear: { main, ...LEFTS[page % LEFTS.length] } as GearSet }))
       : ROSTER;
   const actors: Actor[] = roster.map((r, i) => {
-    const f = createFighter((i % 2) as 0 | 1, { name: r.form, form: r.form, gear: r.gear, skins: skinsOf(r.gear) });
+    const gear: GearSet = q.has('bare') ? { main: r.gear.main } : r.gear;
+    const f = createFighter((i % 2) as 0 | 1, { name: r.form, form: r.form, gear, skins: skinsOf(gear), look: lookFor(i) });
     const home = (i - (roster.length - 1) / 2) * 2.3;
     f.x = f.px = home;
     f.facing = 1;
-    const v = new FighterView(f, (i % 2) as 0 | 1);
+    // Portrait shots review the close-up detail tier.
+    const v = withBodyDetail(q.has('shot') ? 2 : bodyDetail(), () => new FighterView(f, (i % 2) as 0 | 1));
     o.scene.add(v.group);
     return { f, v, home, clock: o.mode === 'combos' ? 0 : i * 0.37 };
   });
@@ -161,6 +183,21 @@ export function installLab(o: { scene: Scene; fx: FxContext; cam: FightCamera; h
       ac.v.update(f, 1, dt, o.fx, false, false, 1);
     }
     o.cam.showcase = 0;
+    const shot = q.get('shot');
+    if (shot && o.focus !== undefined && actors[o.focus]) {
+      // Portrait camera for reviewing bodies and faces up close (other actors hidden).
+      const ac = actors[o.focus];
+      for (const other of actors) other.v.group.visible = other === ac;
+      const yaw = (Number(q.get('yaw')) || 0) * Math.PI / 180;
+      const head = ac.v.headWorld;
+      const [h, d] = shot === 'face' ? [head.y - 0.14, Number(q.get('dist')) || 1.25] : shot === 'bust' ? [head.y - 0.45, 2.4] : [head.y * 0.55, 5.2];
+      const c = o.cam.camera;
+      const x = shot === 'body' ? ac.f.x : head.x;
+      o.cam.update(dt, x - 1, x + 1, 0, 0);
+      c.position.set(x + Math.sin(yaw) * d, h + (shot === 'face' ? 0.02 : 0.15), Math.cos(yaw) * d);
+      c.lookAt(x, h, 0);
+      return;
+    }
     if (o.focus !== undefined && actors[o.focus]) {
       // Close-up on one actor.
       o.cam.zoom = 'close';

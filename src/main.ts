@@ -19,6 +19,7 @@ import { Results } from './ui/results';
 import { setupPhoneFullscreen } from './ui/fullscreen';
 import { Creator } from './ui/creator';
 import { CharacterStage } from './render/characterStage';
+import { detailFor, setBodyDetail } from './render/fighter/body';
 import {
   generateRival, loadCharacter, newCharacter, randomName, saveCharacter, type PlayerCharacter,
 } from './character/profile';
@@ -36,6 +37,7 @@ if (ARENA_IDS.includes(params.get('arena') as ArenaId)) settings.arena = params.
 if (ZOOM_ORDER.includes(params.get('zoom') as Zoom)) settings.zoom = params.get('zoom') as Zoom;
 const resolveQuality = (q: MenuSettings['quality']): Quality => (q === 'auto' ? detectQuality() : q);
 
+setBodyDetail(detailFor(resolveQuality(settings.quality)));
 const renderer = new GameRenderer(canvas, resolveQuality(settings.quality));
 const scene = new Scene();
 const cam = new FightCamera(renderer.aspect);
@@ -154,6 +156,7 @@ function applySettings(s: MenuSettings): void {
   if (s.quality !== prevQuality) {
     const q = resolveQuality(s.quality);
     renderer.setQuality(q);
+    setBodyDetail(detailFor(q));
     renderer.setupPasses(scene, cam.camera);
   }
   if (s.quality !== prevQuality || s.arena !== prevArena) void loadArena(s.arena);

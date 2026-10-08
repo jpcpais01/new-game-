@@ -1,4 +1,5 @@
 import type { BufferGeometry, Object3D, Vector3 } from 'three';
+import { DEFAULT_APPEARANCE } from '../../character/appearance';
 import { GEAR } from '../../sim/gear';
 import { gearIds, type Appearance as SimAppearance, type SkinChoice } from '../../sim/loadout';
 import { skinOf, SKIN_THEMES } from '../../gear/skins';
@@ -70,16 +71,13 @@ export interface FighterLook {
   /** Form id (see forms.ts). */
   form: string;
   appearance: Appearance;
-  /** Face and hair style ids from head.ts registries (defaults when missing). */
-  face?: string;
-  hair?: string;
   grip: GripStyle;
   offhand: OffhandStyle;
   /** Who holds what in the left hand (see HandPlan). */
   hands: HandPlan;
   /** Gear, costume and accessory builders, run in order before baking. */
   decorators: RigDecorator[];
-  /** A character's custom head (face, hair) built after the gear; replaces the face/hair presets. */
+  /** The character's head (face, hair), built after the gear so helmets can hide the hair. */
   head?: RigDecorator;
   /** Colour of team rim light / trail accents when no enchant overrides it. */
   accent: number;
@@ -196,8 +194,23 @@ const FORM_LOOKS: Record<FormId, Appearance> = {
   mighty: { skin: 0xb07a52, hair: 0xd8642a, eyes: 0x2a3a1a, primary: 0x2f7a5a, secondary: 0x3a3226, accent: 0xff8a2a, leather: 0x4a3020 },
   ethereal: { skin: 0xf6e0d4, hair: 0xb8e8ff, eyes: 0x3a8ab8, primary: 0xe8f2ff, secondary: 0x5a7ab0, accent: 0x7fd8ff, leather: 0x6a5a7a },
 };
-const FORM_HAIR: Record<FormId, string> = { balanced: 'short', robust: 'buzz', agile: 'topknot', slender: 'long', mighty: 'mohawk', ethereal: 'ponytail' };
-const FORM_FACE: Record<FormId, string> = { balanced: 'default', robust: 'determined', agile: 'sharp', slender: 'gentle', mighty: 'fierce', ethereal: 'gentle' };
+/** Default faces for fighters without a saved look (the animation lab, old saves). */
+const FORM_HEAD: Record<FormId, Partial<SimAppearance>> = {
+  balanced: { hairStyle: 'short', eyes: 'round', brows: 'soft', jaw: 'soft' },
+  robust: { hairStyle: 'buzz', eyes: 'narrow', brows: 'thick', jaw: 'square', facialHair: 'beard', nose: 'round' },
+  agile: { hairStyle: 'bun', eyes: 'sharp', brows: 'angry', jaw: 'narrow', mouth: 'grin' },
+  slender: { hairStyle: 'long', eyes: 'wide', brows: 'soft', jaw: 'narrow', mouth: 'smile', nose: 'long' },
+  mighty: { hairStyle: 'mohawk', eyes: 'sharp', brows: 'angry', jaw: 'square', facialHair: 'stubble', marking: 'scar', mouth: 'frown' },
+  ethereal: { hairStyle: 'ponytail', eyes: 'glow', brows: 'straight', jaw: 'soft', marking: 'tattoo' },
+};
+
+function defaultAppearance(form: FormId): SimAppearance {
+  const c = FORM_LOOKS[form] ?? FORM_LOOKS.balanced;
+  return {
+    ...DEFAULT_APPEARANCE, ...(FORM_HEAD[form] ?? {}),
+    skin: c.skin, hairColor: c.hair, eyeColor: c.eyes, primary: c.primary, secondary: c.accent,
+  };
+}
 
 /** Minimal view of a fighter/character the adapter needs. */
 export interface LookSource {
@@ -234,9 +247,7 @@ export function lookFor(src: LookSource): FighterLook {
   return {
     form: src.form,
     appearance,
-    face: FORM_FACE[src.form],
-    hair: FORM_HAIR[src.form],
-    head: sim ? headLook(sim) : undefined,
+    head: headLook(sim ?? defaultAppearance(src.form)),
     grip,
     offhand: offhandOf(src.gear, hands),
     hands,
