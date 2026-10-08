@@ -2,7 +2,7 @@ import type { Object3D } from 'three';
 import type { PartSpec } from '../../meshBuilder';
 import { cyl, group, lineless, octa, part, rbox, sphere, torus, type Mats } from '../kit';
 import { bootBase, lp, type SkinModel } from '../models';
-import { crystal, edgeBlade, facetLathe, glowSpec, grad, pair, plate, rowsOf, starry, tube } from './forge';
+import { crystal, edgeBlade, facetLathe, glowSpec, grad, hoodShell, pair, plate, rowsOf, starry, tube } from './forge';
 
 // -----------------------------------------------------------------------------
 // Voidborne: forged where the stars went out. Black-violet glass with a
@@ -112,10 +112,33 @@ const cloak: SkinModel['defense'] = (s) => {
 
 // --- Voidgaze Hood (executioner hood) ---------------------------------------------------------
 
+const HOOD_GAP = 0.95;
+const HOOD_THETA = Math.PI * 0.74;
+
+/** Points along the hood's opening, hem to crown to hem, for the glowing trim. */
+function hoodEdge(r: number): [number, number, number][] {
+  const pts: [number, number, number][] = [];
+  const side = (sz: number, from: number, to: number) => {
+    for (let k = 0; k <= 6; k++) {
+      const v = from + (to - from) * (k / 6);
+      const th = v * HOOD_THETA;
+      const g = HOOD_GAP * Math.min(1, th / (HOOD_THETA * 0.45));
+      pts.push([Math.cos(g) * Math.sin(th) * r, Math.cos(th) * r, sz * Math.sin(g) * Math.sin(th) * r]);
+    }
+  };
+  side(-1, 1, 0.06);
+  pts.pop();
+  side(1, 0.06, 1);
+  return pts;
+}
+
 const hood: SkinModel['head'] = (s) => {
   const { head, headY: y, headR: r } = s;
-  part(head, sphere(r * 1.2, 16, 12), SKY, { pos: [-0.035, y + 0.04, 0], scale: [1, 1.08, 1.05] });
-  part(head, facetLathe('vbHoodPeak', [[r * 0.5, 0], [r * 0.3, r * 0.5], [0.001, r * 0.9]], 8), SKY, { pos: [r * 0.5, y + r * 0.85, 0], rot: [0, 0, -1.1] });
+  const R = r * 1.22;
+  // An open hood: the cut is pointed at the crown and frames the face.
+  part(head, hoodShell('vb', R, HOOD_GAP, HOOD_THETA), SKY, { pos: [-0.03, y + 0.03, 0], scale: [1, 1.1, 1.04] });
+  part(head, tube('vbHoodTrim', hoodEdge(R * 1.005), 0.007, 0.007, 30, 5), lineless(RIFT), { pos: [-0.03, y + 0.03, 0], scale: [1, 1.1, 1.04] });
+  part(head, facetLathe('vbHoodPeak', [[r * 0.5, 0], [r * 0.3, r * 0.5], [0.001, r * 0.9]], 8), SKY, { pos: [-r * 0.35, y + r * 1.0, 0], rot: [0, 0, 0.9] });
   const tail = s.clothBone(head, -r * 0.95, y + r * 0.2, 0);
   part(tail, facetLathe('vbHoodTail', [[r * 0.6, 0], [r * 0.3, -r * 1.0], [0.001, -r * 1.8]], 8), SKY, { pos: [-r * 0.2, -r * 0.1, 0], rot: [0, 0, -0.5] });
   part(s.chest, facetLathe('vbMantle', [[0.12, 0.0], [0.25, 0.05], [0.29, 0.15], [0.22, 0.2]], 12), SKY, { pos: [-0.02, 0.37, 0], scale: [0.95, 1, 1.1] });

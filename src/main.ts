@@ -112,8 +112,8 @@ const results = new Results({
 const menu = new Menu(loadouts, settings, {
   onChange: (l) => {
     loadouts = l;
-    // Gear changes on the blue corner belong to the persistent character.
-    if (player) { player = { ...player, gear: { ...l[0].gear } }; saveCharacter(player); }
+    // Gear and skin changes on the blue corner belong to the persistent character.
+    if (player) { player = { ...player, gear: { ...l[0].gear }, skins: { ...l[0].skins } }; saveCharacter(player); }
     newBattle(randomSeed());
   },
   onEditCharacter: () => openCreator(),

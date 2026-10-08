@@ -23,13 +23,15 @@ const glacier = (from: number, to: number, base: Partial<PartSpec> = {}) => grad
 function snowflake(g: Object3D, r: number, spec: PartSpec, pos: [number, number, number] = [0, 0, 0], rot: [number, number, number] = [0, 0, 0], depth = 0.012): void {
   const w = r * 0.16;
   const f = group(g, pos, rot);
-  for (let k = 0; k < 3; k++) part(f, rbox(r * 2, w, depth, w * 0.45), spec, { rot: [0, 0, (k * Math.PI) / 3] });
+  // Plain boxes: a snowflake is many small arms, and rounded corners on each
+  // would cost more triangles than the whole blade.
+  for (let k = 0; k < 3; k++) part(f, box(r * 2, w, depth), spec, { rot: [0, 0, (k * Math.PI) / 3] });
   for (let k = 0; k < 6; k++) {
     const a = (k * Math.PI) / 3;
     const cx = Math.cos(a) * r * 0.58, cy = Math.sin(a) * r * 0.58;
     for (const sb of [-1, 1]) {
       const b = a + sb * 0.85;
-      part(f, rbox(r * 0.4, w * 0.8, depth, w * 0.4), spec, { pos: [cx + Math.cos(b) * r * 0.17, cy + Math.sin(b) * r * 0.17, 0], rot: [0, 0, b] });
+      part(f, box(r * 0.4, w * 0.8, depth), spec, { pos: [cx + Math.cos(b) * r * 0.17, cy + Math.sin(b) * r * 0.17, 0], rot: [0, 0, b] });
     }
   }
   part(f, cyl(r * 0.24, r * 0.24, depth * 1.4, 6), spec, { rot: [Math.PI / 2, 0, 0] });

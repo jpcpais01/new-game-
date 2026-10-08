@@ -1,6 +1,6 @@
 import type { Object3D } from 'three';
 import type { PartSpec } from '../../meshBuilder';
-import { cone, cyl, group, halfSphere, lathe, lineless, part, rbox, sphere, torus } from '../kit';
+import { cone, cyl, group, halfSphere, lathe, lineless, octa, part, rbox, sphere, torus } from '../kit';
 import { bootBase, lp, type SkinModel } from '../models';
 import { crystal, facetLathe, glowSpec, grad, leaf, pair, tube } from './forge';
 
@@ -110,6 +110,17 @@ const thornmail: SkinModel['defense'] = (s) => {
     part(s.chest, tube('wwGrain', [[0.2, 0.08, 0], [0.245, 0.2, 0.01], [0.25, 0.3, -0.01], [0.19, 0.39, 0]], 0.012, 0.006, 12, 5), BARK_DARK,
       { rot: [0, -a, 0], scale: [0.88 * k, 1, 1.14 * k] });
   }
+  // A cuirass of broad leaves layered like scales down the front, each tier
+  // fanning out from a root along the sternum.
+  const tiers: [number, number, number][] = [[0.36, 0.24, 0.5], [0.26, 0.23, 0.62], [0.16, 0.2, 0.74]];
+  tiers.forEach(([y, len, fan], i) => {
+    for (const sz of [-1, 1]) {
+      part(s.chest, leaf(len, len * 0.55, 0.32), leafSpec(len),
+        { pos: [(0.236 - i * 0.004) * k, y, sz * 0.015], rot: [sz * -0.08, Math.PI / 2 - 0.12, Math.PI - sz * fan] });
+    }
+  });
+  part(s.chest, tube('wwSternum', [[0.235, 0.41, 0], [0.25, 0.3, 0], [0.252, 0.18, 0], [0.235, 0.06, 0]], 0.016, 0.01, 12, 5), BARK_DARK, { scale: [k, 1, 1] });
+  part(s.chest, octa(0.03), SAP, { pos: [0.262 * k, 0.3, 0], scale: [0.6, 1.3, 1] });
   // A vine winding around the torso, moss, blooms and a collar of leaves.
   part(s.chest, tube('wwChestVine', [[0.17, 0.02, -0.2], [0.24, 0.14, -0.06], [0.22, 0.24, 0.12], [0.08, 0.34, 0.26], [-0.12, 0.38, 0.22]], 0.014, 0.01, 24, 5), MOSS, { scale: [k, 1, k] });
   mossy(s.chest, [0.22 * k, 0.36, -0.08], 0.05);

@@ -123,7 +123,7 @@ export function leaf(len: number, w: number, cup = 0.25): BufferGeometry {
     s.moveTo(0, 0);
     s.quadraticCurveTo(w * 1.1, len * 0.35, 0, len);
     s.quadraticCurveTo(-w * 1.1, len * 0.35, 0, 0);
-    const g = new ExtrudeGeometry(s, { depth: 0.004, bevelEnabled: true, bevelThickness: 0.003, bevelSize: 0.003, bevelSegments: 1, curveSegments: 5 });
+    const g = new ExtrudeGeometry(s, { depth: 0.008, bevelEnabled: false, curveSegments: 5 });
     const p = g.getAttribute('position');
     for (let i = 0; i < p.count; i++) {
       const x = p.getX(i) / Math.max(1e-4, w);
@@ -188,6 +188,41 @@ export function starry(base: number, star: number, density = 0.06, seed = 1): Pa
 }
 
 export const glowSpec = (color: number, glow = 2.2): PartSpec => ({ color, glow });
+
+/**
+ * Hood-like shell: a sphere with a wedge cut out of its +X side (closed at the
+ * crown, widening to `gap` radians each side at the hem) and open below
+ * `thetaMax`. It has an inner lining so the opening never shows through.
+ */
+export function hoodShell(key: string, r: number, gap: number, thetaMax: number, lining = 0.94): BufferGeometry {
+  return geo(`hood${key}`, () => {
+    const rows = 12, cols = 22;
+    const pos: number[] = [];
+    const nor: number[] = [];
+    const at = (u: number, v: number, k: number) => {
+      const th = v * thetaMax;
+      // The cut widens from nothing at the crown to the full gap at the hem.
+      const g = gap * Math.min(1, th / (thetaMax * 0.45));
+      const ph = g + u * (Math.PI * 2 - 2 * g);
+      const x = Math.cos(ph) * Math.sin(th), y = Math.cos(th), z = Math.sin(ph) * Math.sin(th);
+      return [x * r * k, y * r * k, z * r * k, x, y, z];
+    };
+    const quad = (k: number, flip: boolean) => {
+      for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) {
+        const a = at(i / cols, j / rows, k), b = at((i + 1) / cols, j / rows, k);
+        const c = at((i + 1) / cols, (j + 1) / rows, k), d = at(i / cols, (j + 1) / rows, k);
+        const tris = flip ? [a, c, b, a, d, c] : [a, b, c, a, c, d];
+        for (const v of tris) { pos.push(v[0], v[1], v[2]); nor.push(flip ? -v[3] : v[3], flip ? -v[4] : v[4], flip ? -v[5] : v[5]); }
+      }
+    };
+    quad(1, true);
+    quad(lining, false);
+    const g = new BufferGeometry();
+    g.setAttribute('position', new BufferAttribute(new Float32Array(pos), 3));
+    g.setAttribute('normal', new BufferAttribute(new Float32Array(nor), 3));
+    return g;
+  });
+}
 
 /** Mirror image of a geometry across one axis, with its faces turned the right way out. */
 export function mirror(g: BufferGeometry, axis: 'x' | 'y' | 'z' = 'z'): BufferGeometry {

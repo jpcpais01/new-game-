@@ -122,8 +122,9 @@ const plateArmor: SkinModel['defense'] = (s) => {
   for (const sz of [-1, 1]) {
     const root = s.clothBone(s.chest, -0.2 * k, 0.36, sz * 0.09);
     root.userData.stiffness = 2.2;
-    const w = group(root, [0, 0, 0], [sz * 0.5, Math.PI, 0.35]);
-    wing(w, 7, 0.55, 1.0, 0.1);
+    // Spread out to the side and swept back, so the wing faces the camera.
+    const w = group(root, [0, 0, 0], [0, Math.atan2(-sz * 0.9, -0.45), 0]);
+    wing(w, 7, 0.55, 1.25, 0.45);
   }
   // Plackart, faulds and a sky-blue tabard.
   part(s.hips, lathe('dbPlackart', [[0.001, 0.05], [0.19, 0.06], [0.225, 0.16], [0.215, 0.3], [0.001, 0.31]], 18), ENAMEL, { scale: [0.95 * k, 1, 1.0 * k] });

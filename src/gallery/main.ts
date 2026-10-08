@@ -3,7 +3,9 @@ import { itemIconUrl } from '../ui/itemIcons';
 import { GEAR, GEAR_SLOTS, SLOT_NAMES, type GearDef } from '../sim/gear';
 import { ITEM_ART } from '../gear/itemArt';
 import type { FormId, GearSlot } from '../sim/types';
-import type { SkinTheme } from '../gear/skins';
+import { SKIN_THEMES, SKIN_THEME_IDS, SKINS, type SkinTheme } from '../gear/skins';
+import { skinIcon } from '../ui/skinIcons';
+import { gearOf } from '../sim/gear';
 
 // Review page for item art: every icon in a few colourways, and (below) the 3D
 // gear models on a turntable. Open /gallery.html on any preview deploy.
@@ -24,6 +26,9 @@ style.textContent = `
   .row img { width: 30px; height: 30px; }
   .name { font-weight: 600; font-size: 12px; color: #cfc8ee; }
   .rar { font-size: 10px; text-transform: uppercase; letter-spacing: .1em; opacity: .7; }
+  .theme { margin: 0 16px 8px; opacity: .75; font-size: 12px; }
+  .card .base { width: 34px; height: 34px; position: absolute; left: 8px; top: 8px; opacity: .85; }
+  .card { position: relative; }
   .r-common { color: #a9b0bf; } .r-rare { color: #4da3ff; } .r-epic { color: #b46bff; } .r-legendary { color: #ffa630; }
   #models { width: 100%; height: 92vh; display: block; cursor: pointer; }
 `;
@@ -62,6 +67,43 @@ if (view === '3d' || (!big && !view)) {
   void import('./models').then((m) => m.mountModels(canvas, slot ?? undefined, Number(params.get('cols')) || undefined, (params.get('form') as FormId | null) ?? undefined));
 }
 
+// Skin icons, one row per theme: ?view=skinicons, also on the main page.
+function skinIconSection(): void {
+  const h = document.createElement('h1');
+  h.textContent = 'Item skins';
+  document.body.append(h);
+  for (const theme of SKIN_THEME_IDS) {
+    const t = SKIN_THEMES[theme];
+    const h2 = document.createElement('h2');
+    h2.textContent = t.name;
+    h2.style.color = '#' + t.color.toString(16).padStart(6, '0');
+    const blurb = document.createElement('div');
+    blurb.className = 'theme';
+    blurb.textContent = t.blurb;
+    const grid = document.createElement('div');
+    grid.className = 'grid';
+    for (const sk of SKINS.filter((s) => s.theme === theme)) {
+      const card = document.createElement('div');
+      card.className = 'card';
+      card.title = 'Open in 3D';
+      card.style.cursor = 'pointer';
+      card.onclick = () => { location.search = `?view=skin&id=${sk.id}`; };
+      const im = skinIcon(sk.gear, sk, { className: 'big' });
+      const base = skinIcon(sk.gear, null, { className: 'base' });
+      const name = document.createElement('div');
+      name.className = 'name';
+      name.textContent = sk.name;
+      const r = document.createElement('div');
+      r.className = 'rar';
+      r.textContent = gearOf(sk.gear).name;
+      card.append(base, im, name, r);
+      grid.append(card);
+    }
+    document.body.append(h2, blurb, grid);
+  }
+}
+if (view === 'skinicons') skinIconSection();
+
 // The real catalog first: every gear piece with its icon.
 if (!big && !view) {
   for (const slot of GEAR_SLOTS) {
@@ -86,6 +128,7 @@ if (!big && !view) {
     }
     document.body.append(h2, grid);
   }
+  skinIconSection();
   const h = document.createElement('h1');
   h.textContent = 'All drawings';
   document.body.append(h);

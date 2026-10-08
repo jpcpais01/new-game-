@@ -1,7 +1,8 @@
-import { SKIN_THEMES, skinnedArt, skinOf, type SkinDef, type SkinTheme } from '../gear/skins';
+import { SKIN_THEMES, skinnedArt, skinOf, skinsFor, type SkinDef, type SkinTheme } from '../gear/skins';
 import { gearOf } from '../sim/gear';
 import type { SkinChoice } from '../sim/loadout';
 import type { GearId } from '../sim/types';
+import { h, hex } from './dom';
 import { gearIcon, ICON_KIT, itemIconImg, type Draw, type IconDecor, type Paint } from './itemIcons';
 
 // -----------------------------------------------------------------------------
@@ -347,20 +348,33 @@ const SKIN_DRAW: Record<string, Draw> = {
     blossom(25, 26, 4.2), blossom(40, 38, 3.6), blossom(21, 44, 3),
     leafPath(10, 18, 10, -150, '#6dc044'), leafPath(54, 18, 10, -30, '#6dc044'),
   ].join(''),
-  wild_band: (p) => [
-    ...Array.from({ length: 9 }, (_, k) => {
-      const t = k / 8, a = Math.PI * (1.08 + t * 0.84);
-      const x = 32 + Math.cos(a) * 24, y = 36 + Math.sin(a) * 15;
-      return leafPath(x, y, 11, (a * 180) / Math.PI + (t < 0.5 ? -55 : 55) + 90, t % 0.25 < 0.12 ? '#6dc044' : '#4c9a34');
-    }),
-    T('M8 36Q32 14 56 36', p.t, 2.6),
-    blossom(32, 21, 4.4),
-    `<path d="M10 38Q6 48 12 58M14 40Q14 50 20 56" fill="none" stroke="${OUT}" stroke-width="4.4" stroke-linecap="round"/><path d="M10 38Q6 48 12 58M14 40Q14 50 20 56" fill="none" stroke="#4c8a3a" stroke-width="2.6" stroke-linecap="round"/>`,
-  ].join(''),
+  wild_band: (p) => {
+    // A laurel wreath: two leafy branches rising from a ribboned knot.
+    const branch = (side: 1 | -1) => {
+      const out: string[] = [];
+      for (let k = 0; k < 7; k++) {
+        const deg = side < 0 ? 104 + k * 20 : 76 - k * 20;
+        const a = (deg * Math.PI) / 180;
+        const x = 32 + Math.cos(a) * 20, y = 33 + Math.sin(a) * 20;
+        const along = deg + side * -90;
+        out.push(leafPath(x, y, 10.5, along + 38 * side, k % 2 ? '#4c9a34' : '#6dc044', 1.2));
+        out.push(leafPath(x, y, 9.5, along - 34 * side, k % 2 ? '#6dc044' : '#4c9a34', 1.2));
+      }
+      return out.join('');
+    };
+    return [
+      halo(32, 33, 18, p.glow, 0.3),
+      `<path d="M30 54L22 62M34 54L42 62" fill="none" stroke="${OUT}" stroke-width="6" stroke-linecap="round"/><path d="M30 54L22 62M34 54L42 62" fill="none" stroke="#e8577a" stroke-width="3.6" stroke-linecap="round"/>`,
+      T('M28.5 52.7A20 20 0 0 1 22 15.7', p.wood, 2.4), T('M35.5 52.7A20 20 0 0 0 42 15.7', p.wood, 2.4),
+      branch(-1), branch(1),
+      blossom(32, 53, 4.2),
+      C(32, 13, 2.6, p.glow, 1.4),
+    ].join('');
+  },
   wild_boots: (p) => boots(p, p.wood, (front) => [
     ...[16, 21, 26, 31, 36].map((x, i) => C(x, 7 + (i % 2), 3.2, '#5f9c3c', front ? 1.4 : 1)),
     L('M18 24Q26 20 35 26M18 32Q26 28 35 34', '#40271a', 2, 0.8),
-    ...(front ? [leafPath(16, 20, 13, -150, '#6dc044'), leafPath(16, 24, 11, -175, '#4c9a34'), `<circle cx="14" cy="44" r="3" fill="#7affc8" stroke="${OUT}" stroke-width="1.2" paint-order="stroke"/>`] : []),
+    ...(front ? [leafPath(16, 20, 13, -150, '#6dc044'), leafPath(16, 24, 11, -175, '#4c9a34'), `<path d="M12.6 50V44.5h3V50Z" fill="#efe2c4" stroke="${OUT}" stroke-width="1.2" paint-order="stroke"/><path d="M9 45Q14 36 19 45Z" fill="#7affc8" stroke="${OUT}" stroke-width="1.3" paint-order="stroke"/>`] : []),
   ]),
   wild_heart: (p) => [
     halo(32, 32, 22, p.tint, 0.45),
@@ -439,8 +453,24 @@ export function skinIcon(gear: GearId, skin: SkinDef | null, o: { frame?: boolea
 }
 
 /** Icon of a gear piece as a character wears it. */
-export function wornIcon(gear: GearId, skins: SkinChoice | undefined, o: { frame?: boolean; size?: number } = {}): HTMLImageElement {
+export function wornIcon(gear: GearId, skins: SkinChoice | undefined, o: { frame?: boolean; size?: number; className?: string } = {}): HTMLImageElement {
   return skinIcon(gear, skinOf(gear, skins), o);
 }
 
 
+
+/**
+ * Row of skin choices for one gear piece: its default look, then every skin.
+ * `onPick` gets the skin id, or null for the default look.
+ */
+export function skinStrip(gear: GearId, skins: SkinChoice | undefined, onPick: (id: string | null) => void): HTMLElement | null {
+  const options = skinsFor(gear);
+  if (!options.length) return null;
+  const cur = skinOf(gear, skins);
+  const opt = (skin: SkinDef | null) => h('button.skin-opt' + (skin?.id === cur?.id ? '.on' : ''), {
+    style: { '--sc': skin ? hex(SKIN_THEMES[skin.theme].color) : '#9aa3c7' },
+    title: skin ? `${skin.name} · ${SKIN_THEMES[skin.theme].name}` : 'Default look',
+    onclick: () => { if (skin?.id !== cur?.id) onPick(skin?.id ?? null); },
+  }, skinIcon(gear, skin, { className: 'item-icon' }), h('span', null, skin ? skin.name : 'Default'));
+  return h('div.skin-strip', null, opt(null), ...options.map(opt));
+}

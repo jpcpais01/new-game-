@@ -968,9 +968,9 @@ const SLOT_ART: Record<GearSlot, ArtKey> = {
 };
 
 /** Icon for a catalog gear piece (framed in its rarity unless `frame: false`). */
-export function gearIcon(id: GearId, o: { frame?: boolean; size?: number } = {}): HTMLImageElement {
+export function gearIcon(id: GearId, o: { frame?: boolean; size?: number; className?: string } = {}): HTMLImageElement {
   const g = gearOf(id);
-  return itemIconImg(itemArt(id), { rarity: g.rarity, frame: o.frame, size: o.size, alt: g.name });
+  return itemIconImg(itemArt(id), { rarity: g.rarity, frame: o.frame, size: o.size, className: o.className, alt: g.name });
 }
 
 /** Faded silhouette shown in an empty gear slot. */
