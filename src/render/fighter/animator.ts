@@ -1,4 +1,4 @@
-import { Quaternion, Vector3 } from 'three';
+import { Quaternion, Vector3, type Object3D } from 'three';
 import { clamp, easeOutCubic, smoothstep } from '../../core/math';
 import { getStatus, type Fighter } from '../../sim/fighter';
 import type { BodyForm } from './forms';
@@ -64,6 +64,9 @@ export class Animator {
   /** Bow string, arrow and aiming arms, when the rig carries a bow. */
   private readonly bow: BowRig | null;
   private readonly bowWant: BowWant = { aim: 1, draw: 0, hand: 1, low: 1, loose: 0, arrow: true, tremble: 0 };
+  /** Throwing knives fanned in the left hand: kept there, or drawn only to throw. */
+  private readonly knives: Object3D | null;
+  private readonly knivesAlways: boolean;
   /** Hand crossbow (secondary): drawn, aimed, fired and re-cocked. */
   private readonly xbow: CrossbowRig | null;
   private readonly xbowWant: XbowWant = { hand: 1, aim: 1, low: 1, loaded: true };
@@ -71,6 +74,8 @@ export class Animator {
   constructor(private readonly rig: Rig, private readonly form: BodyForm) {
     this.pose.set(stance(rig.look.grip, rig.look.offhand, form));
     this.bow = BowRig.from(rig);
+    this.knives = rig.tags.get('knivesHeld') ?? rig.tags.get('knivesDrawn') ?? null;
+    this.knivesAlways = rig.tags.has('knivesHeld');
     this.xbow = CrossbowRig.from(rig);
   }
 
@@ -302,6 +307,22 @@ export class Animator {
     return gripWant;
   }
 
+  /** Turns a hand so the weapon along its socket's +Y keeps only a little depth. */
+  private flatten(hand: Object3D, socket: Object3D): void {
+    const root = this.rig.root;
+    socket.getWorldQuaternion(_qh);
+    _dir.set(0, 1, 0).applyQuaternion(_qh);
+    root.getWorldQuaternion(_qr);
+    _want.copy(_dir).applyQuaternion(_qr.invert());
+    const z = Math.abs(_want.z);
+    if (z < PLANE_FREE) return;
+    _want.z = Math.sign(_want.z) * (PLANE_FREE + (z - PLANE_FREE) * PLANE_KEEP);
+    _want.normalize().applyQuaternion(_qr.invert());
+    _q.setFromUnitVectors(_dir, _want);
+    hand.getWorldQuaternion(_qh);
+    setWorldQuaternion(hand, _qh.premultiply(_q), 1);
+  }
+
   /** Bow timeline: raise and aim, draw to the anchor, loose, then nock the next arrow. */
   private bowAction(f: Fighter): void {
     const a = f.action!;
@@ -512,6 +533,13 @@ export class Animator {
       }
     }
 
+    // Keep held blades in the fighting plane: poses authored for one weapon
+    // can leave another pointing at the camera, so swing it back towards the
+    // side-view plane around the wrist (before the second hand grips it).
+    if (rig.look.grip !== 'bow') this.flatten(j[J.HAND_R], rig.sockets.mainHand);
+    const left = rig.look.hands.left;
+    if ((left === 'dagger' || left === 'parry') && !(f.action && FREE_OFFHAND.has(f.abilities[f.action.ability].anim))) this.flatten(j[J.HAND_L], rig.sockets.offHand);
+
     // Off hand onto the two-handed grip.
     if (rig.offGrip && this.gripW > 0.01) {
       rig.offGrip.getWorldPosition(_a);
@@ -524,6 +552,18 @@ export class Animator {
       solveTwoBone(j[J.UARM_L], j[J.FARM_L], j[J.HAND_L], _a, _pole, this.gripW);
       setWorldQuaternion(j[J.HAND_L], _q, this.gripW);
     }
+    if (this.knives) {
+      // Thrown knives leave the hand at release and are back by the end of the recovery.
+      const a = f.action;
+      const ab = a ? f.abilities[a.ability] : null;
+      let show = this.knivesAlways && f.alive;
+      if (ab?.anim === 'throw' && a) {
+        if (a.phase === 'windup') show = this.rig.look.hands.left !== 'bow';
+        else if (a.phase === 'active') show = false;
+        else show = this.knivesAlways && a.t / a.recovery > 0.6;
+      }
+      this.knives.scale.setScalar(show ? 1 : 0.001);
+    }
     this.bow?.apply(dt, this.bowWant, this.hasLookAt ? this.lookAt : null, ws);
     this.xbow?.apply(dt, this.xbowWant, this.hasLookAt ? this.lookAt : null, ws);
     this.landing = Math.max(0, this.landing - dt * 4);
@@ -531,3 +571,10 @@ export class Animator {
 }
 
 const _Y = new Vector3(0, 1, 0);
+const _dir = new Vector3();
+const _want = new Vector3();
+const _qr = new Quaternion();
+const _qh = new Quaternion();
+/** Depth (towards/away from the camera) a weapon may point freely, and how much of the rest is kept. */
+const PLANE_FREE = 0.15;
+const PLANE_KEEP = 0.25;

@@ -32,8 +32,21 @@ const RANGED: { form: FormId; gear: GearSet }[] = [
   { form: 'ethereal', gear: { main: 'longsword', offhand: 'wind_chakram' } },
 ];
 
+/**
+ * `?lab=combos&page=N`: every main weapon side by side with one left-hand item
+ * per page (none, shields, parrying blade, each secondary, shield + crossbow),
+ * to check that any combination is held sensibly.
+ */
+const MAINS: GearSet['main'][] = ['longsword', 'katana', 'warhammer', 'spear', 'twin_daggers', 'arcane_staff', 'longbow'];
+const LEFTS: Partial<GearSet>[] = [
+  {}, { defense: 'tower_shield' }, { defense: 'mirror_aegis' }, { defense: 'parrying_blade' }, { offhand: 'hand_crossbow' },
+  { offhand: 'throwing_knives' }, { offhand: 'wind_chakram' }, { offhand: 'frost_orb' }, { offhand: 'iron_gauntlet' },
+  { defense: 'tower_shield', offhand: 'hand_crossbow' }, { defense: 'parrying_blade', offhand: 'throwing_knives' },
+];
+const FORMS_CYCLE: FormId[] = ['balanced', 'robust', 'mighty', 'slender', 'agile', 'ethereal', 'balanced'];
+
 /** Script of [seconds, what] the actors loop through. */
-type Beat = 'idle' | 'walkF' | 'walkB' | 'basic' | 'basic2' | 'skill' | 'guard' | 'evade' | 'hit' | 'heavyHit' | 'ko' | 'run' | 'ranged' | 'ranged2';
+type Beat = 'idle' | 'walkF' | 'walkB' | 'basic' | 'basic2' | 'skill' | 'skill2' | 'guard' | 'evade' | 'hit' | 'heavyHit' | 'ko' | 'run' | 'ranged' | 'ranged2';
 const SCRIPT: [number, Beat][] = [
   [1.2, 'idle'], [1.0, 'walkF'], [0.9, 'basic'], [0.9, 'basic2'], [1.0, 'walkB'], [1.4, 'skill'], [0.6, 'hit'],
   [1.0, 'guard'], [1.0, 'evade'], [0.8, 'heavyHit'], [0.9, 'run'], [0.9, 'idle'], [2.6, 'ko'],
@@ -41,7 +54,10 @@ const SCRIPT: [number, Beat][] = [
 
 export function installLab(o: { scene: Scene; fx: FxContext; cam: FightCamera; hide: () => void; mode: string; focus?: number }): (dt: number) => void {
   o.hide();
-  const roster = o.mode === 'ranged' ? RANGED : ROSTER;
+  const page = Number(new URLSearchParams(location.search).get('page')) || 0;
+  const roster = o.mode === 'ranged' ? RANGED
+    : o.mode === 'combos' ? MAINS.map((main, i) => ({ form: FORMS_CYCLE[i], gear: { main, ...LEFTS[page % LEFTS.length] } as GearSet }))
+      : ROSTER;
   const actors: Actor[] = roster.map((r, i) => {
     const f = createFighter((i % 2) as 0 | 1, { name: r.form, form: r.form, gear: r.gear });
     const home = (i - (roster.length - 1) / 2) * 2.3;
@@ -49,12 +65,13 @@ export function installLab(o: { scene: Scene; fx: FxContext; cam: FightCamera; h
     f.facing = 1;
     const v = new FighterView(f, (i % 2) as 0 | 1);
     o.scene.add(v.group);
-    return { f, v, home, clock: i * 0.37 };
+    return { f, v, home, clock: o.mode === 'combos' ? 0 : i * 0.37 };
   });
   const script: [number, Beat][] = o.mode === 'idle' ? [[10, 'idle']] : o.mode === 'walk' ? [[1.5, 'walkF'], [1.5, 'walkB'], [1, 'run'], [1, 'idle']]
     : o.mode === 'ko' ? [[1, 'idle'], [3, 'ko']]
       : ['basic', 'skill', 'guard', 'evade', 'hit'].includes(o.mode) ? [[1, 'idle'], [1.2, o.mode as Beat]]
         : o.mode === 'ranged' ? [[0.9, 'idle'], [1.0, 'ranged'], [0.4, 'idle'], [1.4, 'ranged2'], [0.8, 'walkB']]
+          : o.mode === 'combos' ? [[1, 'idle'], [0.9, 'basic'], [1.2, 'skill'], [1.3, 'skill2'], [1.1, 'guard'], [0.8, 'walkF'], [0.8, 'walkB']]
           : SCRIPT;
   const total = script.reduce((s, [d]) => s + d, 0);
 
@@ -99,6 +116,7 @@ export function installLab(o: { scene: Scene; fx: FxContext; cam: FightCamera; h
         if (beat === 'basic') startAction(f, 'basic');
         if (beat === 'basic2') startAction(f, 'basic');
         if (beat === 'skill') startAction(f, 'skill');
+        if (beat === 'skill2') startAction(f, 'skill', 1);
         if (beat === 'guard') startAction(f, 'defense');
         if (beat === 'ranged') startRanged(f, 0);
         if (beat === 'ranged2') startRanged(f, 1);
