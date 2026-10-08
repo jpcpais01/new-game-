@@ -1,6 +1,6 @@
 import { Rng } from '../core/rng';
 import { clamp } from '../core/math';
-import { Brain } from './ai/brain';
+import { Brain, type FighterBrain } from './ai/brain';
 import {
   ARENA_HALF_WIDTH, BASE_ENERGY_REGEN, BODY_GAP, DT, ENERGY_ON_DEAL, ENERGY_ON_TAKE, MAX_ENERGY,
   ROUND_TIME, START_GAP, WALL_SPLAT_SPEED,
@@ -15,7 +15,11 @@ import type {
 export interface BattleConfig {
   seed: number;
   fighters: [FighterConfig, FighterConfig];
+  /** Overrides the AI controller per side (benchmarks against older AIs). */
+  brains?: [BrainFactory?, BrainFactory?];
 }
+
+export type BrainFactory = (f: Fighter, variance: number) => FighterBrain;
 
 interface HitOptions {
   mult?: number;
@@ -38,7 +42,7 @@ export class Battle {
   readonly rng: Rng;
   readonly seed: number;
   readonly fighters: [Fighter, Fighter];
-  readonly brains: [Brain, Brain];
+  readonly brains: [FighterBrain, FighterBrain];
   readonly projectiles: Projectile[] = [];
   /** Events produced since the consumer last drained them. */
   events: BattleEvent[] = [];
@@ -59,7 +63,8 @@ export class Battle {
     a.x = a.px = -START_GAP;
     b.x = b.px = START_GAP;
     this.fighters = [a, b];
-    this.brains = [new Brain(a, this.rng.next()), new Brain(b, this.rng.next())];
+    const make = (i: 0 | 1, f: Fighter, v: number): FighterBrain => cfg.brains?.[i]?.(f, v) ?? new Brain(f, v);
+    this.brains = [make(0, a, this.rng.next()), make(1, b, this.rng.next())];
     for (const f of this.fighters) refreshStats(f);
   }
 

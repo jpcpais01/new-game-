@@ -11,7 +11,8 @@
     "test": "vitest run src/sim/battle.test.ts",
     "sim": "vitest run src/sim/balance.test.ts --disable-console-intercept",
     "duel": "vitest run scripts/duel.test.ts --dir . --disable-console-intercept",
-    "icons": "node scripts/icons.mjs"
+    "icons": "node scripts/icons.mjs",
+    "ai": "vitest run src/sim/ai.bench.test.ts --disable-console-intercept"
   },
   "dependencies": {
     "postprocessing": "^6.39.5",
