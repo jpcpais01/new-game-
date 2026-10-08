@@ -937,7 +937,7 @@ export function itemIconSvg(art: ItemArt, o: IconOptions = {}): string {
   // The drawing is inset inside the frame so outlines never touch the border.
   const body = withFrame ? G('translate(4.5 3.8) scale(.86)', draw(p)) : G('translate(2 2) scale(.9375)', draw(p));
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><defs>${d}${fr?.defs ?? ''}${dc?.defs ?? ''}</defs>`
-    + `${fr?.back ?? ''}${withFrame ? dc?.back ?? '' : ''}${body}${dc?.front ?? ''}${fr?.front ?? ''}</svg>`;
+    + `${fr?.back ?? ''}${withFrame ? dc?.back ?? '' : ''}${body}${withFrame ? dc?.front ?? '' : ''}${fr?.front ?? ''}</svg>`;
 }
 
 /** Cached `data:` URL for an item icon (use as <img src> or CSS background). */

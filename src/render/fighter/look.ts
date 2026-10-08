@@ -129,8 +129,8 @@ export interface RigBuildApi {
   cloth(parent: Object3D, x: number, y: number, z: number, stiffness?: number): Object3D;
   /** An orbiting relic bone parented to the root. */
   orbiter(id: string): Object3D;
-  /** Weapon trail / enchant particle anchors in mainHand space. */
-  setWeapon(base: [number, number, number], tip: [number, number, number]): void;
+  /** Weapon trail / enchant particle anchors in mainHand space (offHand space for a bow, held in the left hand). */
+  setWeapon(base: [number, number, number], tip: [number, number, number], hand?: 'main' | 'off'): void;
   /** Two-handed grip point in mainHand space: the left hand reaches it by IK. */
   setOffGrip(pos: [number, number, number] | null): void;
   /** Hide body pieces covered by gear (e.g. a robe hides the legs' trousers seams). */

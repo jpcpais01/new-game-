@@ -1,7 +1,7 @@
 import type { Object3D } from 'three';
 import type { PartSpec } from '../../meshBuilder';
-import { box, cone, cyl, group, lineless, part, rbox, sphere, torus } from '../kit';
-import { bootBase, lp, type GearSockets, type SkinModel } from '../models';
+import { box, cone, cyl, group, lineless, octa, part, rbox, sphere, torus } from '../kit';
+import { XBOW, bootBase, lp, type GearSockets, type SkinModel } from '../models';
 import { edgeBlade, facetLathe, glowSpec, grad, mirror, plate, rowsOf } from './forge';
 
 // -----------------------------------------------------------------------------
@@ -61,28 +61,57 @@ const katana: SkinModel['weapon'] = (g, m) => {
 
 // --- Arc Repeater (hand crossbow) ---------------------------------------------------------------
 
-function repeater(g: Object3D): void {
-  part(g, rbox(0.06, 0.48, 0.07, 0.016), CHROME, { pos: [0, 0.14, 0] });
-  part(g, rbox(0.064, 0.3, 0.02, 0.006), PANEL, { pos: [0, 0.16, 0.035] });
-  part(g, rbox(0.004, 0.26, 0.006, 0.002), lineless(CYAN), { pos: [0.032, 0.16, 0.0] });
-  // Angular limbs with glowing tips and a laser string.
-  for (const sx of [-1, 1]) {
-    const limb = plate('nnLimb', [[0, 0], [0.3, 0.04], [0.32, 0.075], [0.02, 0.055]], 0.03, 0.005);
-    part(g, sx > 0 ? limb : mirror(limb, 'x'), CHROME_HI, { pos: [0, 0.32, 0], rot: [Math.PI / 2, 0, 0] });
-    part(g, rbox(0.03, 0.03, 0.04, 0.008), lineless(MAGENTA), { pos: [sx * 0.31, 0.33, 0] });
+/**
+ * Modelled in the hand's grip frame like the base crossbow (muzzle +X, top +Y,
+ * prod tips at ±Z) with the same tagged bones, so the crossbow animator aims,
+ * looses and re-cocks it (fighter/crossbow.ts).
+ */
+function repeater(g: Object3D, s: GearSockets): void {
+  // Stock and pistol grip, with light lines down both flanks.
+  part(g, rbox(0.44, 0.055, 0.05, 0.016), CHROME, { pos: [0.12, 0.055, 0] });
+  part(g, rbox(0.05, 0.12, 0.045, 0.014), CHROME_HI, { pos: [-0.005, 0.0, 0], rot: [0, 0, 0.25] });
+  for (const z of [-1, 1]) {
+    part(g, rbox(0.3, 0.022, 0.004, 0.002), PANEL, { pos: [0.13, 0.05, z * 0.026] });
+    part(g, box(0.26, 0.004, 0.004), lineless(CYAN), { pos: [0.13, 0.064, z * 0.028] });
   }
-  part(g, box(0.62, 0.005, 0.005), lineless(CYAN), { pos: [0, 0.33, 0] });
-  // Loaded bolt of light, a drum magazine and a sight.
-  part(g, rbox(0.012, 0.3, 0.012, 0.004), lineless(MAGENTA), { pos: [0, 0.4, 0.045] });
-  part(g, cyl(0.05, 0.05, 0.05, 10), CHROME_HI, { pos: [0, 0.06, 0.06], rot: [Math.PI / 2, 0, 0] });
-  part(g, torus(0.05, 0.006, Math.PI * 2, 4, 16), lineless(CYAN), { pos: [0, 0.06, 0.088] });
-  part(g, rbox(0.03, 0.1, 0.03, 0.008), CHROME_HI, { pos: [0, 0.26, -0.05] });
-  part(g, cyl(0.012, 0.012, 0.012, 8), CYAN, { pos: [0, 0.31, -0.05] });
+  // Rail, nose and a ring emitter at the muzzle.
+  part(g, box(0.3, 0.012, 0.022), PANEL, { pos: [0.18, 0.084, 0] });
+  part(g, rbox(0.06, 0.065, 0.065, 0.012), CHROME_HI, { pos: [0.33, 0.06, 0] });
+  part(g, torus(0.026, 0.006, Math.PI * 2, 4, 16), lineless(CYAN), { pos: [0.362, 0.06, 0], rot: [0, Math.PI / 2, 0] });
+  // Drum magazine under the rail and a holo sight on top.
+  part(g, cyl(0.045, 0.045, 0.05, 12), CHROME_HI, { pos: [0.17, 0.0, 0], rot: [Math.PI / 2, 0, 0] });
+  for (const z of [-1, 1]) part(g, torus(0.034, 0.005, Math.PI * 2, 4, 16), lineless(MAGENTA), { pos: [0.17, 0.0, z * 0.026] });
+  part(g, rbox(0.06, 0.028, 0.02, 0.006), CHROME_HI, { pos: [0.04, 0.11, 0] });
+  part(g, box(0.004, 0.02, 0.014), lineless(CYAN), { pos: [0.072, 0.118, 0] });
+  // Angular prod lying flat across the nose, glowing at the tips.
+  const limb = plate('nnProd', [[0.3, 0], [0.345, 0.02], [0.31, 0.15], [XBOW.tipX + 0.01, XBOW.tipZ + 0.01], [XBOW.tipX - 0.02, XBOW.tipZ], [0.28, 0.14], [0.27, 0]], 0.022, 0.004);
+  part(g, limb, CHROME_HI, { pos: [0, XBOW.stringY + 0.011, 0], rot: [Math.PI / 2, 0, 0] });
+  part(g, mirror(limb, 'y'), CHROME_HI, { pos: [0, XBOW.stringY + 0.011, 0], rot: [Math.PI / 2, 0, 0] });
+  for (const z of [-1, 1]) part(g, rbox(0.03, 0.03, 0.03, 0.008), lineless(MAGENTA), { pos: [XBOW.tipX, XBOW.stringY, z * XBOW.tipZ] });
+  // Laser string halves from each tip to the latch (driven bones).
+  for (const z of [-1, 1]) {
+    const half = s.bone(g, XBOW.tipX, XBOW.stringY, z * XBOW.tipZ);
+    part(half, box(0.005, 0.005, XBOW.tipZ), lineless(CYAN), { pos: [0, 0, -z * XBOW.tipZ / 2] });
+    s.tag(z > 0 ? 'xbowStringR' : 'xbowStringL', half);
+  }
+  // A bolt of light: nock at the bone, along +X.
+  const bolt = s.bone(g, XBOW.cockX, XBOW.stringY + 0.012, 0);
+  const L = XBOW.boltLen;
+  part(bolt, box(L, 0.012, 0.012), lineless(MAGENTA), { pos: [L / 2, 0, 0] });
+  part(bolt, octa(0.022), CYAN, { pos: [L + 0.01, 0, 0], scale: [1.6, 0.8, 0.8] });
+  s.tag('xbowBolt', bolt);
 }
 
 const crossbow: SkinModel['offhand'] = (s, _m, inHand) => {
-  if (inHand) { repeater(s.offGrip); return; }
-  repeater(group(s.hips, [0.0, -0.05, -0.27], [0, 0, 2.6], 0.85));
+  const xb = s.bone(s.offGrip, 0, 0, 0);
+  repeater(xb, s);
+  s.tag('xbow', xb);
+  if (!inHand) {
+    // Holster on the left hip, muzzle down (the animator moves it there).
+    const holster = s.bone(s.hips, 0.02, -0.04, -0.29);
+    holster.rotation.set(0.25, 0, -Math.PI / 2 - 0.3);
+    s.tag('xbowHolster', holster);
+  }
 };
 
 // --- Hyperdisc (wind chakram) -------------------------------------------------------------------

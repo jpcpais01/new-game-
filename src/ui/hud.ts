@@ -6,7 +6,7 @@ import { gearOf } from '../sim/gear';
 import type { BattleEvent, StatusId } from '../sim/types';
 import { h } from './dom';
 import { fmtHp } from './format';
-import { gearIcon } from './itemIcons';
+import { wornIcon } from './skinIcons';
 
 const STATUS_ICON: Record<StatusId, string> = {
   burn: '🔥', poison: '☠️', chill: '❄️', frozen: '🧊', stun: '💫', rage: '😡', haste: '💨', mark: '🔯', ironskin: '🪨', vulnerable: '💔',
@@ -68,7 +68,7 @@ export class Hud {
       const statuses = h('div.ico-row');
       const items = h('div.ico-row', null, ...f.gearIds.map((id) => {
         const g = gearOf(id);
-        return h(`span.mini.gear.r-${g.rarity}`, { title: `${g.name}: ${g.desc}` }, gearIcon(id, { frame: false }));
+        return h(`span.mini.gear.r-${g.rarity}`, { title: `${g.name}: ${g.desc}` }, wornIcon(id, f.skins, { frame: false }));
       }));
       const bar = h(`div.fbar.side-${side}`, null,
         h('div.who', null, f.name, h('small', null, `${FORMS[f.form].name} · ${side === 0 ? 'Blue' : 'Red'}`)),

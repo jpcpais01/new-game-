@@ -45,6 +45,8 @@ export interface GearSockets {
   orbiter(): Object3D;
   /** A bone the view spins about its own Y axis (halos, rings, rotors), `speed` in rad/s. */
   spin(parent: Object3D, x: number, y: number, z: number, speed?: number): Object3D;
+  /** Names a bone the animator drives (bow string, nocked arrow). */
+  tag(name: string, o: Object3D): void;
 }
 
 /**
@@ -130,6 +132,7 @@ function socketsFrom(api: RigBuildApi, id: GearId): GearSockets {
       api.tag(`spin:${spinCount++}`, b);
       return b;
     },
+    tag: (name, o) => api.tag(name, o),
   };
 }
 
@@ -161,10 +164,12 @@ export function gearDecorator(id: GearId, skin: SkinDef | null = null, model: Sk
     switch (slot) {
       case 'main': {
         const w = model?.weapon ?? WEAPONS[look.art] ?? WEAPONS.sword!;
-        const t = w(s.grip, m, s);
+        // A bow is held in the left hand; the right hand draws the string.
+        const bow = grip === 'bow';
+        const t = w(bow ? s.offGrip : s.grip, m, s);
         // A skinned twin-dagger model authors its own off-hand blade.
         if (look.art === 'twin_daggers' && !model?.weapon) WEAPONS.dagger!(s.offGrip, m, s);
-        api.setWeapon(t.base, t.tip);
+        api.setWeapon(t.base, t.tip, bow ? 'off' : 'main');
         if ((grip === 'twoHand' || grip === 'polearm') && !ONE_HANDED.includes(look.art)) api.setOffGrip(t.offGrip ?? [0, 0.24, 0]);
         else if (grip === 'twoHand' || grip === 'polearm') api.setOffGrip(t.offGrip ?? [0, -0.11, 0]);
         break;
@@ -199,6 +204,9 @@ export function gearDecorator(id: GearId, skin: SkinDef | null = null, model: Sk
 }
 
 // --- weapons ---------------------------------------------------------------------
+
+/** Bow string geometry shared with the animator (grip space of the left hand). */
+export const BOW_STRING = { tipY: 0.86, arrowY: 0.03, arrowLen: 0.8 };
 
 export type WeaponFn = (g: Object3D, m: Mats, s: GearSockets) => WeaponTrailPoints;
 
@@ -284,15 +292,28 @@ const WEAPONS: Partial<Record<ArtKey, WeaponFn>> = {
     }
     return { base: [0, 1.0, 0], tip: [0, 1.36, 0] };
   },
-  bow: (g, m) => {
-    // Riser in the hand, limbs bending away from the string.
+  bow: (g, m, s) => {
+    // Held in the left fist: grip at the origin, limbs along ±Y bending towards
+    // the target (+X), string behind the riser. The string halves and the
+    // nocked arrow hang on bones the animator drives (see fighter/bow.ts).
     part(g, rbox(0.06, 0.24, 0.05, 0.02), m.leather, { pos: [0, 0, 0] });
     for (const sy of [-1, 1]) {
       part(g, bent(`bowLimb${sy}`, [[0, 0], [0.12, sy * 0.4], [-0.02, sy * 0.78]], 0.03, 0.014), m.wood, { pos: [0, sy * 0.1, 0] });
       part(g, sphere(0.022, 6, 4), m.trim, { pos: [-0.02, sy * 0.88, 0] });
+      // String half from the limb tip to the centre (the nock point at rest).
+      const half = s.bone(g, -0.025, sy * BOW_STRING.tipY, 0);
+      part(half, box(0.008, BOW_STRING.tipY, 0.008), lineless({ color: 0xf3ead6 }), { pos: [0, -sy * BOW_STRING.tipY / 2, 0] });
+      s.tag(sy > 0 ? 'bowTop' : 'bowBottom', half);
     }
-    part(g, box(0.008, 1.74, 0.008), lineless({ color: 0xf3ead6 }), { pos: [-0.03, 0, 0] });
     part(g, octa(0.03), m.gem, { pos: [0.04, 0, 0] });
+    // Nocked arrow: nock at the bone, pointing at the target (+X), resting on the left of the riser.
+    const arrow = s.bone(g, -0.025, BOW_STRING.arrowY, 0);
+    const L = BOW_STRING.arrowLen;
+    part(arrow, cyl(0.009, 0.009, L, 6), { color: 0xc9a46a }, { pos: [L / 2, 0, 0], rot: [0, 0, -Math.PI / 2] });
+    part(arrow, cone(0.024, 0.08, 6), m.steel, { pos: [L + 0.03, 0, 0], rot: [0, 0, -Math.PI / 2] });
+    for (const k of [-1, 1]) part(arrow, box(0.12, 0.004, 0.035), lineless({ color: m.tint }), { pos: [0.08, 0, k * 0.018] });
+    part(arrow, box(0.12, 0.035, 0.004), lineless({ color: m.tint }), { pos: [0.08, 0.018, 0] });
+    s.tag('arrow', arrow);
     return { base: [0, -0.6, 0], tip: [0, 0.6, 0] };
   },
   crossbow: (g, m) => {
@@ -316,6 +337,37 @@ const WEAPONS: Partial<Record<ArtKey, WeaponFn>> = {
 
 // --- secondary weapons ------------------------------------------------------------
 
+/** Hand crossbow geometry shared with the animator (grip frame: muzzle +X, top +Y, prod tips at ±Z). */
+export const XBOW = { tipX: 0.27, tipZ: 0.27, stringY: 0.085, cockX: 0.06, boltLen: 0.3 };
+
+function handCrossbow(g: Object3D, m: Mats, s: GearSockets): void {
+  // Stock over the fist, pistol grip down into it, trigger guard.
+  part(g, rbox(0.44, 0.055, 0.05, 0.018), m.wood, { pos: [0.12, 0.055, 0] });
+  part(g, rbox(0.05, 0.12, 0.045, 0.016), m.wood, { pos: [-0.005, 0.0, 0], rot: [0, 0, 0.25] });
+  part(g, torus(0.025, 0.006, Math.PI, 4, 8), m.steel, { pos: [0.05, 0.02, 0], rot: [0, 0, Math.PI] });
+  // Rail with a groove for the bolt, and a steel nose.
+  part(g, box(0.3, 0.012, 0.022), m.steel, { pos: [0.18, 0.084, 0] });
+  part(g, rbox(0.05, 0.06, 0.06, 0.012), m.steel, { pos: [0.33, 0.06, 0] });
+  // Prod: a recurved arc lying flat across the nose, tips swept back.
+  const flat = group(g, [XBOW.tipX + 0.09 - 0.43, XBOW.stringY, 0], [Math.PI / 2, 0, 0]);
+  part(group(flat, [0, 0, 0], [0, 0, -0.7]), torus(0.43, 0.016, 1.4, 6, 16), m.main, {});
+  for (const z of [-1, 1]) part(g, sphere(0.018, 6, 4), m.trim, { pos: [XBOW.tipX, XBOW.stringY, z * XBOW.tipZ] });
+  part(g, octa(0.022), m.gem, { pos: [0.2, 0.06, 0.03] });
+  // String halves from each prod tip to the latch (driven bones).
+  for (const z of [-1, 1]) {
+    const half = s.bone(g, XBOW.tipX, XBOW.stringY, z * XBOW.tipZ);
+    part(half, box(0.006, 0.006, XBOW.tipZ), lineless({ color: 0xf3ead6 }), { pos: [0, 0, -z * XBOW.tipZ / 2] });
+    s.tag(z > 0 ? 'xbowStringR' : 'xbowStringL', half);
+  }
+  // Bolt: nock at the bone, along +X.
+  const bolt = s.bone(g, XBOW.cockX, XBOW.stringY + 0.012, 0);
+  const L = XBOW.boltLen;
+  part(bolt, cyl(0.008, 0.008, L, 6), { color: 0xc9a46a }, { pos: [L / 2, 0, 0], rot: [0, 0, -Math.PI / 2] });
+  part(bolt, cone(0.02, 0.06, 4), m.steel, { pos: [L + 0.02, 0, 0], rot: [0, 0, -Math.PI / 2] });
+  part(bolt, box(0.06, 0.03, 0.004), lineless({ color: m.tint }), { pos: [0.04, 0.012, 0] });
+  s.tag('xbowBolt', bolt);
+}
+
 export type OffhandFn = (s: GearSockets, m: Mats, inHand: boolean) => void;
 
 const OFFHAND: Partial<Record<ArtKey, OffhandFn>> = {
@@ -336,9 +388,18 @@ const OFFHAND: Partial<Record<ArtKey, OffhandFn>> = {
     }
   },
   crossbow: (s, m, inHand) => {
-    if (inHand) { WEAPONS.crossbow!(s.offGrip, m, s); return; }
-    const h = group(s.hips, [0.0, -0.05, -0.27], [0, 0, 2.6], 0.85);
-    WEAPONS.crossbow!(h, m, s);
+    // The crossbow hangs on a bone the animator moves between the left hand and
+    // the left hip (when that hand is busy), aims, looses and re-cocks (see
+    // fighter/crossbow.ts). Modelled in the hand's grip frame: muzzle +X, top +Y.
+    const xb = s.bone(s.offGrip, 0, 0, 0);
+    handCrossbow(xb, m, s);
+    s.tag('xbow', xb);
+    if (!inHand) {
+      // Holster on the left hip, muzzle down.
+      const holster = s.bone(s.hips, 0.02, -0.04, -0.29);
+      holster.rotation.set(0.25, 0, -Math.PI / 2 - 0.3);
+      s.tag('xbowHolster', holster);
+    }
   },
   chakram: (s, m, inHand) => {
     if (inHand) { WEAPONS.chakram!(s.offGrip, m, s); return; }

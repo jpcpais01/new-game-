@@ -1,7 +1,7 @@
 import type { Object3D } from 'three';
 import type { PartSpec } from '../../meshBuilder';
-import { cone, cyl, group, halfSphere, lathe, lineless, octa, part, rbox, sphere, torus } from '../kit';
-import { bootBase, lp, type SkinModel } from '../models';
+import { box, cone, cyl, group, halfSphere, lathe, lineless, octa, part, rbox, sphere, torus } from '../kit';
+import { BOW_STRING, bootBase, lp, type SkinModel } from '../models';
 import { crystal, facetLathe, glowSpec, grad, leaf, pair, tube } from './forge';
 
 // -----------------------------------------------------------------------------
@@ -49,7 +49,9 @@ function vine(r: number, y0: number, y1: number, turns: number, phase = 0): [num
 
 // --- Elderbough (longbow) -----------------------------------------------------------------
 
-const bow: SkinModel['weapon'] = (g) => {
+// Held in the left fist like the base bow: the string halves and the nocked
+// arrow hang on the bones the bow animator drives (fighter/bow.ts).
+const bow: SkinModel['weapon'] = (g, _m, s) => {
   part(g, rbox(0.065, 0.26, 0.055, 0.022), BARK_DARK);
   part(g, tube('wwGrip', vine(0.036, -0.12, 0.12, 3), 0.008, 0.008, 30, 4), MOSS);
   part(g, crystal(0.03, 0.09, 6), LIFE, { pos: [0.04, -0.04, 0], rot: [0, 0, -Math.PI / 2] });
@@ -63,8 +65,19 @@ const bow: SkinModel['weapon'] = (g) => {
     sprig(g, [0.06, sy * 0.72, -0.02], [0, 0, sy > 0 ? -0.4 : Math.PI + 0.4], 2, 0.07);
     flower(g, [-0.02, sy * 0.9, 0.01], [0, 0, 0], 0.055);
   }
-  // A string of glowing sap.
-  part(g, rbox(0.006, 1.76, 0.006, 0.002), lineless(SAP), { pos: [-0.03, 0, 0] });
+  // A string of glowing sap, in two halves the animator draws back.
+  for (const sy of [-1, 1]) {
+    const half = s.bone(g, -0.025, sy * BOW_STRING.tipY, 0);
+    part(half, box(0.008, BOW_STRING.tipY, 0.008), lineless(SAP), { pos: [0, -sy * BOW_STRING.tipY / 2, 0] });
+    s.tag(sy > 0 ? 'bowTop' : 'bowBottom', half);
+  }
+  // Nocked arrow: a thorn shaft with a crystal head and leaf fletching.
+  const arrow = s.bone(g, -0.025, BOW_STRING.arrowY, 0);
+  const L = BOW_STRING.arrowLen;
+  part(arrow, cyl(0.009, 0.011, L, 6), BARK, { pos: [L / 2, 0, 0], rot: [0, 0, -Math.PI / 2] });
+  part(arrow, crystal(0.022, 0.1, 5), LIFE, { pos: [L - 0.01, 0, 0], rot: [0, 0, -Math.PI / 2] });
+  for (const k of [-1, 1]) part(arrow, leaf(0.11, 0.05, 0.2), leafSpec(0.11), { pos: [0.02, 0, k * 0.004], rot: [k * 0.5, 0, -Math.PI / 2] });
+  s.tag('arrow', arrow);
   return { base: [0, -0.6, 0], tip: [0, 0.6, 0] };
 };
 
