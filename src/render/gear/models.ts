@@ -159,26 +159,39 @@ export function gearDecorator(id: GearId, skin: SkinDef | null = null, model: Sk
     const s = socketsFrom(api, id);
     const m = mats(look);
     const grip = api.look.grip;
-    // The left hand is free for a secondary when the main weapon is one-handed and nothing is strapped to that arm.
-    const leftFree = grip === 'oneHand' && (api.look.offhand === 'none' || api.look.offhand === 'focus');
+    const hands = api.look.hands;
+    // A secondary sits in the left hand only when nothing else claims it (see HandPlan).
+    const leftFree = hands.left === 'free' && hands.shield !== 'arm';
     switch (slot) {
       case 'main': {
         const w = model?.weapon ?? WEAPONS[look.art] ?? WEAPONS.sword!;
         // A bow is held in the left hand; the right hand draws the string.
         const bow = grip === 'bow';
-        const t = w(bow ? s.offGrip : s.grip, m, s);
+        // A spear wielded one-handed (shield on the arm) is held nearer its balance point.
+        const choke = grip === 'polearm' && !hands.twoHanded ? 0.35 : 0;
+        // The second twin dagger is sheathed on the hip when the left hand is busy.
+        const ws = id === 'twin_daggers' && hands.left !== 'dagger' ? { ...s, offGrip: sheath(s, 'hip') } : s;
+        const t = w(bow ? s.offGrip : choke ? group(s.grip, [0, -choke, 0]) : s.grip, m, ws);
+        if (choke) { t.base[1] -= choke; t.tip[1] -= choke; }
         // A skinned twin-dagger model authors its own off-hand blade.
-        if (look.art === 'twin_daggers' && !model?.weapon) WEAPONS.dagger!(s.offGrip, m, s);
+        if (id === 'twin_daggers' && !model?.weapon) WEAPONS.dagger!(ws.offGrip, m, s);
         api.setWeapon(t.base, t.tip, bow ? 'off' : 'main');
-        if ((grip === 'twoHand' || grip === 'polearm') && !ONE_HANDED.includes(look.art)) api.setOffGrip(t.offGrip ?? [0, 0.24, 0]);
-        else if (grip === 'twoHand' || grip === 'polearm') api.setOffGrip(t.offGrip ?? [0, -0.11, 0]);
+        if (hands.twoHanded) api.setOffGrip(t.offGrip ?? (ONE_HANDED.includes(look.art) ? [0, -0.11, 0] : [0, 0.24, 0]));
         break;
       }
-      case 'defense':
-        (model?.defense ?? DEFENSE[look.art])?.(s, m);
+      case 'defense': {
+        let ds = s;
+        // A shield is slung on the back while the left arm holds a bow.
+        if (hands.shield === 'back' && (id === 'tower_shield' || id === 'mirror_aegis')) ds = { ...s, forearmL: group(s.chest, [-0.1, 0.38, 0], [0, Math.PI / 2, 0.08]) };
+        // The parrying dagger is sheathed at the back of the belt when the left hand is busy.
+        if (id === 'parrying_blade' && hands.left !== 'parry') ds = { ...s, offGrip: sheath(s, 'back') };
+        (model?.defense ?? DEFENSE[look.art])?.(ds, m);
         break;
+      }
       case 'offhand':
-        (model?.offhand ?? OFFHAND[look.art])?.(s, m, leftFree);
+        // The frost orb floats behind the left shoulder when that hand is busy:
+        // a stand-in forearm puts the orb's usual offset there.
+        (model?.offhand ?? OFFHAND[look.art])?.(id === 'frost_orb' && !leftFree ? { ...s, forearmL: group(s.chest, [-0.4, 0.92, 0.06]) } : s, m, leftFree);
         break;
       case 'head': {
         const hides = model?.head ? model.hides ?? [] : [
@@ -204,6 +217,13 @@ export function gearDecorator(id: GearId, skin: SkinDef | null = null, model: Sk
 }
 
 // --- weapons ---------------------------------------------------------------------
+
+/** Mount for a sheathed blade (grip frame: blade along +Y): on the left hip, or across the back of the belt. */
+function sheath(s: GearSockets, where: 'hip' | 'back'): Object3D {
+  return where === 'hip'
+    ? group(s.hips, [0.08, -0.02, -0.27], [0.25, 0, Math.PI * 0.82])
+    : group(s.hips, [-0.24, 0.02, 0.04], [-Math.PI / 2 + 0.25, 0, 0]);
+}
 
 /** Bow string geometry shared with the animator (grip space of the left hand). */
 export const BOW_STRING = { tipY: 0.86, arrowY: 0.03, arrowLen: 0.8 };
@@ -379,13 +399,16 @@ const OFFHAND: Partial<Record<ArtKey, OffhandFn>> = {
       part(kn, blade(0.14, 0.04, 0.01, 0, 0.4), m.main, { pos: [0, 0.02, 0] });
       part(kn, cyl(0.012, 0.012, 0.06, 6), m.cloth, { pos: [0, -0.02, 0] });
     }
-    if (inHand) {
-      for (let k = 0; k < 3; k++) {
-        const kn = group(s.offGrip, [0, 0.02, 0], [(k - 1) * 0.35, 0, 0]);
-        part(kn, blade(0.22, 0.05, 0.012, 0, 0.4), m.main, { pos: [0, 0.05, 0] });
-        part(kn, torus(0.02, 0.006, Math.PI * 2, 4, 8), m.trim, { pos: [0, -0.03, 0] });
-      }
+    // A fan of knives in the left hand: always there when the hand is free,
+    // otherwise drawn from the bandolier only to throw (the animator shows and
+    // hides this bone; see Animator.knives).
+    const fan = s.bone(s.offGrip, 0, 0, 0);
+    for (let k = 0; k < 3; k++) {
+      const kn = group(fan, [0, 0.02, 0], [(k - 1) * 0.35, 0, 0]);
+      part(kn, blade(0.22, 0.05, 0.012, 0, 0.4), m.main, { pos: [0, 0.05, 0] });
+      part(kn, torus(0.02, 0.006, Math.PI * 2, 4, 8), m.trim, { pos: [0, -0.03, 0] });
     }
+    s.tag(inHand ? 'knivesHeld' : 'knivesDrawn', fan);
   },
   crossbow: (s, m, inHand) => {
     // The crossbow hangs on a bone the animator moves between the left hand and
