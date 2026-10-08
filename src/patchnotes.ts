@@ -12,6 +12,14 @@ export interface PatchNote {
 
 export const PATCH_NOTES: PatchNote[] = [
   {
+    version: '0.8.2',
+    date: '2026-10-08',
+    title: 'Edge to edge on phones',
+    notes: [
+      'Menus, panels and the battle HUD now use the whole screen, including the strip beside the status bar and camera cutout.',
+    ],
+  },
+  {
     version: '0.8.1',
     date: '2026-10-08',
     title: 'Blocking turns the right way',
