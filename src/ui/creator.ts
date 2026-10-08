@@ -50,6 +50,8 @@ export class Creator {
   private nameInput!: HTMLInputElement;
   private body!: HTMLDivElement;
   private tabsEl!: HTMLDivElement;
+  /** The editing panel: a side panel on wide screens, a bottom sheet on phones in portrait. */
+  panel: HTMLElement | null = null;
 
   constructor(private readonly cb: CreatorCallbacks) {
     this.el = h<HTMLDivElement>('div.creator');
@@ -88,8 +90,7 @@ export class Creator {
     });
     this.tabsEl = h<HTMLDivElement>('div.cr-tabs', { role: 'tablist' });
     this.body = h<HTMLDivElement>('div.cr-body');
-    this.el.replaceChildren(
-      h('div.cr-panel.glass', null,
+    this.panel = h('div.cr-panel.glass', null,
         h('header.cr-head', null,
           h('div.cr-kicker', null, first ? 'A new challenger' : 'Your fighter'),
           h('h2', null, first ? 'Create your fighter' : 'Edit your fighter'),
@@ -109,13 +110,13 @@ export class Creator {
         this.tabsEl,
         this.body,
         h('footer.cr-foot', null,
-          h('button.btn', { title: 'Randomise look', onclick: () => this.randomize() }, '🎲 Surprise me'),
+          h('button.btn.surprise', { title: 'Randomise look', 'aria-label': 'Randomise look', onclick: () => this.randomize() },
+            h('span.glyph', null, '🎲'), h('span.lbl', null, 'Surprise me')),
           first ? null : h('button.btn', { onclick: () => { sfx.play('ui'); this.cb.onCancel(); } }, 'Cancel'),
           h('button.btn-fight.cr-go', { onclick: () => this.save() }, first ? 'BEGIN' : 'SAVE'),
         ),
-      ),
-      h('div.cr-hint', null, 'Drag to turn'),
-    );
+      );
+    this.el.replaceChildren(this.panel, h('div.cr-hint', null, 'Drag to turn'));
     this.renderTabs();
     this.renderBody();
   }
