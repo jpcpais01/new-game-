@@ -26,8 +26,8 @@ const ROSTER: { form: FormId; gear: GearSet }[] = [
 const RANGED: { form: FormId; gear: GearSet }[] = [
   { form: 'balanced', gear: { main: 'longbow' } },
   { form: 'mighty', gear: { main: 'longbow', head: 'iron_helm' } },
-  { form: 'agile', gear: { main: 'longbow', boots: 'zephyr_boots' } },
   { form: 'robust', gear: { main: 'longsword', offhand: 'hand_crossbow' } },
+  { form: 'agile', gear: { main: 'spear', offhand: 'hand_crossbow' } },
   { form: 'slender', gear: { main: 'katana', offhand: 'throwing_knives' } },
   { form: 'ethereal', gear: { main: 'longsword', offhand: 'wind_chakram' } },
 ];
