@@ -2,6 +2,7 @@ import { ALL_ART, ART_SLOTS, slotOfArt, type ArtKey, type ItemArt, type Rarity }
 import { itemIconUrl } from '../ui/itemIcons';
 import { GEAR, GEAR_SLOTS, SLOT_NAMES, type GearDef } from '../sim/gear';
 import { ITEM_ART } from '../gear/itemArt';
+import type { GearSlot } from '../sim/types';
 
 // Review page for item art: every icon in a few colourways, and (below) the 3D
 // gear models on a turntable. Open /gallery.html on any preview deploy.
@@ -23,7 +24,7 @@ style.textContent = `
   .name { font-weight: 600; font-size: 12px; color: #cfc8ee; }
   .rar { font-size: 10px; text-transform: uppercase; letter-spacing: .1em; opacity: .7; }
   .r-common { color: #a9b0bf; } .r-rare { color: #4da3ff; } .r-epic { color: #b46bff; } .r-legendary { color: #ffa630; }
-  #models { width: 100%; height: 70vh; display: block; }
+  #models { width: 100%; height: 92vh; display: block; cursor: pointer; }
 `;
 document.head.append(style);
 
@@ -33,9 +34,21 @@ document.body.append(h1);
 
 const params = new URLSearchParams(location.search);
 const big = params.get('big');
+const view = params.get('view');
+
+// 3D models: ?view=3d (all slots) or ?view=3d&slot=head.
+if (view === '3d' || !big) {
+  const h2 = document.createElement('h2');
+  h2.textContent = '3D gear (click to pause)';
+  const canvas = document.createElement('canvas');
+  canvas.id = 'models';
+  document.body.append(h2, canvas);
+  const slot = params.get('slot') as GearSlot | null;
+  void import('./models').then((m) => m.mountModels(canvas, slot ?? undefined, Number(params.get('cols')) || undefined));
+}
 
 // The real catalog first: every gear piece with its icon.
-if (!big) {
+if (!big && view !== '3d') {
   for (const slot of GEAR_SLOTS) {
     const h2 = document.createElement('h2');
     h2.textContent = SLOT_NAMES[slot];
@@ -76,7 +89,7 @@ if (big) {
   document.body.append(grid);
 }
 
-for (const slot of big ? [] : ART_SLOTS) {
+for (const slot of big || view === '3d' ? [] : ART_SLOTS) {
   const h2 = document.createElement('h2');
   h2.textContent = slot;
   const grid = document.createElement('div');

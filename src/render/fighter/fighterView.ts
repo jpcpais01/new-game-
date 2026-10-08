@@ -96,7 +96,7 @@ export class FighterView {
     const items = f.gearIds;
     const facing = f.facing;
     this.classId = classId;
-    this.rig = buildRig(classId, items, isBig(f));
+    this.rig = buildRig(classId, items, isBig(f), f.gear);
     this.group = this.rig.root;
     // Team identity: coloured rim light and a glowing ring at the feet, so
     // mirror matches stay readable.

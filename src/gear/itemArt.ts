@@ -32,7 +32,7 @@ export const ITEM_ART: Record<GearId, ItemArt> = {
   berserker_mask: { art: 'demon_mask', metal: 'dark', cloth: 0xb81c1c, tint: 0xff3020, element: 'blood' },
   iron_helm: { art: 'knight_helm', metal: 'steel', cloth: 0xc8202e, tint: 0x9aa4b8 },
   chrono_circlet: { art: 'circlet', metal: 'gold', tint: 0xc8a2ff, element: 'arcane' },
-  executioner_hood: { art: 'hood', metal: 'dark', cloth: 0x2b2a36, tint: 0xff3a3a, element: 'blood' },
+  executioner_hood: { art: 'hood', metal: 'dark', cloth: 0x5c5674, tint: 0xff3a3a, element: 'blood' },
   storm_crown: { art: 'crown', metal: 'steel', tint: 0x9fd8ff, element: 'lightning' },
   duelist_band: { art: 'bandana', metal: 'gold', cloth: 0xc23040, tint: 0xf3c24f },
   // Boots.

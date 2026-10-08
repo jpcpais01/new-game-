@@ -4,8 +4,8 @@ import {
   SkinnedMesh, SphereGeometry, TorusGeometry, Vector2, type Material,
 } from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
-import { gearOf } from '../../sim/gear';
-import type { GearId } from '../../sim/types';
+import type { GearId, GearSet } from '../../sim/types';
+import { authorGear } from '../gear/models';
 import type { Archetype } from './archetype';
 import {
   createFighterUniforms, fighterMaterial, glowVertexMaterial, outlineMaterial, type FighterUniforms,
@@ -228,7 +228,10 @@ function face(head: Object3D, cy: number, r: number, o: { eye?: number; glowEyes
  */
 const ACCENT: Record<Archetype, number> = { vanguard: 0xffd36b, ronin: 0xf5f0e6, arcanist: 0x6ff3ff, brute: 0x5a3a22 };
 
-export function buildRig(classId: Archetype, items: GearId[] = [], big = classId === 'brute'): Rig {
+export function buildRig(classId: Archetype, items: GearId[] = [], big = classId === 'brute', gear?: GearSet): Rig {
+  // With a gear set, weapons, shields, hats and relics come from the gear
+  // models (src/render/gear); the archetype only supplies the outfit.
+  const gearHead = !!gear?.head;
   const u = createFighterUniforms(ACCENT[classId]);
   const pal = PALETTES[classId];
   const ctx: Ctx = { pal, bones: [] };
@@ -335,22 +338,26 @@ export function buildRig(classId: Archetype, items: GearId[] = [], big = classId
         part(flap, rbox(0.032, 0.05, 0.25, 0.012), gold, { pos: [0, -0.49, 0] });
         if (fx > 0) part(flap, star(4, 0.02, 0.06, 0.01), lineless(P.trim), { pos: [0.02, -0.22, 0], rot: [0, Math.PI / 2, 0] });
       }
-      // Helmet: rounded sallet with gold brow band, nose guard and a tall crest.
-      part(head, sphere(headR * 1.1, 20, 14), steel, { pos: [-0.01, headY + 0.03, 0], scale: [1.02, 0.94, 0.98] });
-      part(head, torus(headR * 1.08, 0.022), gold, { pos: [-0.01, headY + 0.02, 0], rot: [Math.PI / 2, 0, 0], scale: [1.02, 0.98, 1] });
-      part(head, rbox(0.03, 0.12, 0.035, 0.012), gold, { pos: [headR * 1.08, headY - 0.02, 0] });
-      for (const s of [-1, 1]) {
-        // Cheek guards and little gold wings.
-        part(head, rbox(0.12, 0.13, 0.03, 0.014), steel, { pos: [0.05, headY - 0.08, s * headR * 0.98] });
-        const wing = group(head, [-0.04, headY + 0.08, s * headR * 1.02], [s * -0.2, 0, 0.5]);
-        for (let k = 0; k < 3; k++) part(wing, rbox(0.04, 0.16 - k * 0.035, 0.016, 0.008), gold, { pos: [-k * 0.04, 0.07 - k * 0.01, 0], rot: [0, 0, 0.25 * k] });
-      }
-      // Crest: a fan of blue plume segments (also a cloth bone so it bobs).
-      const crest = bone(ctx, head, -0.02, headY + headR * 0.98, 0);
-      cloth.push(crest);
-      for (let k = 0; k < 6; k++) {
-        const a = -0.9 + k * 0.32;
-        part(crest, capsule(0.035, 0.16 + Math.sin((k / 5) * Math.PI) * 0.06), k % 2 ? 0x2f5be0 : 0x3f7bff, { pos: [Math.sin(a) * 0.12 - 0.04, Math.cos(a) * 0.1 + 0.04, 0], rot: [0, 0, -a * 1.1], scale: [1, 1, 0.7] });
+      if (!gearHead) {
+        // Helmet: rounded sallet with gold brow band, nose guard and a tall crest.
+        part(head, sphere(headR * 1.1, 20, 14), steel, { pos: [-0.01, headY + 0.03, 0], scale: [1.02, 0.94, 0.98] });
+        part(head, torus(headR * 1.08, 0.022), gold, { pos: [-0.01, headY + 0.02, 0], rot: [Math.PI / 2, 0, 0], scale: [1.02, 0.98, 1] });
+        part(head, rbox(0.03, 0.12, 0.035, 0.012), gold, { pos: [headR * 1.08, headY - 0.02, 0] });
+        for (const s of [-1, 1]) {
+          // Cheek guards and little gold wings.
+          part(head, rbox(0.12, 0.13, 0.03, 0.014), steel, { pos: [0.05, headY - 0.08, s * headR * 0.98] });
+          const wing = group(head, [-0.04, headY + 0.08, s * headR * 1.02], [s * -0.2, 0, 0.5]);
+          for (let k = 0; k < 3; k++) part(wing, rbox(0.04, 0.16 - k * 0.035, 0.016, 0.008), gold, { pos: [-k * 0.04, 0.07 - k * 0.01, 0], rot: [0, 0, 0.25 * k] });
+        }
+        // Crest: a fan of blue plume segments (also a cloth bone so it bobs).
+        const crest = bone(ctx, head, -0.02, headY + headR * 0.98, 0);
+        cloth.push(crest);
+        for (let k = 0; k < 6; k++) {
+          const a = -0.9 + k * 0.32;
+          part(crest, capsule(0.035, 0.16 + Math.sin((k / 5) * Math.PI) * 0.06), k % 2 ? 0x2f5be0 : 0x3f7bff, { pos: [Math.sin(a) * 0.12 - 0.04, Math.cos(a) * 0.1 + 0.04, 0], rot: [0, 0, -a * 1.1], scale: [1, 1, 0.7] });
+        }
+      } else {
+        part(head, sphere(headR * 1.04, 18, 12), P.hair, { pos: [-0.03, headY + 0.03, 0], scale: [1, 0.96, 1] });
       }
       face(head, headY, headR, { eye: 0x2a3f8a, brows: P.hair, mouth: true });
       // Layered pauldrons.
@@ -371,21 +378,23 @@ export function buildRig(classId: Archetype, items: GearId[] = [], big = classId
       part(cape, rbox(0.04, 1.05, 0.56, 0.018), P.cloth, { pos: [-0.02, -0.52, 0] });
       part(cape, rbox(0.042, 0.06, 0.58, 0.02), gold, { pos: [-0.02, -1.03, 0] });
       part(cape, rbox(0.035, 1.0, 0.5, 0.018), 0x1d3a9e, { pos: [0.005, -0.5, 0], scale: [1, 1, 1] });
-      // Longsword: gem pommel, wide gold crossguard, blade with a glowing fuller.
-      part(weapon, sphere(0.045, 12, 10), gold, { pos: [0, -0.08, 0] });
-      part(weapon, cyl(0.028, 0.03, 0.2, 10), 0x4a2f1f, { pos: [0, 0.02, 0] });
-      part(weapon, rbox(0.34, 0.06, 0.07, 0.025), gold, { pos: [0, 0.14, 0] });
-      part(weapon, octa(0.04), glowS(0x6fc8ff, 2), { pos: [0, 0.14, 0.04] });
-      part(weapon, blade(0.95, 0.13, 0.025, 0, 0.16), metal(0xeef3fb, 1), { pos: [0, 0.17, 0] });
-      part(weapon, box(0.03, 0.78, 0.034), { color: 0xffffff, glow: 0.9, enchant: true }, { pos: [0, 0.56, 0] });
-      weaponBase.position.set(0, 0.2, 0);
-      weaponTip.position.set(0, 1.12, 0);
-      // Heater shield on the left forearm, sun emblem on the face.
-      const shield = group(farmL, [0, -0.15, -0.12], [0, 0, 0.08]);
-      part(shield, heater(), steel, {});
-      part(shield, heaterInner(), P.cloth, { pos: [0, 0, -0.08] });
-      part(shield, star(12, 0.07, 0.15, 0.02), metal(P.trim, 1), { pos: [0, 0.02, -0.105], rot: [0, Math.PI, 0] });
-      part(shield, sphere(0.05, 12, 10), glowS(0xffe08a, 1.6), { pos: [0, 0.02, -0.11], scale: [1, 1, 0.5] });
+      if (!gear) {
+        // Longsword: gem pommel, wide gold crossguard, blade with a glowing fuller.
+        part(weapon, sphere(0.045, 12, 10), gold, { pos: [0, -0.08, 0] });
+        part(weapon, cyl(0.028, 0.03, 0.2, 10), 0x4a2f1f, { pos: [0, 0.02, 0] });
+        part(weapon, rbox(0.34, 0.06, 0.07, 0.025), gold, { pos: [0, 0.14, 0] });
+        part(weapon, octa(0.04), glowS(0x6fc8ff, 2), { pos: [0, 0.14, 0.04] });
+        part(weapon, blade(0.95, 0.13, 0.025, 0, 0.16), metal(0xeef3fb, 1), { pos: [0, 0.17, 0] });
+        part(weapon, box(0.03, 0.78, 0.034), { color: 0xffffff, glow: 0.9, enchant: true }, { pos: [0, 0.56, 0] });
+        weaponBase.position.set(0, 0.2, 0);
+        weaponTip.position.set(0, 1.12, 0);
+        // Heater shield on the left forearm, sun emblem on the face.
+        const shield = group(farmL, [0, -0.15, -0.12], [0, 0, 0.08]);
+        part(shield, heater(), steel, {});
+        part(shield, heaterInner(), P.cloth, { pos: [0, 0, -0.08] });
+        part(shield, star(12, 0.07, 0.15, 0.02), metal(P.trim, 1), { pos: [0, 0.02, -0.105], rot: [0, Math.PI, 0] });
+        part(shield, sphere(0.05, 12, 10), glowS(0xffe08a, 1.6), { pos: [0, 0.02, -0.11], scale: [1, 1, 0.5] });
+      }
       break;
     }
     case 'ronin': {
@@ -414,10 +423,12 @@ export function buildRig(classId: Archetype, items: GearId[] = [], big = classId
       part(tail, sphere(0.06, 10, 8), P.trim, {});
       part(tail, cone(0.07, 0.34, 8), P.hair, { pos: [-0.12, -0.12, 0], rot: [0, 0, 2.3] });
       face(head, headY, headR, { brows: P.hair, scar: true });
-      // Kasa: wide straw cone with a red band.
-      const hat = group(head, [0.0, headY + headR * 0.8, 0], [0, 0, 0.1]);
-      part(hat, lathe('kasa', [[0.001, 0.18], [0.07, 0.16], [0.3, 0.05], [0.52, -0.04], [0.54, -0.06], [0.001, -0.02]], 22), 0xd9b26a, {});
-      part(hat, torus(0.17, 0.018, Math.PI * 2, 6, 20), P.trim, { pos: [0, 0.1, 0], rot: [Math.PI / 2, 0, 0], scale: [1, 1, 1] });
+      if (!gearHead) {
+        // Kasa: wide straw cone with a red band.
+        const hat = group(head, [0.0, headY + headR * 0.8, 0], [0, 0, 0.1]);
+        part(hat, lathe('kasa', [[0.001, 0.18], [0.07, 0.16], [0.3, 0.05], [0.52, -0.04], [0.54, -0.06], [0.001, -0.02]], 22), 0xd9b26a, {});
+        part(hat, torus(0.17, 0.018, Math.PI * 2, 6, 20), P.trim, { pos: [0, 0.1, 0], rot: [Math.PI / 2, 0, 0], scale: [1, 1, 1] });
+      }
       // Long red scarf: knot at the neck, two trailing tails (cloth bones).
       part(chest, torus(0.11, 0.045), P.trim, { pos: [0.01, 0.46, 0], rot: [Math.PI / 2, 0, 0] });
       for (let k = 0; k < 2; k++) {
@@ -425,18 +436,20 @@ export function buildRig(classId: Archetype, items: GearId[] = [], big = classId
         cloth.push(sc);
         part(sc, rbox(0.62 - k * 0.14, 0.05, 0.12, 0.02), P.trim, { pos: [-(0.31 - k * 0.07), -0.02 - k * 0.04, 0], rot: [0, 0, -0.18 - k * 0.12] });
       }
-      // Katana: curved blade, gold habaki, round tsuba, wrapped hilt.
-      part(weapon, cyl(0.026, 0.026, 0.26, 8), 0x7a1824, { pos: [0, 0.0, 0] });
-      for (let k = 0; k < 4; k++) part(weapon, torus(0.028, 0.008, Math.PI * 2, 4, 8), lineless(0x1a1420), { pos: [0, -0.09 + k * 0.06, 0], rot: [Math.PI / 2, 0, 0] });
-      part(weapon, cyl(0.08, 0.08, 0.02, 16), metal(0x2a2430, 0.6), { pos: [0, 0.14, 0] });
-      part(weapon, cyl(0.03, 0.03, 0.05, 8), metal(0xd9b04a, 1), { pos: [0, 0.17, 0] });
-      part(weapon, blade(1.0, 0.07, 0.02, 0.09, 0.12), metal(0xf2f5fa, 1), { pos: [0, 0.18, 0] });
-      part(weapon, box(0.016, 0.82, 0.026), { color: 0xffe8e8, glow: 0.8, enchant: true }, { pos: [0.032, 0.6, 0], rot: [0, 0, -0.05] });
-      weaponBase.position.set(0, 0.2, 0);
-      weaponTip.position.set(0.09, 1.16, 0);
-      // Saya on the hip.
-      part(hips, rbox(0.06, 0.8, 0.07, 0.025), metal(0x2a1a20, 0.5), { pos: [0.02, -0.05, -0.25], rot: [0, 0, 1.25] });
-      part(hips, cyl(0.04, 0.04, 0.05, 8), metal(0xd9b04a), { pos: [0.33, 0.06, -0.25], rot: [0, 0, 1.25] });
+      if (!gear) {
+        // Katana: curved blade, gold habaki, round tsuba, wrapped hilt.
+        part(weapon, cyl(0.026, 0.026, 0.26, 8), 0x7a1824, { pos: [0, 0.0, 0] });
+        for (let k = 0; k < 4; k++) part(weapon, torus(0.028, 0.008, Math.PI * 2, 4, 8), lineless(0x1a1420), { pos: [0, -0.09 + k * 0.06, 0], rot: [Math.PI / 2, 0, 0] });
+        part(weapon, cyl(0.08, 0.08, 0.02, 16), metal(0x2a2430, 0.6), { pos: [0, 0.14, 0] });
+        part(weapon, cyl(0.03, 0.03, 0.05, 8), metal(0xd9b04a, 1), { pos: [0, 0.17, 0] });
+        part(weapon, blade(1.0, 0.07, 0.02, 0.09, 0.12), metal(0xf2f5fa, 1), { pos: [0, 0.18, 0] });
+        part(weapon, box(0.016, 0.82, 0.026), { color: 0xffe8e8, glow: 0.8, enchant: true }, { pos: [0.032, 0.6, 0], rot: [0, 0, -0.05] });
+        weaponBase.position.set(0, 0.2, 0);
+        weaponTip.position.set(0.09, 1.16, 0);
+        // Saya on the hip.
+        part(hips, rbox(0.06, 0.8, 0.07, 0.025), metal(0x2a1a20, 0.5), { pos: [0.02, -0.05, -0.25], rot: [0, 0, 1.25] });
+        part(hips, cyl(0.04, 0.04, 0.05, 8), metal(0xd9b04a), { pos: [0.33, 0.06, -0.25], rot: [0, 0, 1.25] });
+      }
       break;
     }
     case 'arcanist': {
@@ -460,34 +473,38 @@ export function buildRig(classId: Archetype, items: GearId[] = [], big = classId
       cloth.push(hairTail);
       part(hairTail, capsule(0.09, 0.3), P.hair, { pos: [-0.04, -0.16, 0], rot: [0, 0, 0.25], scale: [0.7, 1, 1.4] });
       face(head, headY, headR, { glowEyes: 0x6ff3ff, brows: 0xc8ccec, mouth: false });
-      // Wizard hat: wide brim, gold band with gem, tall bent cone with a star charm.
-      part(head, cyl(0.46, 0.48, 0.035, 26), P.main, { pos: [0, headY + 0.13, 0], rot: [0, 0, 0.06] });
-      part(head, cyl(0.25, 0.27, 0.08, 18), gold, { pos: [0, headY + 0.18, 0] });
-      part(head, octa(0.045), glowS(0x6ff3ff, 2.4), { pos: [0.26, headY + 0.18, 0] });
-      const tip = bone(ctx, head, 0, headY + 0.2, 0);
-      tip.rotation.z = 0.0;
-      part(tip, lathe('hatA', [[0.25, 0], [0.19, 0.22], [0.13, 0.42], [0.001, 0.46]], 16), P.main, { rot: [0, 0, 0.18] });
-      const tip2 = bone(ctx, tip, -0.1, 0.4, 0);
-      cloth.push(tip2);
-      part(tip2, cone(0.09, 0.32, 12), P.main, { pos: [-0.1, 0.1, 0], rot: [0, 0, 0.9] });
-      part(tip2, star(5, 0.03, 0.07, 0.02), glowS(0xffe68a, 2.2), { pos: [-0.25, 0.12, 0] });
+      if (!gearHead) {
+        // Wizard hat: wide brim, gold band with gem, tall bent cone with a star charm.
+        part(head, cyl(0.46, 0.48, 0.035, 26), P.main, { pos: [0, headY + 0.13, 0], rot: [0, 0, 0.06] });
+        part(head, cyl(0.25, 0.27, 0.08, 18), gold, { pos: [0, headY + 0.18, 0] });
+        part(head, octa(0.045), glowS(0x6ff3ff, 2.4), { pos: [0.26, headY + 0.18, 0] });
+        const tip = bone(ctx, head, 0, headY + 0.2, 0);
+        tip.rotation.z = 0.0;
+        part(tip, lathe('hatA', [[0.25, 0], [0.19, 0.22], [0.13, 0.42], [0.001, 0.46]], 16), P.main, { rot: [0, 0, 0.18] });
+        const tip2 = bone(ctx, tip, -0.1, 0.4, 0);
+        cloth.push(tip2);
+        part(tip2, cone(0.09, 0.32, 12), P.main, { pos: [-0.1, 0.1, 0], rot: [0, 0, 0.9] });
+        part(tip2, star(5, 0.03, 0.07, 0.02), glowS(0xffe68a, 2.2), { pos: [-0.25, 0.12, 0] });
+      }
       // Spellbook at the hip.
       part(hips, rbox(0.2, 0.24, 0.07, 0.02), 0x6a2a1a, { pos: [0.0, -0.04, 0.24], rot: [0, 0, 0.1] });
       part(hips, rbox(0.17, 0.21, 0.075, 0.01), lineless(0xf1e6c8), { pos: [0.02, -0.04, 0.24], rot: [0, 0, 0.1] });
-      // Gnarled staff with a crescent holding a floating crystal.
-      const staff = group(handR, [0, -0.02, 0], [0, 0, -Math.PI / 2 + 0.2]);
-      part(staff, cyl(0.032, 0.042, 1.75, 8), 0x5b3a22, { pos: [0, 0.25, 0] });
-      for (let k = 0; k < 3; k++) part(staff, torus(0.04, 0.012, Math.PI * 2, 5, 10), gold, { pos: [0, 0.6 + k * 0.32, 0], rot: [Math.PI / 2, 0, 0] });
-      part(staff, torus(0.15, 0.03, Math.PI * 1.35, 8, 18), gold, { pos: [0, 1.2, 0], rot: [0, 0, -0.65 - Math.PI / 2] });
-      part(staff, octa(0.11), glowS(0x9ff8ff, 3.2), { pos: [0, 1.24, 0], scale: [0.8, 1.3, 0.8] });
-      for (let k = 0; k < 3; k++) {
-        const a = (k / 3) * Math.PI * 2;
-        part(staff, octa(0.03), glowS(0x6ff3ff, 2.4), { pos: [Math.cos(a) * 0.2, 1.24 + Math.sin(a * 2) * 0.05, Math.sin(a) * 0.2] });
+      if (!gear) {
+        // Gnarled staff with a crescent holding a floating crystal.
+        const staff = group(handR, [0, -0.02, 0], [0, 0, -Math.PI / 2 + 0.2]);
+        part(staff, cyl(0.032, 0.042, 1.75, 8), 0x5b3a22, { pos: [0, 0.25, 0] });
+        for (let k = 0; k < 3; k++) part(staff, torus(0.04, 0.012, Math.PI * 2, 5, 10), gold, { pos: [0, 0.6 + k * 0.32, 0], rot: [Math.PI / 2, 0, 0] });
+        part(staff, torus(0.15, 0.03, Math.PI * 1.35, 8, 18), gold, { pos: [0, 1.2, 0], rot: [0, 0, -0.65 - Math.PI / 2] });
+        part(staff, octa(0.11), glowS(0x9ff8ff, 3.2), { pos: [0, 1.24, 0], scale: [0.8, 1.3, 0.8] });
+        for (let k = 0; k < 3; k++) {
+          const a = (k / 3) * Math.PI * 2;
+          part(staff, octa(0.03), glowS(0x6ff3ff, 2.4), { pos: [Math.cos(a) * 0.2, 1.24 + Math.sin(a * 2) * 0.05, Math.sin(a) * 0.2] });
+        }
+        staff.add(weaponBase); staff.add(weaponTip);
+        weaponBase.position.set(0, 0.9, 0);
+        weaponTip.position.set(0, 1.24, 0);
+        weapon.visible = false;
       }
-      staff.add(weaponBase); staff.add(weaponTip);
-      weaponBase.position.set(0, 0.9, 0);
-      weaponTip.position.set(0, 1.24, 0);
-      weapon.visible = false;
       break;
     }
     case 'brute': {
@@ -519,13 +536,19 @@ export function buildRig(classId: Archetype, items: GearId[] = [], big = classId
         part(sh, sphere(0.1), iron, { pos: [0.05, 0, 0], scale: [0.8, 1, 1] });
       }
       // Horned helmet, braided beard, war paint.
-      part(head, sphere(headR * 1.12, 18, 12), iron, { pos: [-0.01, headY + 0.06, 0], scale: [1, 0.8, 1] });
-      part(head, torus(headR * 1.1, 0.025), metal(0xc9a24a, 0.9), { pos: [-0.01, headY + 0.02, 0], rot: [Math.PI / 2, 0, 0] });
-      part(head, rbox(0.03, 0.13, 0.04, 0.012), iron, { pos: [headR * 1.08, headY, 0] });
+      if (!gearHead) {
+        part(head, sphere(headR * 1.12, 18, 12), iron, { pos: [-0.01, headY + 0.06, 0], scale: [1, 0.8, 1] });
+        part(head, torus(headR * 1.1, 0.025), metal(0xc9a24a, 0.9), { pos: [-0.01, headY + 0.02, 0], rot: [Math.PI / 2, 0, 0] });
+        part(head, rbox(0.03, 0.13, 0.04, 0.012), iron, { pos: [headR * 1.08, headY, 0] });
+      } else {
+        part(head, sphere(headR * 1.04, 18, 12), P.hair, { pos: [-0.03, headY + 0.03, 0], scale: [1, 0.96, 1] });
+      }
       for (const s of [-1, 1]) {
-        const hj = group(head, [-0.02, headY + 0.1, s * 0.19], [s * 1.0, 0, 0]);
-        part(hj, cone(0.065, 0.24, 10), 0xf3ead6, { pos: [0, 0.1, 0], rot: [0, 0, -0.35] });
-        part(hj, cone(0.035, 0.16, 8), 0xf3ead6, { pos: [-0.03, 0.27, 0], rot: [0, 0, -0.9] });
+        if (!gearHead) {
+          const hj = group(head, [-0.02, headY + 0.1, s * 0.19], [s * 1.0, 0, 0]);
+          part(hj, cone(0.065, 0.24, 10), 0xf3ead6, { pos: [0, 0.1, 0], rot: [0, 0, -0.35] });
+          part(hj, cone(0.035, 0.16, 8), 0xf3ead6, { pos: [-0.03, 0.27, 0], rot: [0, 0, -0.9] });
+        }
         part(head, rbox(0.012, 0.03, 0.06, 0.006), lineless(P.trim), { pos: [headR * 0.95, headY - 0.06, s * 0.08] });
       }
       face(head, headY, headR, { brows: P.hair, mouth: false });
@@ -543,117 +566,38 @@ export function buildRig(classId: Archetype, items: GearId[] = [], big = classId
         part(fa, torus(0.125, 0.015, Math.PI * 2, 4, 12), iron, { pos: [0, -0.1, 0], rot: [Math.PI / 2, 0, 0] });
         part(fa, torus(0.125, 0.015, Math.PI * 2, 4, 12), iron, { pos: [0, -0.24, 0], rot: [Math.PI / 2, 0, 0] });
       }
-      // Warhammer: wrapped haft, iron head with a glowing rune band and spike.
-      part(weapon, cyl(0.042, 0.048, 1.3, 8), 0x6b4a2e, { pos: [0, 0.38, 0] });
-      for (let k = 0; k < 3; k++) part(weapon, cyl(0.052, 0.052, 0.06, 8), leather, { pos: [0, -0.1 + k * 0.1, 0] });
-      part(weapon, rbox(0.34, 0.36, 0.56, 0.06), iron, { pos: [0, 1.02, 0] });
-      part(weapon, rbox(0.38, 0.08, 0.6, 0.03), metal(0x4d5260, 0.6), { pos: [0, 0.88, 0] });
-      part(weapon, rbox(0.38, 0.08, 0.6, 0.03), metal(0x4d5260, 0.6), { pos: [0, 1.16, 0] });
-      part(weapon, rbox(0.345, 0.12, 0.2, 0.02), { color: 0xff8a2a, glow: 2.2, enchant: true }, { pos: [0, 1.02, 0] });
-      part(weapon, cone(0.06, 0.18, 6), iron, { pos: [0, 1.28, 0] });
-      weaponBase.position.set(0, 0.85, 0);
-      weaponTip.position.set(0, 1.2, 0);
+      if (!gear) {
+        // Warhammer: wrapped haft, iron head with a glowing rune band and spike.
+        part(weapon, cyl(0.042, 0.048, 1.3, 8), 0x6b4a2e, { pos: [0, 0.38, 0] });
+        for (let k = 0; k < 3; k++) part(weapon, cyl(0.052, 0.052, 0.06, 8), leather, { pos: [0, -0.1 + k * 0.1, 0] });
+        part(weapon, rbox(0.34, 0.36, 0.56, 0.06), iron, { pos: [0, 1.02, 0] });
+        part(weapon, rbox(0.38, 0.08, 0.6, 0.03), metal(0x4d5260, 0.6), { pos: [0, 0.88, 0] });
+        part(weapon, rbox(0.38, 0.08, 0.6, 0.03), metal(0x4d5260, 0.6), { pos: [0, 1.16, 0] });
+        part(weapon, rbox(0.345, 0.12, 0.2, 0.02), { color: 0xff8a2a, glow: 2.2, enchant: true }, { pos: [0, 1.02, 0] });
+        part(weapon, cone(0.06, 0.18, 6), iron, { pos: [0, 1.28, 0] });
+        weaponBase.position.set(0, 0.85, 0);
+        weaponTip.position.set(0, 1.2, 0);
+      }
       break;
     }
   }
 
-  // --- Item gear -------------------------------------------------------------
-  const orbiters: { item: GearId; bone: Bone }[] = [];
+  // --- Gear ------------------------------------------------------------------
+  let orbiters: { item: GearId; bone: Bone }[] = [];
   let phoenix: Bone | null = null;
-  const beltZ = [-0.12, 0, 0.12];
-  let beltSlot = 0;
-  const belt = () => beltZ[beltSlot++ % 3];
-  for (const id of items) {
-    const col = gearOf(id).color;
-    switch (id) {
-      case 'thornmail':
-        for (const sh of [shoulderLA, shoulderRA]) {
-          part(sh, torus(0.16, 0.025, Math.PI * 2, 5, 14), 0x2f7a3a, { pos: [0, 0.02, 0], rot: [Math.PI / 2, 0, 0] });
-          for (let k = 0; k < 4; k++) part(sh, cone(0.03, 0.16, 5), 0x58c46b, { pos: [(k - 1.5) * 0.08, 0.12, 0], rot: [(k % 2 ? 0.3 : -0.3), 0, (1.5 - k) * 0.4] });
-        }
-        for (const fa of [farmL, farmR]) for (let k = 0; k < 3; k++) {
-          const a = (k / 3) * Math.PI * 2;
-          part(fa, cone(0.022, 0.1, 5), 0x58c46b, { pos: [Math.cos(a) * 0.09, -0.12, Math.sin(a) * 0.09], rot: [Math.sin(a) * 1.4, 0, -Math.cos(a) * 1.4] });
-        }
-        break;
-      case 'zephyr_boots':
-        for (const sh of [shinL, shinR]) for (const s of [-1, 1]) {
-          const wing = group(sh, [-0.04, -0.3, s * 0.09], [s * -0.3, 0, 0.7]);
-          for (let k = 0; k < 3; k++) part(wing, rbox(0.03, 0.15 - k * 0.03, 0.012, 0.006), glowS(0x5effc8, 1.6), { pos: [-k * 0.035, 0.05, 0], rot: [0, 0, 0.3 * k] });
-        }
-        break;
-      case 'berserker_mask': {
-        part(head, rbox(0.05, 0.1, 0.3, 0.03), metal(0xb01818, 0.6), { pos: [headR * 0.92, headY + 0.02, 0] });
-        for (const s of [-1, 1]) {
-          part(head, sphere(0.024, 8, 6), glowS(0xff3020, 3), { pos: [headR * 0.95 + 0.03, headY + 0.03, s * 0.075], scale: [0.5, 0.8, 1.2] });
-          part(head, cone(0.03, 0.14, 6), 0x2a0a0a, { pos: [headR * 0.6, headY + headR * 0.95, s * 0.12], rot: [s * 0.5, 0, -0.4] });
-        }
-        break;
-      }
-      case 'iron_helm':
-        for (const fa of [farmL, farmR]) for (let k = 0; k < 4; k++) {
-          part(fa, torus(0.035, 0.012, Math.PI * 2, 4, 10), metal(0xa0a8b8, 0.9), { pos: [0.0, -0.06 - k * 0.055, (k % 2 ? 0.07 : -0.07)], rot: [k % 2 ? 0 : Math.PI / 2, 0.6, 0] });
-        }
-        break;
-      case 'mirror_aegis':
-        part(chest, torus(0.12, 0.01, Math.PI * 2, 4, 16), metal(0xc9a24a), { pos: [0.12, 0.38, 0], rot: [0, 0, 1.1] });
-        part(chest, octa(0.06), glowS(0xffe27a, 2.2), { pos: [0.24, 0.3, 0], scale: [0.6, 1, 1] });
-        break;
-      case 'phoenix_feather': {
-        phoenix = bone(ctx, head, -0.08, headY + headR * 0.8, 0.12);
-        for (let k = 0; k < 3; k++) {
-          part(phoenix, cone(0.05 - k * 0.01, 0.42 - k * 0.08, 6), glowS(k === 0 ? 0xff8a2e : 0xffc04a, 1.8 - k * 0.3), { pos: [-0.06 - k * 0.03, 0.18 - k * 0.02, k * 0.03], rot: [0.2 * k, 0, 0.7 + k * 0.25], scale: [1, 1, 0.4] });
-        }
-        break;
-      }
-      case 'colossus_boots':
-        part(hips, torus(0.215, 0.075), 0x8a5a2a, { pos: [0, 0.03, 0], rot: [Math.PI / 2, 0, 0], scale: [0.98, 1.22, 1] });
-        part(hips, rbox(0.06, 0.16, 0.2, 0.03), metal(0xd9b04a, 1), { pos: [0.24, 0.03, 0] });
-        break;
-      case 'twin_daggers':
-        part(hips, cyl(0.035, 0.045, 0.1, 10), glowS(0x8cff3a, 1.6), { pos: [0.08, -0.06, 0.22 + belt() * 0.2] });
-        part(hips, cyl(0.02, 0.02, 0.04, 8), 0x5a3a22, { pos: [0.08, 0.01, 0.22] });
-        break;
-      case 'vampiric_fang':
-        part(chest, cone(0.025, 0.1, 6), 0xf3ead6, { pos: [0.25, 0.32, 0.05], rot: [0, 0, Math.PI] });
-        part(chest, sphere(0.02, 8, 6), glowS(0xff2e55, 2.4), { pos: [0.25, 0.38, 0.05] });
-        break;
-      case 'executioner_hood':
-        part(hips, sphere(0.05, 10, 8), 0xe8e2d6, { pos: [0.1, 0.02, -0.22] });
-        part(hips, sphere(0.012, 6, 4), lineless(0x111111), { pos: [0.14, 0.03, -0.2] });
-        break;
-      case 'ember_core': case 'frost_core': case 'storm_crown':
-      case 'echo_stone': case 'chrono_circlet': {
-        if (id === 'ember_core') {
-          part(hips, octa(0.04), glowS(col, 2.2), { pos: [0.2, 0.07, belt()] });
-          break;
-        }
-        if (id === 'frost_core') {
-          for (let k = 0; k < 3; k++) part(weapon, octa(0.035), glowS(0xbff4ff, 2), { pos: [(k - 1) * 0.04, 0.16, 0.04], scale: [0.6, 1.6, 0.6] });
-          break;
-        }
-        // Orbiting relic.
-        const ob = new Bone();
-        root.add(ob);
-        ctx.bones.push(ob);
-        if (id === 'storm_crown') {
-          part(ob, octa(0.09), glowS(0xbfe6ff, 2.6), { scale: [0.8, 1.3, 0.8] });
-          part(ob, torus(0.13, 0.012, Math.PI * 2, 4, 16), glowS(0x9fd8ff, 1.8), { rot: [Math.PI / 2, 0, 0] });
-        } else if (id === 'echo_stone') {
-          part(ob, sphere(0.08, 12, 10), glowS(0x6b8cff, 2.4), {});
-          part(ob, torus(0.12, 0.012, Math.PI * 2, 4, 16), glowS(0xb0c4ff, 1.6), { rot: [1.1, 0.4, 0] });
-          part(ob, torus(0.14, 0.01, Math.PI * 2, 4, 16), glowS(0x6b8cff, 1.2), { rot: [-0.6, 0.9, 0] });
-        } else {
-          part(ob, cone(0.07, 0.1, 8), glowS(0xe0c8ff, 1.8), { pos: [0, 0.05, 0], rot: [Math.PI, 0, 0] });
-          part(ob, cone(0.07, 0.1, 8), glowS(0xc8a2ff, 1.8), { pos: [0, -0.05, 0] });
-          part(ob, cyl(0.09, 0.09, 0.02, 10), metal(0xc9a24a), { pos: [0, 0.11, 0] });
-          part(ob, cyl(0.09, 0.09, 0.02, 10), metal(0xc9a24a), { pos: [0, -0.11, 0] });
-        }
-        orbiters.push({ item: id, bone: ob });
-        break;
-      }
-    }
+  if (gear) {
+    const offGrip = group(handL, [0, -0.02, 0], [0, 0, -Math.PI / 2]);
+    const built = authorGear({
+      grip: weapon, offGrip, forearmL: farmL, forearmR: farmR, head, headY, headR, chest, hips,
+      shoulderL: shoulderLA, shoulderR: shoulderRA, shinL, shinR, root, big,
+      bone: (parent, x, y, z) => bone(ctx, parent, x, y, z), cloth,
+    }, gear);
+    weaponBase.position.set(...built.main.base);
+    weaponTip.position.set(...built.main.tip);
+    orbiters = built.orbiters;
+    phoenix = built.phoenix;
   }
+  void items;
 
   // --- Bake into skinned meshes ----------------------------------------------
   const { meshes, materials, enchantMaterial } = bake(root, ctx.bones, u, classId);
