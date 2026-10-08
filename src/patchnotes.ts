@@ -12,6 +12,16 @@ export interface PatchNote {
 
 export const PATCH_NOTES: PatchNote[] = [
   {
+    version: '0.9.0',
+    date: '2026-10-08',
+    title: 'Orbit camera',
+    notes: [
+      'Drag anywhere on the arena (mouse or touch) to orbit the camera around the duel, in battle and on the main menu. It keeps following the fight while you look around.',
+      'A Reset view button appears while the view is turned; tap it (or press C) to ease back to the normal angle.',
+      'The default camera, zoom levels and impact shake are unchanged, and the creator still turns your fighter when you drag.',
+    ],
+  },
+  {
     version: '0.8.3',
     date: '2026-10-08',
     title: 'Side margins',
