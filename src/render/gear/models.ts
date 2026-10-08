@@ -1,4 +1,4 @@
-import type { Object3D } from 'three';
+import { Object3D } from 'three';
 import { resolveArt, type ArtKey, type ResolvedArt } from '../../gear/art';
 import { ITEM_ART } from '../../gear/itemArt';
 import { skinnedArt, type SkinDef } from '../../gear/skins';
@@ -41,7 +41,7 @@ export interface GearSockets {
   bone(parent: Object3D, x: number, y: number, z: number): Object3D;
   /** Creates a cloth bone the view sways. */
   clothBone(parent: Object3D, x: number, y: number, z: number): Object3D;
-  /** A bone orbiting the fighter for this item. */
+  /** A bone orbiting the fighter for this item (only built in the gallery: fighters no longer wear relics). */
   orbiter(): Object3D;
   /** A bone the view spins about its own Y axis (halos, rings, rotors), `speed` in rad/s. */
   spin(parent: Object3D, x: number, y: number, z: number, speed?: number): Object3D;
@@ -124,7 +124,8 @@ function socketsFrom(api: RigBuildApi, id: GearId): GearSockets {
     big: false,
     bone: (parent, x, y, z) => { const [p, pos] = unproxied(parent, x, y, z); return api.bone(p, pos); },
     clothBone: (parent, x, y, z) => { const [p, pos] = unproxied(parent, x, y, z); return api.cloth(p, ...pos); },
-    orbiter: () => api.orbiter(id),
+    // Detached when relics are off, so the parts never reach the baked mesh.
+    orbiter: () => (relics ? api.orbiter(id) : new Object3D()),
     spin: (parent, x, y, z, speed = 1) => {
       const [p, pos] = unproxied(parent, x, y, z);
       const b = api.bone(p, pos);
@@ -714,6 +715,12 @@ const BOOTS: Partial<Record<ArtKey, BootFn>> = {
 };
 
 // --- specials ----------------------------------------------------------------------
+
+let relics = false;
+/** Builds the floating relics of the orbiting specials: the gallery shows them, fighters don't. */
+export function showRelics(on: boolean): void {
+  relics = on;
+}
 
 export type SpecialFn = (s: GearSockets, m: Mats) => { orbiter?: Object3D; phoenix?: Object3D } | void;
 

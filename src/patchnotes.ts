@@ -12,6 +12,15 @@ export interface PatchNote {
 
 export const PATCH_NOTES: PatchNote[] = [
   {
+    version: '0.8.5',
+    date: '2026-10-08',
+    title: 'Cleaner special auras',
+    notes: [
+      'Special items no longer float a relic around your fighter or draw a sigil on the ground.',
+      'Their themed particles and the pillar of light when they activate stay, now gathered around your fighter.',
+    ],
+  },
+  {
     version: '0.8.4',
     date: '2026-10-08',
     title: 'Cleaner battles',
