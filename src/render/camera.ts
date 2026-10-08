@@ -11,6 +11,9 @@ export const ZOOM_FACTOR: Record<Zoom, number> = { close: 0.7, normal: 1, distan
 export interface Insets { l: number; r: number; t: number; b: number }
 export const NO_INSETS: Insets = { l: 0, r: 0, t: 0, b: 0 };
 const SIDES = ['l', 'r', 't', 'b'] as const;
+const MAX_YAW = Math.PI * 0.75;
+const MIN_PITCH = -0.25;
+const MAX_PITCH = 1.1;
 
 /**
  * Side-on fight camera. Frames both fighters, eases between targets, and
@@ -33,6 +36,12 @@ export class FightCamera {
   /** Screen edges covered by UI: the duel is framed in the free rectangle between them. */
   private ins: Insets = { ...NO_INSETS };
   private insTarget: Insets = { ...NO_INSETS };
+  /** Player orbit (radians) layered on the automatic framing: yaw around the duel, pitch up or down. */
+  private yaw = 0;
+  private pitch = 0;
+  private yawTarget = 0;
+  private pitchTarget = 0;
+  private readonly off = new Vector3();
 
   constructor(aspect: number) {
     this.camera = new PerspectiveCamera(30, aspect, 0.1, 400);
@@ -88,6 +97,23 @@ export class FightCamera {
     this.camera.updateProjectionMatrix();
   }
 
+  /** Turns the view by a drag (radians); the framing keeps tracking the duel underneath. */
+  orbit(dYaw: number, dPitch: number): void {
+    this.yawTarget = clamp(this.yawTarget + dYaw, -MAX_YAW, MAX_YAW);
+    this.pitchTarget = clamp(this.pitchTarget + dPitch, MIN_PITCH, MAX_PITCH);
+  }
+
+  /** Eases back to the default angle. */
+  resetOrbit(): void {
+    this.yawTarget = 0;
+    this.pitchTarget = 0;
+  }
+
+  /** True while the player has turned the view away from the default angle. */
+  get orbited(): boolean {
+    return Math.abs(this.yawTarget) > 0.02 || Math.abs(this.pitchTarget) > 0.02;
+  }
+
   shake(amount: number): void {
     this.trauma = Math.min(1, this.trauma + amount);
   }
@@ -134,6 +160,17 @@ export class FightCamera {
     STYLE.uOutlineWidth.value = 0.0034 * clamp(15 / this.dist, 0.65, 1.35);
     cam.position.set(this.focusX + sway + sx, height + sy, this.dist);
     this.look.set(this.focusX + sx * 0.5, this.focusY + sy * 0.5, 0);
+    this.yaw = damp(this.yaw, this.yawTarget, 10, dt);
+    this.pitch = damp(this.pitch, this.pitchTarget, 10, dt);
+    if (Math.abs(this.yaw) > 1e-4 || Math.abs(this.pitch) > 1e-4) {
+      // Swing the default shot around the point it looks at, never under the floor.
+      const o = this.off.subVectors(cam.position, this.look);
+      const r = o.length();
+      const el = clamp(Math.asin(clamp(o.y / r, -1, 1)) + this.pitch, Math.asin(clamp((0.35 - this.look.y) / r, -1, 1)), 1.35);
+      const az = Math.atan2(o.x, o.z) + this.yaw;
+      const flat = Math.cos(el) * r;
+      cam.position.set(this.look.x + Math.sin(az) * flat, this.look.y + Math.sin(el) * r, this.look.z + Math.cos(az) * flat);
+    }
     cam.lookAt(this.look);
     cam.rotation.z += (Math.sin(t * 0.7) * t2) * 0.015;
   }
