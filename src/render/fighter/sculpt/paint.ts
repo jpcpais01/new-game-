@@ -123,6 +123,10 @@ export interface PaintOpts {
   tweak?: (m: number, x: number, y: number, z: number, nx: number, ny: number, nz: number) => number;
   /** Multiplier on the wash strength (smaller pieces read better with less). */
   wash?: number;
+  /** Multiplier on the edge highlight. */
+  edge?: number;
+  /** Soft colour blended over the base per vertex (blush, painted markings): [colour, amount 0..1]. */
+  blend?: (m: number, x: number, y: number, z: number) => [number, number] | null;
 }
 
 /**
@@ -140,6 +144,13 @@ export function paintedGeometry(s: SculptMesh, c: PaintColors, o: PaintOpts = {}
     const st = STYLE[m] ?? CLOTH;
     const hex = baseColor(m, c);
     let r = r8(hex), g = g8(hex), b = b8(hex);
+    if (o.blend) {
+      const bl = o.blend(m, s.pos[i * 3], s.pos[i * 3 + 1], s.pos[i * 3 + 2]);
+      if (bl && bl[1] > 0) {
+        const t = Math.min(1, bl[1]);
+        r += (r8(bl[0]) - r) * t; g += (g8(bl[0]) - g) * t; b += (b8(bl[0]) - b) * t;
+      }
+    }
     // Recess wash: occluded creases darken towards a tinted shade.
     const occ = 1 - s.ao[i];
     const cv = s.curv[i];
@@ -148,7 +159,7 @@ export function paintedGeometry(s: SculptMesh, c: PaintColors, o: PaintOpts = {}
     g *= 1 - wash * (1 - st.washTint[1]);
     b *= 1 - wash * (1 - st.washTint[2]);
     // Dry-brushed edges: raised ridges catch a lighter tone.
-    const edge = Math.max(0, cv) * st.edge;
+    const edge = Math.max(0, cv) * st.edge * (o.edge ?? 1);
     r += (1 - r) * edge * 0.8; g += (1 - g) * edge * 0.8; b += (1 - b) * edge * 0.8;
     if (st.sheen) {
       // A soft ring of light across the crown, broken up by the grooves.
