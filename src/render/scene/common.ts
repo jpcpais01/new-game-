@@ -258,24 +258,25 @@ export function tuft(b: MeshBuilder, rnd: () => number, x: number, z: number, s:
 }
 
 /** Builds the merged scenery meshes and adds them to the group. */
-export function finish(group: Group, near: MeshBuilder, far: MeshBuilder, lines: MeshBuilder | null, windy: MeshBuilder | null, sky: MeshBuilder | null, shadows: boolean): void {
+export function finish(group: Group, near: MeshBuilder, far: MeshBuilder, windy: MeshBuilder | null, sky: MeshBuilder | null, shadows: boolean): void {
+  // Every solid prop and landform gets the drawn line: the outline pass
+  // reuses each merged geometry (one extra draw, no extra memory).
   if (!near.empty) {
     const m = new Mesh(near.build(), envMaterial());
     m.castShadow = shadows; m.receiveShadow = shadows;
     m.userData.casts = true;
-    group.add(m);
+    group.add(m, new Mesh(m.geometry, outlineMaterial()));
   }
   if (!far.empty) {
     const m = new Mesh(far.build(), envMaterial());
     m.receiveShadow = true;
-    group.add(m);
+    group.add(m, new Mesh(m.geometry, outlineMaterial()));
   }
   if (windy && !windy.empty) {
     const m = new Mesh(windy.build({ wind: true }), envMaterial(true));
     m.receiveShadow = shadows;
     group.add(m);
   }
-  if (lines && !lines.empty) group.add(new Mesh(lines.build(), outlineMaterial()));
   if (sky && !sky.empty) {
     const m = new Mesh(sky.build(), envMaterial(false, false));
     m.renderOrder = -9;
