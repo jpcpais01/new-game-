@@ -46,8 +46,8 @@ export default defineConfig({
         name: 'Clashborn — Auto Duel Arena',
         short_name: 'Clashborn',
         description: 'Fully automatic 1v1 arena battles driven by gear, abilities and adaptive AI.',
-        theme_color: '#0d0f1a',
-        background_color: '#0d0f1a',
+        theme_color: '#170f1d',
+        background_color: '#170f1d',
         id: '/',
         // Standalone with no orientation: on Xiaomi (HyperOS/MIUI) a WebAPK installed
         // with display "fullscreen" or any fixed orientation never launches. The game

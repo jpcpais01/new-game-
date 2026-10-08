@@ -7,11 +7,13 @@ import type { BattleEvent, StatusId } from '../sim/types';
 import { h } from './dom';
 import { fmtHp } from './format';
 import { wornIcon } from './skinIcons';
+import { icon, statusIcon } from './icons';
 
 const SPEEDS = [1, 2, 4];
 
-const STATUS_ICON: Record<StatusId, string> = {
-  burn: '🔥', poison: '☠️', chill: '❄️', frozen: '🧊', stun: '💫', rage: '😡', haste: '💨', mark: '🔯', ironskin: '🪨', vulnerable: '💔',
+const STATUS_NAME: Record<StatusId, string> = {
+  burn: 'Burning', poison: 'Poisoned', chill: 'Chilled', frozen: 'Frozen', stun: 'Stunned', rage: 'Enraged',
+  haste: 'Hasted', mark: 'Marked', ironskin: 'Ironskin', vulnerable: 'Vulnerable',
 };
 
 interface SideEls {
@@ -65,6 +67,8 @@ export class Hud {
     for (const side of [0, 1] as const) {
       const f = b.fighters[side];
       const fill = h('i.fill'), ghost = h('i.ghost'), shield = h('i.shield'), num = h('span.num');
+      // Tenths of the bar, drawn over the fill so big hits read at a glance.
+      const ticks = h('i.ticks');
       const en = h('i');
       const enWrap = h('div.en', null, en);
       const plan = h('span.chip.plan', null, PLAN_LABELS[b.brains[side].plan]);
@@ -75,8 +79,8 @@ export class Hud {
         return h(`span.mini.gear.r-${g.rarity}`, { title: `${g.name}: ${g.desc}` }, wornIcon(id, f.skins, { frame: false }));
       }));
       const bar = h(`div.fbar.side-${side}`, null,
-        h('div.who', null, h('span.nm', null, f.name), h('small', null, `${FORMS[f.form].name} · ${side === 0 ? 'Blue' : 'Red'}`)),
-        h('div.hp', null, ghost, fill, shield, num),
+        h('div.who', null, h('span.nm', null, f.name), h('small', null, FORMS[f.form].name)),
+        h('div.hp', null, ghost, fill, shield, ticks, num),
         enWrap,
         h('div.meta', null, plan, ult, statuses),
         items,
@@ -84,7 +88,7 @@ export class Hud {
       this.sides.push({ fill, ghost, shield, num, en, enWrap, plan, ult, statuses, last: { hp: -1, shield: -1, en: -1, full: false, st: '' } });
       if (side === 0) top.append(bar);
       else {
-        this.clock = h('div.clock', null, String(ROUND_TIME));
+        this.clock = h('div.clock', null, h('span', null, String(ROUND_TIME)));
         top.append(this.clock, bar);
       }
     }
@@ -97,11 +101,11 @@ export class Hud {
       onclick: () => this.cb.onSpeed(SPEEDS[(SPEEDS.indexOf(this.speed) + 1) % SPEEDS.length]),
     }, `${speed}×`);
     this.speed = speed;
-    this.pauseBtn = h<HTMLButtonElement>('button.btn', { onclick: () => this.cb.onPause(), title: 'Pause', 'aria-label': 'Pause' }, '❚❚');
+    this.pauseBtn = h<HTMLButtonElement>('button.btn', { onclick: () => this.cb.onPause(), title: 'Pause', 'aria-label': 'Pause' }, icon('pause'));
     this.zoomBtn = h<HTMLButtonElement>('button.btn.zoom', { onclick: () => this.cb.onZoom(), title: 'Camera zoom (Z)', 'aria-label': 'Camera zoom' });
     this.setZoom(this.zoomLabel);
     const controls = h('div.controls', null, this.zoomBtn, h('div.speed-seg', null, ...this.speedBtns), this.speedCycle, this.pauseBtn,
-      h('button.btn', { onclick: () => this.cb.onExit(), title: 'Back to loadout', 'aria-label': 'Back to loadout' }, '✕'));
+      h('button.btn', { onclick: () => this.cb.onExit(), title: 'Back to loadout', 'aria-label': 'Back to loadout' }, icon('close')));
     const bottom = h('div.hud-bottom', null, this.feed, controls);
     this.banner = h('div.banner');
     this.ultCalls = [0, 1].map((s) => h(`div.ult-call.side-${s}`));
@@ -111,7 +115,7 @@ export class Hud {
 
   setZoom(label: string): void {
     this.zoomLabel = label;
-    this.zoomBtn?.replaceChildren(h('span.glyph', null, '🔍'), h('span.lbl', null, label));
+    this.zoomBtn?.replaceChildren(icon('zoom', 'glyph'), h('span.lbl', null, label));
   }
 
   setSpeed(s: number): void {
@@ -121,7 +125,8 @@ export class Hud {
   }
 
   setPaused(p: boolean): void {
-    this.pauseBtn.textContent = p ? '▶' : '❚❚';
+    this.pauseBtn.replaceChildren(icon(p ? 'play' : 'pause'));
+    this.pauseBtn.title = p ? 'Resume' : 'Pause';
     this.pauseBtn.classList.toggle('on', p);
   }
 
@@ -196,13 +201,13 @@ export class Hud {
       if (st !== s.last.st) {
         s.last.st = st;
         s.statuses.replaceChildren(...f.statuses.map((x) =>
-          h(`span.mini.st-${x.id}`, { title: x.id }, STATUS_ICON[x.id], x.stacks > 1 ? h('sub', null, String(x.stacks)) : null)));
+          h(`span.mini.st-${x.id}`, { title: STATUS_NAME[x.id] }, statusIcon(x.id), x.stacks > 1 ? h('sub', null, String(x.stacks)) : null)));
       }
     }
     const left = Math.max(0, Math.ceil(ROUND_TIME - b.time));
     if (left !== this.lastClock) {
       this.lastClock = left;
-      this.clock.textContent = String(left);
+      this.clock.firstElementChild!.textContent = String(left);
       this.clock.classList.toggle('low', left <= 10);
     }
   }
