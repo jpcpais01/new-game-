@@ -39,7 +39,7 @@ const arenaOpts = () => {
   return { shadows: q.shadows, shadowMapSize: q.shadowMapSize, crowd: q.crowd, detail: q.detail };
 };
 let arena: Arena = await createArena(settings.arena, scene, arenaOpts());
-renderer.setGrade(arena.grade);
+renderer.setLook(arena);
 let arenaToken = 0;
 /** Swaps the arena (or rebuilds it for a new quality tier). */
 async function loadArena(id: ArenaId): Promise<void> {
@@ -49,7 +49,7 @@ async function loadArena(id: ArenaId): Promise<void> {
   arena.dispose();
   arena = next;
   view.arena = next;
-  renderer.setGrade(next.grade);
+  renderer.setLook(next);
   try { await renderer.renderer.compileAsync(scene, cam.camera); } catch { /* optional */ }
 }
 const fx = { add: new Particles(6144, true), smoke: new Particles(1536, false) };

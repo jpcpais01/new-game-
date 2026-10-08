@@ -1,7 +1,7 @@
 import { Color, Fog, Group, type DirectionalLight, type Scene, Vector3 } from 'three';
 import type { Particles } from '../fx/particles';
 import { STYLE } from '../materials';
-import type { GradeSettings } from '../renderer';
+import type { ArenaLook, AtmosphereSettings, GradeSettings } from '../renderer';
 import { disposeGroup } from './common';
 
 export type ArenaId = 'highlands' | 'colosseum';
@@ -25,6 +25,10 @@ export interface StyleMood {
   lit: [number, number, number];
   skyFill: [number, number, number];
   ramp?: [number, number];
+  /** Warm terminator band colour. */
+  term?: [number, number, number];
+  /** Ground height for contact occlusion. */
+  groundY?: number;
 }
 
 /**
@@ -32,7 +36,7 @@ export interface StyleMood {
  * tints + colour grade). Concrete arenas build their scenery in the
  * constructor and animate ambience in `ambient()`.
  */
-export abstract class Arena {
+export abstract class Arena implements ArenaLook {
   readonly group = new Group();
   key!: DirectionalLight;
   readonly braziers: Vector3[] = [];
@@ -40,6 +44,8 @@ export abstract class Arena {
   protected excitement = 0;
   private emberAcc = 0;
   abstract readonly grade: GradeSettings;
+  abstract readonly atmosphere: AtmosphereSettings;
+  private fogRange: [number, number] = [70, 420];
 
   constructor(protected readonly scene: Scene, protected readonly opts: ArenaOptions) {
     scene.add(this.group);
@@ -51,8 +57,23 @@ export abstract class Arena {
     STYLE.uLitTint.value.setRGB(...m.lit);
     STYLE.uSkyFill.value.setRGB(...m.skyFill);
     STYLE.uRamp.value.set(...(m.ramp ?? [0.46, 0.7]));
+    STYLE.uTermTint.value.setRGB(...(m.term ?? [0.16, 0.05, 0.0]));
+    STYLE.uGroundY.value = m.groundY ?? 0;
+    this.fogRange = [near, far];
     this.scene.fog = new Fog(fog, near, far);
     this.scene.background = new Color(fog);
+  }
+
+  /**
+   * With post-processing the atmosphere pass does aerial perspective from the
+   * depth buffer, so the scene's linear fog is pushed out of range (no shader
+   * recompiles); without it, the classic fog stays.
+   */
+  usePostFog(on: boolean): void {
+    const f = this.scene.fog as Fog | null;
+    if (!f) return;
+    f.near = on ? 1e5 : this.fogRange[0];
+    f.far = on ? 2e5 : this.fogRange[1];
   }
 
   /** Crowd (if any) reacts to big moments. */

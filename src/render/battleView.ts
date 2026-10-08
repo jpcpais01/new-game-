@@ -5,6 +5,7 @@ import { CLASSES } from '../sim/classes';
 import type { BattleEvent, Projectile, ProjectileStyle } from '../sim/types';
 import type { FloatingText } from '../ui/floatingText';
 import type { FightCamera } from './camera';
+import { ContactShadow } from './fx/contactShadow';
 import { Lightning, Pulses, WeaponTrail } from './fx/effects';
 import type { Particles } from './fx/particles';
 import { FighterView, type FxContext } from './fighter/fighterView';
@@ -35,6 +36,7 @@ export class BattleView {
   battle: Battle | null = null;
   readonly fighters: [FighterView | null, FighterView | null] = [null, null];
   private readonly trails: [WeaponTrail, WeaponTrail];
+  private readonly shadows: [ContactShadow, ContactShadow] = [new ContactShadow(), new ContactShadow()];
   private readonly projectiles = new Map<number, ProjectileView>();
   private readonly projGroup = new Group();
   readonly pulses = new Pulses();
@@ -59,6 +61,7 @@ export class BattleView {
     scene.add(this.projGroup, this.pulses.group, this.lightning.group);
     this.trails = [new WeaponTrail(0xffffff), new WeaponTrail(0xffffff)];
     for (const t of this.trails) scene.add(t.mesh);
+    for (const c of this.shadows) scene.add(c.mesh);
   }
 
   /** Swap in a new battle and rebuild fighter models when loadouts change. */
@@ -107,6 +110,7 @@ export class BattleView {
       const f = b.fighters[i];
       const v = this.fighters[i]!;
       v.update(f, alpha, dt, this.fx, b.over, b.winner === i, xScale);
+      this.shadows[i].update((f.px + (f.x - f.px) * alpha) * xScale, f.y, f.alive);
       const a = f.action;
       const ab = a ? f.abilities[a.ability] : null;
       const swinging = !!a && !!ab && !a.feint && ab.power > 0 && ab.kind !== 'projectile' && ab.kind !== 'meteor'
