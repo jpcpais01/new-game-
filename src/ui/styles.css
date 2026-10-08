@@ -1352,11 +1352,17 @@ button.room-code:active span { transform: translateY(2px); box-shadow: var(--hi)
   .lobby-card, .net-card { animation-duration: 0.01s; }
   .mb-clock.low { animation: none; }
 }
-/* Camera reset: floats top-centre while the player has orbited the view. */
-.cam-reset {
-  position: absolute; left: 50%; top: calc(var(--safe-t) + 98px); transform: translateX(-50%);
-  padding: 7px 13px; font-size: 13px; font-weight: 800; z-index: 5;
-  animation: cam-reset-in 0.18s ease-out;
+/* Camera reset: a keycap shown while the player has orbited the view, first among the
+   battle controls, or beside the patch notes button outside battles. */
+.cam-reset { animation: cam-reset-in 0.18s ease-out; }
+.cam-reset .ic { width: 18px; height: 18px; }
+.version .cam-reset {
+  order: -1; pointer-events: auto;
+  width: 30px; height: 30px; min-height: 0; padding: 0; border-radius: 9px;
+  box-shadow: var(--hi), 0 2px 0 var(--ink);
 }
-.cam-reset:active { transform: translateX(-50%) translateY(2px); }
-@keyframes cam-reset-in { from { opacity: 0; transform: translateX(-50%) translateY(-6px); } }
+.version .cam-reset .ic { width: 17px; height: 17px; }
+@media (orientation: portrait) {
+  #ui:not(:has(> .hud:not([hidden]))) .version .cam-reset { order: 0; }
+}
+@keyframes cam-reset-in { from { opacity: 0; transform: scale(0.8); } }
