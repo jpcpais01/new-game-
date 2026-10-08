@@ -2,7 +2,7 @@ import type { Appearance } from '../../../character/appearance';
 import { cullInside, meshSdf, type SculptMesh } from './mesher';
 import { M } from './paint';
 import {
-  ball, bezier, caps, cone, Displace, ell, Fn, inter, MirrorZ, noise3, Offset, Paint, rbox, Ribbon, Squash, strand, sub, torus,
+  ball, bezier, cone, Displace, ell, Fn, inter, MirrorZ, Offset, Paint, rbox, Ribbon, Squash, strand, sub, torus,
   union, type Sdf, type Vec3,
 } from './sdf';
 
@@ -25,7 +25,7 @@ export const HEAD_DETAIL = [0.011, 0.0085, 0.0062];
 type FaceKey = Pick<Appearance, 'jaw' | 'nose' | 'mouth' | 'eyes' | 'brows'>;
 
 /** Where the eyeballs sit (R units, right eye) and how big they are. */
-export const EYE = { x: 0.64, y: 0.04, z: 0.34, r: 0.155 };
+export const EYE = { x: 0.64, y: -0.05, z: 0.37, r: 0.2 };
 
 const S = HEAD_R;
 const P = (x: number, y: number, z: number): Vec3 => [x * S, y * S, z * S];
@@ -41,11 +41,11 @@ const P = (x: number, y: number, z: number): Vec3 => [x * S, y * S, z * S];
  * eyeballs; the face only carves a socket and an almond opening for them.
  */
 export const EYE_LIDS: Record<Appearance['eyes'], { up: number; lo: number; tilt: number }> = {
-  round: { up: 0.62, lo: 0.5, tilt: 0.0 },
-  sharp: { up: 0.36, lo: 0.36, tilt: 0.2 },
-  narrow: { up: 0.26, lo: 0.24, tilt: 0.06 },
-  wide: { up: 0.78, lo: 0.62, tilt: -0.05 },
-  glow: { up: 0.36, lo: 0.32, tilt: 0.22 },
+  round: { up: 0.72, lo: 0.6, tilt: 0.0 },
+  sharp: { up: 0.4, lo: 0.42, tilt: 0.18 },
+  narrow: { up: 0.3, lo: 0.32, tilt: 0.05 },
+  wide: { up: 0.88, lo: 0.72, tilt: -0.04 },
+  glow: { up: 0.45, lo: 0.42, tilt: 0.2 },
 };
 
 /**
@@ -74,112 +74,141 @@ function skull(m: number): Sdf {
   );
 }
 
-function faceField(a: FaceKey, ears: boolean): { face: Sdf; jaw: Sdf } {
-  // --- Skull and face masses ---
-  const cranium = skull(M.SKIN);
-  const mask = ell(P(0.32, -0.22, 0), [0.6 * S, 0.62 * S, 0.62 * S], M.SKIN);
-  // The jawline runs from below the ear to the chin; the chin closes it.
-  const jaws: Record<Appearance['jaw'], [Vec3, Vec3, number, number, Sdf]> = {
-    soft: [[-0.14, -0.42, 0.56], [0.6, -0.86, 0.17], 0.2, 0.15, ell(P(0.66, -0.86, 0), [0.2 * S, 0.17 * S, 0.24 * S], M.SKIN)],
-    square: [[-0.14, -0.6, 0.58], [0.58, -0.88, 0.22], 0.2, 0.17, rbox(P(0.62, -0.84, 0), [0.14 * S, 0.11 * S, 0.24 * S], 0.09 * S, M.SKIN)],
-    narrow: [[-0.12, -0.36, 0.52], [0.62, -0.9, 0.09], 0.18, 0.11, ell(P(0.68, -0.9, 0), [0.15 * S, 0.15 * S, 0.13 * S], M.SKIN)],
-  };
-  const [angle, chinSide, rA, rC, chin] = jaws[a.jaw];
-  const jawBar = cone(P(...angle), P(...chinSide), rA * S, rC * S, M.SKIN);
-  const jaw = union(0.16 * S, new MirrorZ(jawBar), chin, ell(P(0.25, -0.5, 0), [0.45 * S, 0.35 * S, 0.5 * S], M.SKIN));
-  const half = union(0.06 * S,
-    // Brow ridge and cheekbones.
-    cone(P(0.8, 0.25, 0.04), P(0.64, 0.27, 0.5), 0.11 * S, 0.08 * S, M.SKIN),
-    ell(P(0.56, -0.1, 0.48), [0.2 * S, 0.12 * S, 0.2 * S], M.SKIN, [0, 0.4, -0.15]),
-  );
-  let face: Sdf = union(0.16 * S, cranium, mask, jaw, new MirrorZ(half));
-  // A soft plane under the cheekbones, towards the jaw.
-  face = sub(face, new MirrorZ(ell(P(0.46, -0.44, 0.74), [0.24 * S, 0.14 * S, 0.1 * S], M.SKIN, [0, 0.5, 0])), 0.14 * S);
+/** Where the mouth sits (R units). */
+const MOUTH_Y = -0.56;
 
-  // --- Eyes: a socket for the eyeball and its lids, opened in an almond ---
+/**
+ * A crisp facial feature drawn as a smooth tapered tube lying on the skin
+ * (brows, the mouth line): points and surface normals in head space
+ * (metres), half-widths along the skin, and how flat it lies.
+ */
+export interface FaceFeature {
+  kind: 'brow' | 'mouth';
+  pts: Vec3[];
+  nrm: Vec3[];
+  r: number[];
+  flat: number;
+}
+
+/**
+ * The face: a smooth, simple head in a clean stylised look. A round cranium,
+ * full cheeks and a soft chin (shaped by the jaw option), a small nose, ears
+ * and sockets for the eyes. The eyes, lids, brows and mouth line are crisp
+ * meshes laid on top (see FaceFeature), so the sculpt itself stays smooth.
+ */
+function faceField(a: FaceKey, ears: boolean): { face: Sdf; jaw: Sdf } {
+  const cranium = skull(M.SKIN);
+  const lower = ell(P(0.28, -0.3, 0), [0.68 * S, 0.66 * S, 0.74 * S], M.SKIN);
+  const cheeks = new MirrorZ(ball(P(0.5, -0.36, 0.4), 0.3 * S, M.SKIN));
+  const chin = ({
+    soft: ell(P(0.52, -0.74, 0), [0.3 * S, 0.22 * S, 0.36 * S], M.SKIN),
+    square: rbox(P(0.44, -0.72, 0), [0.28 * S, 0.14 * S, 0.44 * S], 0.14 * S, M.SKIN),
+    narrow: ell(P(0.58, -0.8, 0), [0.24 * S, 0.24 * S, 0.2 * S], M.SKIN),
+  } as const)[a.jaw];
+  const jaw = union(0.22 * S, lower, chin, cheeks);
+  let face: Sdf = union(0.25 * S, cranium, jaw);
+
+  // Eye sockets: room for the eyeball and its lids, opened in an almond.
   const E = P(EYE.x, EYE.y, EYE.z), er = EYE.r * S;
   const eyeD = (x: number, y: number, z: number) => Math.hypot(x - E[0], y - E[1], Math.abs(z) - E[2]);
   const shape = almond(a.eyes);
   const eb: [number, number, number, number, number, number] = [E[0] - er * 1.8, E[1] - er * 1.8, -E[2] - er * 1.8, E[0] + er * 1.8, E[1] + er * 1.8, E[2] + er * 1.8];
-  face = sub(face, new Fn((x, y, z) => eyeD(x, y, z) - er * 1.06, eb, M.SKIN), 0.012 * S);
-  face = sub(face, new Fn((x, y, z) => Math.max(shape((Math.abs(z) - E[2]) / S, (y - E[1]) / S) * S, E[0] - x), eb, M.SKIN), 0.03 * S);
-  // Upper lid crease.
-  face = sub(face, new MirrorZ(strand(bezier(P(0.74, 0.17, 0.2), P(0.8, 0.25, 0.35), P(0.7, 0.17, 0.5), 4), [0.014 * S, 0.018 * S, 0.018 * S, 0.014 * S, 0.01 * S], M.SKIN)), 0.025 * S);
+  face = sub(face, new Fn((x, y, z) => eyeD(x, y, z) - er * 1.06, eb, M.SKIN), 0.015 * S);
+  face = sub(face, new Fn((x, y, z) => Math.max(shape((Math.abs(z) - E[2]) / S, (y - E[1]) / S) * S, E[0] - x), eb, M.SKIN), 0.04 * S);
 
-  // --- Nose ---
-  let nose: Sdf;
-  if (a.nose === 'round') {
-    nose = union(0.05 * S,
-      cone(P(0.9, 0.14, 0), P(1.04, -0.14, 0), 0.07 * S, 0.1 * S, M.SKIN),
-      ball(P(1.05, -0.2, 0), 0.14 * S, M.SKIN),
-      new MirrorZ(ball(P(0.94, -0.25, 0.11), 0.075 * S, M.SKIN)),
-    );
-  } else if (a.nose === 'long') {
-    nose = union(0.04 * S,
-      cone(P(0.9, 0.2, 0), P(1.16, -0.18, 0), 0.07 * S, 0.075 * S, M.SKIN),
-      ball(P(1.14, -0.22, 0), 0.09 * S, M.SKIN),
-      new MirrorZ(ball(P(0.99, -0.26, 0.085), 0.06 * S, M.SKIN)),
-    );
-  } else {
-    nose = union(0.045 * S,
-      cone(P(0.9, 0.16, 0), P(1.07, -0.15, 0), 0.06 * S, 0.085 * S, M.SKIN),
-      ball(P(1.07, -0.19, 0), 0.105 * S, M.SKIN),
-      new MirrorZ(ball(P(0.97, -0.25, 0.09), 0.06 * S, M.SKIN)),
-    );
-  }
-  face = union(0.05 * S, face, nose);
-  // Nostrils.
-  face = sub(face, new MirrorZ(ell(P(1.0, -0.29, 0.065), [0.04 * S, 0.025 * S, 0.035 * S], M.MOUTH)), 0.02 * S);
+  // Nose: small and soft.
+  const nose = ({
+    button: union(0.06 * S, ball(P(0.95, -0.24, 0), 0.09 * S, M.SKIN), cone(P(0.84, -0.02, 0), P(0.94, -0.19, 0), 0.04 * S, 0.07 * S, M.SKIN)),
+    round: union(0.06 * S, ball(P(0.95, -0.24, 0), 0.12 * S, M.SKIN), new MirrorZ(ball(P(0.89, -0.29, 0.08), 0.075 * S, M.SKIN))),
+    long: union(0.05 * S, cone(P(0.84, 0.04, 0), P(1.04, -0.22, 0), 0.05 * S, 0.075 * S, M.SKIN), ball(P(1.02, -0.24, 0), 0.085 * S, M.SKIN)),
+  } as const)[a.nose];
+  face = union(0.08 * S, face, nose);
 
-  // --- Mouth ---
-  const my = -0.5;
-  const corner = a.mouth === 'smile' ? 0.07 : a.mouth === 'frown' ? -0.06 : a.mouth === 'grin' ? 0.05 : -0.005;
-  const lips = union(0.025 * S,
-    // Upper lip in two halves (the cupid's bow), the fuller lower lip under it.
-    new MirrorZ(ell(P(0.8, my + 0.035, 0.07), [0.06 * S, 0.035 * S, 0.12 * S], M.LIP, [0.25, 0, 0])),
-    ell(P(0.78, my - 0.045, 0), [0.06 * S, 0.045 * S, 0.15 * S], M.LIP),
-  );
-  face = union(0.03 * S, face, lips);
-  // Philtrum groove under the nose and the dimple under the lower lip.
-  face = sub(face, caps(P(0.98, -0.3, 0), P(0.92, my + 0.08, 0), 0.026 * S, M.SKIN), 0.03 * S);
-  face = sub(face, ell(P(0.92, my - 0.16, 0), [0.05 * S, 0.035 * S, 0.12 * S], M.SKIN), 0.05 * S);
+  // An open grin is carved (with teeth); the other mouths are lines drawn on top.
   if (a.mouth === 'grin') {
-    const open = new MirrorZ(ell(P(0.98, my + 0.0, 0.0), [0.14 * S, 0.075 * S, 0.21 * S], M.MOUTH));
-    face = sub(face, open, 0.02 * S, M.MOUTH);
-    face = union(0.005 * S, face, ell(P(0.85, my + 0.03, 0), [0.1 * S, 0.04 * S, 0.17 * S], M.TEETH));
-  } else {
-    // The mouth line: a thin carved curve rising (smile) or falling (frown) at the corners.
-    const line = strand(bezier(P(0.9, my + corner, -0.2), P(0.95, my - corner * 0.6, 0), P(0.9, my + corner, 0.2), 6),
-      [0.012 * S, 0.016 * S, 0.018 * S, 0.018 * S, 0.018 * S, 0.016 * S, 0.012 * S], M.MOUTH);
-    face = sub(face, line, 0.012 * S, M.MOUTH);
-    if (a.mouth === 'smile') face = sub(face, new MirrorZ(caps(P(0.92, my + 0.1, 0.24), P(0.88, my - 0.02, 0.27), 0.016 * S, M.SKIN)), 0.03 * S);
+    const my = MOUTH_Y + 0.02;
+    const open = new Fn((x, y, z) => {
+      const Y = y / S, Z = z / S;
+      const d = Math.max(Y - my, Math.hypot((Y - my) / 0.12, Z / 0.18) - 1) * 0.1;
+      return Math.max(d * S, 0.72 * S - x);
+    }, [0.6 * S, (my - 0.15) * S, -0.22 * S, 1.2 * S, (my + 0.03) * S, 0.22 * S], M.MOUTH);
+    face = sub(face, open, 0.025 * S, M.MOUTH);
+    face = union(0.008 * S, face, ell(P(0.8, my - 0.02, 0), [0.07 * S, 0.035 * S, 0.15 * S], M.TEETH));
   }
 
-  // --- Ears ---
+  // Ears: simple, with a soft bowl.
   if (ears) {
     const ear = sub(
-      union(0.03 * S,
-        ell(P(-0.04, -0.03, 0.9), [0.17 * S, 0.27 * S, 0.09 * S], M.SKIN, [0.15, -0.25, 0]),
-        torus(P(-0.04, 0.02, 0.92), 0.13 * S, 0.035 * S, M.SKIN, [Math.PI / 2 + 0.15, 0, -0.25]),
-      ),
-      ell(P(-0.02, -0.02, 0.99), [0.1 * S, 0.17 * S, 0.06 * S], M.SKIN, [0.15, -0.25, 0]), 0.03 * S,
+      ell(P(-0.04, -0.06, 0.88), [0.16 * S, 0.25 * S, 0.1 * S], M.SKIN, [0.15, -0.25, 0]),
+      ell(P(-0.01, -0.05, 0.97), [0.09 * S, 0.15 * S, 0.06 * S], M.SKIN, [0.15, -0.25, 0]), 0.04 * S,
     );
-    face = union(0.05 * S, face, new MirrorZ(ear));
+    face = union(0.06 * S, face, new MirrorZ(ear));
   }
+  return { face, jaw };
+}
 
-  // --- Brows ---
-  if (a.brows !== 'none') {
-    const [inY, midY, outY, r0, r1] = ({
-      soft: [0.27, 0.33, 0.28, 0.045, 0.028],
-      straight: [0.29, 0.31, 0.29, 0.05, 0.035],
-      angry: [0.2, 0.3, 0.34, 0.055, 0.035],
-      thick: [0.27, 0.33, 0.29, 0.075, 0.055],
-    } as const)[a.brows];
-    const brow = strand(bezier(P(0.92, inY, 0.12), P(0.94, midY + 0.03, 0.34), P(0.78, outY, 0.56), 5),
-      [r0 * S, r0 * 1.05 * S, r0 * S, (r0 + r1) * 0.5 * S, r1 * S, r1 * 0.7 * S], M.BROW);
-    face = union(0.012 * S, face, new MirrorZ(brow));
+/** Finds the skin under (y, z) by marching in from the front; returns the point and its normal. */
+function onFace(f: Sdf, y: number, z: number): [Vec3, Vec3] {
+  let x = 1.5 * S, step = 0.02 * S;
+  while (f.d(x, y, z) > 0 && x > -S) x -= step;
+  // Refine between the last outside and inside samples.
+  let lo = x, hi = x + step;
+  for (let i = 0; i < 12; i++) {
+    const m = (lo + hi) / 2;
+    if (f.d(m, y, z) > 0) hi = m; else lo = m;
   }
-  return { face, jaw: union(0.1 * S, jaw, mask) };
+  x = (lo + hi) / 2;
+  const e = 0.004 * S;
+  const n: Vec3 = [f.d(x + e, y, z) - f.d(x - e, y, z), f.d(x, y + e, z) - f.d(x, y - e, z), f.d(x, y, z + e) - f.d(x, y, z - e)];
+  const l = Math.hypot(...n) || 1;
+  return [[x, y, z], [n[0] / l, n[1] / l, n[2] / l]];
+}
+
+/** A feature along a curve over the face: `yz(t)` in R units, width `w(t)` in R units. */
+function feature(f: Sdf, kind: FaceFeature['kind'], yz: (t: number) => [number, number], w: (t: number) => number, flat: number, n = 14): FaceFeature {
+  const pts: Vec3[] = [], nrm: Vec3[] = [], r: number[] = [];
+  for (let i = 0; i <= n; i++) {
+    const t = i / n;
+    const [y, z] = yz(t);
+    const [p, nn] = onFace(f, y * S, z * S);
+    const rr = w(t) * S;
+    // Half sunk into the skin.
+    const lift = rr * flat * 0.35;
+    pts.push([p[0] + nn[0] * lift, p[1] + nn[1] * lift, p[2] + nn[2] * lift]);
+    nrm.push(nn);
+    r.push(rr);
+  }
+  return { kind, pts, nrm, r, flat };
+}
+
+/** Brows and the mouth line for a face. */
+function faceFeatures(a: FaceKey, f: Sdf): FaceFeature[] {
+  const out: FaceFeature[] = [];
+  const taper = (t: number) => Math.pow(Math.max(0, Math.sin(Math.PI * t)), 0.45);
+  if (a.brows !== 'none') {
+    const [inY, midY, outY, w0, w1] = ({
+      soft: [0.24, 0.3, 0.25, 0.055, 0.034],
+      straight: [0.26, 0.27, 0.26, 0.056, 0.042],
+      angry: [0.17, 0.26, 0.31, 0.06, 0.036],
+      thick: [0.23, 0.29, 0.25, 0.085, 0.06],
+    } as const)[a.brows];
+    for (const sd of [-1, 1]) {
+      out.push(feature(f, 'brow', (t) => {
+        // Quadratic through inner, middle and outer points; the inner end is a little lower and thicker.
+        const y = (1 - t) * (1 - t) * inY + 2 * t * (1 - t) * (midY + (midY - (inY + outY) / 2)) + t * t * outY;
+        return [y, sd * (0.15 + t * 0.42)];
+      }, (t) => (w0 + (w1 - w0) * t) * (t < 0.15 ? 0.6 + t / 0.15 * 0.4 : 1) * Math.max(0.25, taper(Math.min(1, t * 0.5 + 0.5))), 0.5));
+    }
+  }
+  if (a.mouth !== 'grin') {
+    const k = a.mouth === 'smile' ? 0.06 : a.mouth === 'frown' ? -0.05 : 0.0;
+    const half = a.mouth === 'smile' ? 0.15 : 0.12;
+    out.push(feature(f, 'mouth', (t) => {
+      const u = t * 2 - 1;
+      return [MOUTH_Y + k * (u * u - 0.35), u * half];
+    }, (t) => 0.021 * Math.max(0.35, taper(t)), 0.6));
+  }
+  return out;
 }
 
 // -----------------------------------------------------------------------------
@@ -322,9 +351,9 @@ function hairField(style: Appearance['hairStyle']): Sdf | null {
       });
     case 'spiky': {
       const spikes: Sdf[] = [];
-      const row = (count: number, lat: number, len: number, off: number) => {
+      const row = (count: number, lat: number, len: number, off: number, spread = 2.6) => {
         for (let i = 0; i < count; i++) {
-          const phi = off + (i - (count - 1) / 2) * (2.6 / count);
+          const phi = off + (i - (count - 1) / 2) * (spread / count);
           const a = onScalp(phi, lat, -0.04), m = onScalp(phi, lat + 0.1, len * 0.45), b = onScalp(phi - 0.2 * Math.sign(phi), lat - 0.1, len);
           b[0] -= 0.3;
           b[1] += 0.1;
@@ -333,7 +362,7 @@ function hairField(style: Appearance['hairStyle']): Sdf | null {
       };
       row(4, 0.85, 0.5, 0);
       row(3, 1.25, 0.55, 0);
-      row(3, 0.6, 0.4, B);
+      row(3, 0.6, 0.36, B, 1.5);
       return union(0.05 * S,
         hairMass({ t: 0.07, top: 0.06, crown: [B, 1.15], n: 14, groove: 0.05, tips: 0.24, front: 0.36 }),
         ...spikes);
@@ -369,7 +398,6 @@ function hairField(style: Appearance['hairStyle']): Sdf | null {
         fins.push(cone(P(bx, by, 0), P(bx + nx / L * l - 0.28, by + ny / L * l, 0), 0.19 * S, 0.012 * S, M.HAIR));
       }
       return union(0.02 * S,
-        hairMass({ t: 0.006, crown: [B, 1.2], n: 30, groove: 0, tips: 0.02, front: 0.48, nape: -0.36, m: M.SHAVE }),
         new Squash(union(0.07 * S, ...fins), [0, 0, 0], [1, 1, 0.45]));
     }
     case 'long':
@@ -386,30 +414,30 @@ function hairField(style: Appearance['hairStyle']): Sdf | null {
 function facialField(fh: Appearance['facialHair'], jaw: Sdf): Sdf | null {
   if (fh === 'none' || fh === 'stubble') return null;
   const parts: Sdf[] = [];
-  const stache = new MirrorZ(lock([0.9, -0.37, 0.015], [0.94, -0.39, 0.15], [0.84, -0.53, 0.25], 0.06, 0.02));
+  const stache = new MirrorZ(lock([0.94, -0.5, 0.012], [0.97, -0.53, 0.15], [0.86, -0.67, 0.23], 0.06, 0.025));
   parts.push(stache);
-  if (fh === 'goatee') parts.push(lock([0.8, -0.62, 0], [0.86, -0.85, 0], [0.76, -1.06, 0], 0.1, 0.03));
+  if (fh === 'goatee') parts.push(lock([0.86, -0.68, 0], [0.9, -0.86, 0], [0.8, -1.04, 0], 0.09, 0.03));
   if (fh === 'beard' || fh === 'braid') {
+    // A full beard hugging the jaw: along the jawline from the ears, thick under the chin, clear of the mouth.
     const region = new Fn((x, y, z) => {
       const X = x / S, Y = y / S, Z = Math.abs(z) / S;
-      // Below the cheekbones, in front of the ears, open around the mouth.
-      const cheek = (Y - (-0.2 - X * 0.15 + Z * 0.05)) * S;
-      const back = (-0.15 - X) * S;
-      const mouth = (1 - Math.hypot((Y + 0.5) / 0.15, Z / 0.27, Math.max(0, 0.62 - X) * 4)) * 0.1 * S;
-      return Math.max(cheek, back, X > 0.6 ? mouth : -1);
+      const front = 1 - SMOOTH(0.16, 0.34, Z);
+      const top = -0.5 - X * 0.08 + Z * 0.06 - (X > 0.35 ? front * 0.2 : 0);
+      return Math.max((Y - top) * S, (-0.12 - X) * S);
     }, [-0.3 * S, -1.4 * S, -1 * S, 1.3 * S, 0.2 * S, 1 * S], M.HAIR);
-    const beard = new Displace(inter(new Offset(jaw, 0.065 * S), region, 0.03 * S),
-      (x, y, z) => -Math.abs(Math.sin(Math.atan2(z, x) * 11 + y / S * 4)) * 0.02 * S + noise3(x * 25, y * 25, z * 25) * 0.008 * S, 0.02 * S);
+    const mass = union(0.12 * S, new Offset(jaw, 0.05 * S), ell(P(0.5, -0.86, 0), [0.32 * S, 0.24 * S, 0.36 * S], M.HAIR));
+    const beard = new Displace(inter(mass, region, 0.06 * S),
+      (x, y, z) => -Math.pow(Math.abs(Math.sin(Math.atan2(z, x) * 9 + y / S * 2)), 4) * 0.025 * S, 0.025 * S);
     parts.push(new Paint(beard, () => M.HAIR));
-    parts.push(lock([0.6, -0.84, 0], [0.74, -1.04, 0], [0.64, -1.18, 0], 0.17, 0.07));
+    parts.push(lock([0.52, -0.92, 0], [0.66, -1.08, 0], [0.58, -1.22, 0], 0.17, 0.06));
     if (fh === 'braid') {
       const pts: Sdf[] = [];
       for (let i = 0; i < 4; i++) {
         const y = -1.22 - i * 0.14;
-        pts.push(ell(P(0.68 - i * 0.01, y, 0), [0.075 * S, 0.09 * S, 0.075 * S], i % 2 ? M.HAIR_DARK : M.HAIR, [0, 0, i % 2 ? 0.4 : -0.4]));
+        pts.push(ell(P(0.58 - i * 0.01, y, 0), [0.075 * S, 0.09 * S, 0.075 * S], i % 2 ? M.HAIR_DARK : M.HAIR, [0, 0, i % 2 ? 0.4 : -0.4]));
       }
       parts.push(union(0.015 * S, ...pts));
-      parts.push(torus(P(0.68, -1.3, 0), 0.075 * S, 0.025 * S, M.METAL));
+      parts.push(torus(P(0.58, -1.3, 0), 0.075 * S, 0.025 * S, M.METAL));
     }
   }
   return union(0.03 * S, ...parts);
@@ -477,7 +505,10 @@ export interface HeadSculpt {
   hair: SculptMesh | null;
   facial: SculptMesh | null;
   tails: { root: Vec3; stiffness: number; mesh: SculptMesh }[];
+  /** Brows and mouth line, drawn as crisp tubes on the skin. */
+  features: FaceFeature[];
 }
+const featureCache = new Map<string, FaceFeature[]>();
 
 export function sculptHead(a: Appearance, o: { noHair?: boolean; noEars?: boolean }, detail: number): HeadSculpt {
   const h = HEAD_DETAIL[Math.max(0, Math.min(HEAD_DETAIL.length - 1, detail))];
@@ -487,8 +518,9 @@ export function sculptHead(a: Appearance, o: { noHair?: boolean; noEars?: boolea
   const fields = () => faceField(a, ears);
   const hairF = () => hairFields.get(style) ?? (hairFields.set(style, hairField(style)), hairFields.get(style)!);
   // The face is meshed per hairstyle so the scalp under the hair can be dropped.
-  const face = cached(`face:${a.jaw}:${a.nose}:${a.mouth}:${a.eyes}:${a.brows}:${ears}:${style}:${detail}`, () => {
-    const f = cached(`face:${a.jaw}:${a.nose}:${a.mouth}:${a.eyes}:${a.brows}:${ears}:full:${detail}`, () => meshSdf(fields().face, { h, ao: 0.03 * S }))!;
+  const fk = `face:${a.jaw}:${a.nose}:${a.mouth === 'grin'}:${a.eyes}:${ears}`;
+  const face = cached(`${fk}:${style}:${detail}`, () => {
+    const f = cached(`${fk}:full:${detail}`, () => meshSdf(fields().face, { h, ao: 0.03 * S }))!;
     const cover = hairF();
     return cover ? cullInside(f, cover, h * 0.4) : f;
   })!;
@@ -505,6 +537,9 @@ export function sculptHead(a: Appearance, o: { noHair?: boolean; noEars?: boolea
     root: t.root, stiffness: t.stiffness,
     mesh: cached(`tail:${style}:${i}:${detail}`, () => meshSdf(t.field, { h, ao: 0.04 * S }))!,
   }));
-  return { face, hair, facial, tails: tl };
+  const ftk = `${fk}:${a.mouth}:${a.brows}`;
+  let features = featureCache.get(ftk);
+  if (!features) { features = faceFeatures(a, fields().face); featureCache.set(ftk, features); }
+  return { face, hair, facial, tails: tl, features };
 }
 const hairFields = new Map<string, Sdf | null>();
