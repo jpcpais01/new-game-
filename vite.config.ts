@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vite';
 import { VitePWA } from 'vite-plugin-pwa';
 
@@ -6,6 +7,11 @@ export default defineConfig({
     target: 'es2022',
     // three.js is the bulk of the bundle; keep it in its own long-cached chunk.
     rolldownOptions: {
+      // gallery.html is a review page for item icons and 3D gear (/gallery.html).
+      input: {
+        main: fileURLToPath(new URL('./index.html', import.meta.url)),
+        gallery: fileURLToPath(new URL('./gallery.html', import.meta.url)),
+      },
       output: {
         codeSplitting: {
           groups: [{ name: 'three', test: /node_modules[\\/](three|postprocessing)/ }],

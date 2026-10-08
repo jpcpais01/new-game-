@@ -6,6 +6,7 @@ import {
 } from '../sim/loadout';
 import type { FormId, GearId, GearSlot } from '../sim/types';
 import { h, hex } from './dom';
+import { emptySlotIcon, gearIcon } from './itemIcons';
 import { ARENA_IDS, ARENA_NAMES, type ArenaId } from '../render/scene/arena';
 import type { Zoom } from '../render/camera';
 
@@ -20,7 +21,6 @@ export const FORM_GLYPH: Record<FormId, string> = {
   robust: '🐻', agile: '🦊', balanced: '⚖️', slender: '🦒', mighty: '💪', ethereal: '🌙',
 };
 
-const SLOT_GLYPH: Record<GearSlot, string> = { main: '⚔', offhand: '🗡', defense: '🛡', head: '⛑', boots: '🥾', special: '✦' };
 
 export interface MenuSettings {
   quality: 'auto' | 'high' | 'medium' | 'low';
@@ -146,7 +146,7 @@ export class Menu {
         return h('button.slot' + (it ? `.filled.r-${it.rarity}` : ''), {
           title: it ? `${SLOT_NAMES[slot]} · ${it.name}: ${it.desc}` : `${SLOT_NAMES[slot]}: choose`,
           onclick: () => { sfx.play('ui'); this.openPicker(side, slot); },
-        }, h('span.slot-name', null, SLOT_NAMES[slot]), h('span.ico', null, it ? it.icon : SLOT_GLYPH[slot]), it ? it.name : 'Empty');
+        }, h('span.slot-name', null, SLOT_NAMES[slot]), h('span.ico', null, id ? gearIcon(id) : emptySlotIcon(slot)), it ? it.name : 'Empty');
       })),
     );
   }
@@ -170,7 +170,7 @@ export class Menu {
             const it = gearOf(id);
             const grants = [...(it.abilities ?? []), ...(it.evade ? [it.evade] : [])].map((a) => a.name);
             return h(`button.item.r-${it.rarity}` + (id === current ? '.sel' : ''), { onclick: () => choose(id) },
-              h('span.ico', null, it.icon), h('span.nm', null, it.name),
+              h('span.ico', null, gearIcon(id)), h('span.nm', null, it.name),
               h('span.ds', null, it.desc, grants.length ? h('em.grants', null, grants.join(' · ')) : null));
           }),
           current && slot !== 'main'
