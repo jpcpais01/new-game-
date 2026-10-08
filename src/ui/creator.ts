@@ -9,16 +9,16 @@ import { GEAR_SLOTS, gearOf, SLOT_NAMES } from '../sim/gear';
 import { SKIN_THEME_IDS, SKIN_THEMES, skinOf, skinsFor, withSkin, type SkinTheme } from '../gear/skins';
 import { skinStrip } from './skinIcons';
 import type { FormId, Stats } from '../sim/types';
-import { FORM_GLYPH } from './menu';
 import { h, hex } from './dom';
+import { formIcon, icon, type IconName } from './icons';
 
 type Tab = 'form' | 'face' | 'hair' | 'colors' | 'skins';
-const TABS: { id: Tab; label: string; glyph: string }[] = [
-  { id: 'form', label: 'Form', glyph: '🧍' },
-  { id: 'face', label: 'Face', glyph: '🙂' },
-  { id: 'hair', label: 'Hair', glyph: '💇' },
-  { id: 'colors', label: 'Colours', glyph: '🎨' },
-  { id: 'skins', label: 'Skins', glyph: '✨' },
+const TABS: { id: Tab; label: string; glyph: IconName }[] = [
+  { id: 'form', label: 'Form', glyph: 'body' },
+  { id: 'face', label: 'Face', glyph: 'face' },
+  { id: 'hair', label: 'Hair', glyph: 'hair' },
+  { id: 'colors', label: 'Colours', glyph: 'palette' },
+  { id: 'skins', label: 'Skins', glyph: 'sparkle' },
 ];
 
 const LABELS: Record<string, string> = {
@@ -94,7 +94,7 @@ export class Creator {
     });
     this.tabsEl = h<HTMLDivElement>('div.cr-tabs', { role: 'tablist' });
     this.body = h<HTMLDivElement>('div.cr-body');
-    this.panel = h('div.cr-panel.glass', null,
+    this.panel = h('div.cr-panel.plate', null,
         h('header.cr-head', null,
           h('div.cr-kicker', null, first ? 'A new challenger' : 'Your fighter'),
           h('h2', null, first ? 'Create your fighter' : 'Edit your fighter'),
@@ -108,16 +108,16 @@ export class Creator {
               this.draft.name = randomName();
               this.nameInput.value = this.draft.name;
               this.nameInput.classList.remove('bad');
-            } }, '🎲'),
+            } }, icon('dice')),
           ),
         ),
         this.tabsEl,
         this.body,
         h('footer.cr-foot', null,
           h('button.btn.surprise', { title: 'Randomise look', 'aria-label': 'Randomise look', onclick: () => this.randomize() },
-            h('span.glyph', null, '🎲'), h('span.lbl', null, 'Surprise me')),
+            icon('dice', 'glyph'), h('span.lbl', null, 'Surprise me')),
           first ? null : h('button.btn', { onclick: () => { sfx.play('ui'); this.cb.onCancel(); } }, 'Cancel'),
-          h('button.btn-fight.cr-go', { onclick: () => this.save() }, first ? 'BEGIN' : 'SAVE'),
+          h('button.btn-fight.cr-go', { onclick: () => this.save() }, h('span.face', null, first ? 'BEGIN' : 'SAVE')),
         ),
       );
     this.el.replaceChildren(this.panel, h('div.cr-hint', null, 'Drag to turn'));
@@ -137,7 +137,7 @@ export class Creator {
           this.renderTabs();
           this.renderBody();
         },
-      }, h('span.glyph', null, t.glyph), t.label)));
+      }, icon(t.glyph, 'glyph'), h('span', null, t.label))));
   }
 
   private renderBody(): void {
@@ -195,7 +195,7 @@ export class Creator {
         this.changed(true);
       },
     },
-      h('div.fc-top', null, h('span.glyph', null, FORM_GLYPH[id]), h('span', null, h('b', null, f.name), h('small', null, f.title))),
+      h('div.fc-top', null, h('span.medal', null, formIcon(id)), h('span', null, h('b', null, f.name), h('small', null, f.title))),
       h('p', null, f.blurb),
       h('div.fc-stats', null,
         h('span', null, 'Health'), pips(r.hp),

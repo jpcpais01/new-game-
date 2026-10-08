@@ -1,3 +1,4 @@
+import '@fontsource-variable/bricolage-grotesque/wdth.css';
 import './ui/styles.css';
 import { Scene } from 'three';
 import { registerSW } from 'virtual:pwa-register';
@@ -293,7 +294,7 @@ function frame(now: number): void {
     phaseT += realDt;
     if (phaseT > 2.6) {
       state = 'results';
-      results.show(battle, battle.time >= 99 ? 'time' : 'ko');
+      results.show(battle, battle.time >= 99 ? 'time' : 'ko', !params.has('demo'));
       sfx.play('win');
     }
   }
