@@ -267,6 +267,24 @@ button {
 .item .nm { font-weight: 800; font-size: 13px; }
 .item .ds { font-size: 11.5px; color: #b8bddc; line-height: 1.35; }
 .item:hover { background: rgba(255,255,255,0.09); }
+
+/* Skin choices (menu picker and the creator's Skins tab) */
+.picker-skins { margin: 0 0 14px; padding: 10px 12px; border-radius: 12px; background: rgba(255,255,255,0.035); border: 1px solid var(--line); }
+.picker-skins h4 { margin: 0 0 8px; font-size: 11px; font-weight: 800; letter-spacing: 0.18em; text-transform: uppercase; color: var(--muted); }
+.skin-strip { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 2px; scrollbar-width: thin; }
+.skin-opt {
+  flex: 0 0 auto; width: 76px; display: flex; flex-direction: column; align-items: center; gap: 4px;
+  padding: 6px 4px 7px; border-radius: 12px; background: rgba(255,255,255,0.04); border: 1px solid var(--line);
+  transition: background 0.15s, border-color 0.15s, transform 0.1s, box-shadow 0.15s;
+}
+.skin-opt .item-icon { width: 54px; height: 54px; }
+.skin-opt span { font-size: 10.5px; font-weight: 700; line-height: 1.15; text-align: center; color: #c9cde6; }
+.skin-opt:hover { background: rgba(255,255,255,0.09); }
+.skin-opt:active { transform: scale(0.95); }
+.skin-opt.on { border-color: var(--sc); background: color-mix(in srgb, var(--sc) 16%, transparent); box-shadow: 0 0 14px -4px var(--sc); }
+.skin-opt.on span { color: #fff; }
+.chip-btn.theme-chip { border-color: color-mix(in srgb, var(--sc) 45%, transparent); }
+.chip-btn.theme-chip.on { background: color-mix(in srgb, var(--sc) 22%, transparent); border-color: var(--sc); color: #fff; }
 .item[disabled] { opacity: 0.35; pointer-events: none; }
 .item.sel { background: color-mix(in srgb, var(--r) 18%, transparent); box-shadow: inset 0 0 0 1px var(--r); }
 .item .grants { display: block; margin-top: 3px; font-style: normal; font-weight: 700; color: var(--gold); font-size: 10.5px; }
@@ -455,10 +473,10 @@ button {
 @keyframes shake { 20%, 60% { transform: translateX(-6px); } 40%, 80% { transform: translateX(6px); } }
 .btn.dice { flex: none; width: 46px; padding: 0; font-size: 18px; }
 
-.cr-tabs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; padding: 4px 18px 0; border-bottom: 1px solid var(--line); }
+.cr-tabs { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 2px; padding: 4px 14px 0; border-bottom: 1px solid var(--line); }
 .cr-tab {
   min-width: 0; min-height: 40px;
-  padding: 9px 4px 10px; font-size: 12.5px; font-weight: 800; letter-spacing: 0.04em; color: var(--muted);
+  padding: 9px 2px 10px; font-size: 12px; font-weight: 800; letter-spacing: 0.04em; color: var(--muted);
   display: flex; align-items: center; justify-content: center; gap: 6px; white-space: nowrap;
   border-bottom: 2px solid transparent; transition: color 0.15s, border-color 0.15s;
 }
@@ -622,7 +640,9 @@ button {
   .btn-fight { padding: 12px 10px; font-size: 22px; min-height: 52px; }
 
   .modal-wrap { place-items: end center; padding: calc(24px + var(--safe-t)) calc(8px + var(--safe-r)) calc(8px + var(--safe-b)) calc(8px + var(--safe-l)); }
-  .picker-grid { grid-template-columns: minmax(0, 1fr); gap: 6px; padding: 8px; }
+  .modal-body { padding: 8px; }
+  .picker-grid { grid-template-columns: minmax(0, 1fr); gap: 6px; }
+  .picker-skins { margin-bottom: 8px; padding: 8px 10px; }
   .item { padding: 8px 10px; grid-template-columns: 40px minmax(0, 1fr); }
   .item .ico { width: 40px; height: 40px; }
 
@@ -669,7 +689,8 @@ button {
   .name-input { font-size: 17px; padding: 8px 12px; }
   .btn.dice { width: 44px; }
   .cr-tabs { padding: 2px 8px 0; gap: 2px; }
-  .cr-tab { font-size: 12px; padding: 8px 2px; gap: 4px; }
+  /* Five tabs: glyph over the label. */
+  .cr-tab { font-size: 11px; padding: 6px 1px 7px; gap: 1px; flex-direction: column; }
   .cr-tab .glyph { font-size: 14px; }
   .cr-body { padding: 12px; gap: 12px; }
   .form-card { padding: 9px; }
@@ -723,6 +744,9 @@ button {
   .modal-head h3 { font-size: 15px; }
   .modal-body { padding: 8px; }
   .picker-grid { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 6px; }
+  .picker-skins { margin-bottom: 8px; padding: 6px 10px; }
+  .skin-opt { width: 64px; }
+  .skin-opt .item-icon { width: 42px; height: 42px; }
   .item { padding: 7px 9px; grid-template-columns: 38px minmax(0, 1fr); }
   .item .ico { width: 38px; height: 38px; }
   .item .ds { font-size: 11px; }

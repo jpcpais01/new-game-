@@ -142,8 +142,9 @@ export function stance(grip: GripStyle, off: OffhandStyle, form: BodyForm): Pose
   let p = stanceCache.get(key);
   if (!p) {
     p = makePose({ ...LEGS, ...GRIP_READY[grip] });
-    if (grip !== 'twoHand' && grip !== 'polearm' && grip !== 'bow' && grip !== 'fist') p = makePose(OFFHAND_READY[off], p);
-    else if (grip === 'fist' && off === 'shield') p = makePose(OFFHAND_READY.shield, p);
+    // The off hand's own carry, unless the main weapon holds it (two-handers, bow, fists).
+    // A shield on the arm always wins: a two-hander is then wielded one-handed.
+    if (off === 'shield' || (grip !== 'twoHand' && grip !== 'polearm' && grip !== 'bow' && grip !== 'fist')) p = makePose(OFFHAND_READY[off], p);
     posture(p, form);
     stanceCache.set(key, p);
   }
@@ -388,16 +389,20 @@ const BY_OFFHAND: Partial<Record<OffhandStyle, Partial<Record<AnimKey, ActionSpe
 
 const cache = new Map<string, ActionPoses>();
 
+/** Moves performed with the left arm (a shield arm joins in rather than staying up). */
+const LEFT_ARM_ANIMS = new Set<AnimKey>(['guard', 'bash', 'throw', 'shoot', 'castBig', 'roar', 'blink', 'leap']);
+
 export function actionPoses(grip: GripStyle, off: OffhandStyle, form: BodyForm, anim: AnimKey): ActionPoses {
   const key = `${grip}|${off}|${form.id}|${anim}`;
   let p = cache.get(key);
   if (!p) {
     const ready = stance(grip, off, form);
     const spec = BY_GRIP[grip]?.[anim] ?? BY_OFFHAND[off]?.[anim] ?? GENERIC[anim] ?? GENERIC.slash;
-    // Shield users keep the shield up while swinging with the weapon arm.
+    // Shield users keep the shield up while the weapon arm works, even for
+    // moves authored two-handed; only moves made with the left arm move it.
     const build = (s: PoseSpec) => {
       const pose = makePose(s, ready);
-      if (off === 'shield' && !('UARM_L' in s)) makePose(OFFHAND_READY.shield, pose);
+      if (off === 'shield' && (!('UARM_L' in s) || !LEFT_ARM_ANIMS.has(anim))) makePose(OFFHAND_READY.shield, pose);
       return pose;
     };
     p = { windup: build(spec.windup), strike: build(spec.strike) };

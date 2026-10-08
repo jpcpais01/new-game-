@@ -1,11 +1,12 @@
 import type { BufferGeometry, Object3D, Vector3 } from 'three';
 import { GEAR } from '../../sim/gear';
-import { gearIds, type Appearance as SimAppearance } from '../../sim/loadout';
+import { gearIds, type Appearance as SimAppearance, type SkinChoice } from '../../sim/loadout';
+import { skinOf, SKIN_THEMES } from '../../gear/skins';
 import type { FormId, GearSet } from '../../sim/types';
 import type { PartSpec } from '../meshBuilder';
 import { headLook, lookPalette } from './appearance';
 import type { BodyForm } from './forms';
-import { GEAR_MODELS } from './gearModels';
+import { gearModel } from './gearModels';
 
 /**
  * Everything the renderer needs to build and animate one fighter. Gameplay
@@ -17,6 +18,41 @@ import { GEAR_MODELS } from './gearModels';
 export type GripStyle = 'oneHand' | 'twoHand' | 'polearm' | 'dual' | 'staff' | 'fist' | 'bow';
 /** What the off hand carries. */
 export type OffhandStyle = 'none' | 'shield' | 'weapon' | 'focus';
+
+/**
+ * Who gets the left hand and arm, resolved once for any gear combination so
+ * models and animation agree:
+ * - `left`: what the left hand holds at rest. A bow, the second grip of a
+ *   two-handed weapon, the second twin dagger or the parrying dagger, in that
+ *   order; `free` lets a secondary (knives, crossbow, chakram) sit in it.
+ * - `shield`: a shield straps to the left forearm, or is slung on the back
+ *   when the left arm holds a bow.
+ * - `twoHanded`: a two-hander or spear is gripped with both hands; with a
+ *   shield on the arm it is wielded one-handed instead (spear and shield).
+ * Items that lose the hand are carried instead: the parrying dagger and the
+ * second twin dagger sheathed on the hip, the crossbow holstered (drawn to
+ * shoot), throwing knives in the bandolier (one drawn to throw).
+ */
+export interface HandPlan {
+  left: 'bow' | 'grip' | 'dagger' | 'parry' | 'free';
+  shield: 'none' | 'arm' | 'back';
+  twoHanded: boolean;
+}
+
+const SHIELDS = new Set<string>(['tower_shield', 'mirror_aegis']);
+
+export function handPlan(gear: GearSet): HandPlan {
+  const grip = gripOf(gear);
+  const hasShield = !!gear.defense && SHIELDS.has(gear.defense);
+  const shield: HandPlan['shield'] = !hasShield ? 'none' : grip === 'bow' ? 'back' : 'arm';
+  const twoHanded = (grip === 'twoHand' || grip === 'polearm') && shield !== 'arm';
+  let left: HandPlan['left'] = 'free';
+  if (grip === 'bow') left = 'bow';
+  else if (twoHanded) left = 'grip';
+  else if (grip === 'dual' && shield !== 'arm') left = 'dagger';
+  else if (gear.defense === 'parrying_blade' && shield !== 'arm') left = 'parry';
+  return { left, shield, twoHanded };
+}
 
 export interface Appearance {
   skin: number;
@@ -39,6 +75,8 @@ export interface FighterLook {
   hair?: string;
   grip: GripStyle;
   offhand: OffhandStyle;
+  /** Who holds what in the left hand (see HandPlan). */
+  hands: HandPlan;
   /** Gear, costume and accessory builders, run in order before baking. */
   decorators: RigDecorator[];
   /** A character's custom head (face, hair) built after the gear; replaces the face/hair presets. */
@@ -166,16 +204,17 @@ export interface LookSource {
   form: FormId;
   gear: GearSet;
   look?: SimAppearance;
+  skins?: SkinChoice;
 }
 
 export function gripOf(gear: GearSet): GripStyle {
   return (GEAR.main[gear.main]?.weapon?.grip ?? 'oneHand') as GripStyle;
 }
 
-export function offhandOf(gear: GearSet, grip: GripStyle): OffhandStyle {
-  if (gear.defense === 'tower_shield') return 'shield';
-  if (grip === 'dual' || gear.defense === 'parrying_blade') return 'weapon';
-  if (gear.offhand === 'frost_orb' && grip !== 'twoHand' && grip !== 'polearm' && grip !== 'bow') return 'focus';
+export function offhandOf(gear: GearSet, hands: HandPlan = handPlan(gear)): OffhandStyle {
+  if (hands.shield === 'arm') return 'shield';
+  if (hands.left === 'dagger' || hands.left === 'parry') return 'weapon';
+  if (gear.offhand === 'frost_orb' && hands.left === 'free') return 'focus';
   return 'none';
 }
 
@@ -189,11 +228,9 @@ export function lookFor(src: LookSource): FighterLook {
     ? { skin: sim.skin, hair: sim.hairColor, eyes: sim.eyeColor, primary: pal.main, secondary: pal.pants, accent: pal.trim, leather: pal.boots }
     : base;
   const grip = gripOf(src.gear);
+  const hands = handPlan(src.gear);
   const decorators: RigDecorator[] = [];
-  for (const id of gearIds(src.gear)) {
-    const d = GEAR_MODELS[id];
-    if (d) decorators.push(d);
-  }
+  for (const id of gearIds(src.gear)) decorators.push(gearModel(id, src.skins?.[id]));
   return {
     form: src.form,
     appearance,
@@ -201,13 +238,16 @@ export function lookFor(src: LookSource): FighterLook {
     hair: FORM_HAIR[src.form],
     head: sim ? headLook(sim) : undefined,
     grip,
-    offhand: offhandOf(src.gear, grip),
+    offhand: offhandOf(src.gear, hands),
+    hands,
     decorators,
-    accent: GEAR.main[src.gear.main]?.color ?? 0xffffff,
+    accent: accentOf(src),
   };
 }
 
-/** Accent colour for a fighter's effects: its main weapon's colour. */
-export function accentOf(f: { gear: GearSet }): number {
+/** Accent colour for a fighter's effects: its main weapon's colour (or its skin's theme). */
+export function accentOf(f: { gear: GearSet; skins?: SkinChoice }): number {
+  const skin = skinOf(f.gear.main, f.skins);
+  if (skin) return SKIN_THEMES[skin.theme].color;
   return GEAR.main[f.gear.main]?.color ?? 0xffffff;
 }
