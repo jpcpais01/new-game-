@@ -19,6 +19,7 @@ import { Menu, ZOOM_LABEL, ZOOM_ORDER, type Loadout, type MenuSettings } from '.
 import { Results } from './ui/results';
 import { setupPhoneFullscreen } from './ui/fullscreen';
 import { Creator } from './ui/creator';
+import { versionBadge } from './ui/patchNotes';
 import { CharacterStage } from './render/characterStage';
 import { detailFor, setBodyDetail } from './render/fighter/body';
 import {
@@ -144,7 +145,7 @@ const creator = new Creator({
 const fpsEl = h('div.fps');
 ui.append(hud.el, menu.el, results.el, creator.el, fpsEl);
 // First in #ui so every panel paints over it instead of the other way round.
-ui.prepend(h('div.version', { 'aria-hidden': 'true' }, __APP_VERSION__));
+ui.prepend(versionBadge(__APP_VERSION__));
 hud.show(false);
 
 function applySettings(s: MenuSettings): void {
