@@ -110,10 +110,10 @@ const GRIP_READY: Record<GripStyle, PoseSpec> = {
     UARM_R: [-22, 0, 24], FARM_R: [0, -20, 122], WEAPON: [0, 0, -10],
     UARM_L: [18, 0, 40], FARM_L: [0, 20, 112], OFFHAND: [0, 0, -10],
   },
-  bow: {
-    HIPS: [0, -20, -2], SPINE: [0, -6, 0], CHEST: [0, -24, -2], HEAD: [0, 26, 4],
-    UARM_R: [-10, 0, 40], FARM_R: [0, -30, 120], WEAPON: [0, 0, -20],
-    UARM_L: [0, 0, 80], FARM_L: [0, 0, 8],
+  bow: { // bow lowered in front, an arrow nocked (the right hand is put on the string by IK)
+    HIPS: [0, -22, -2], SPINE: [0, -6, 0], CHEST: [0, -24, -2], HEAD: [0, 28, 4],
+    UARM_R: [-10, 0, 40], FARM_R: [0, -30, 90], WEAPON: [0, 0, -20],
+    UARM_L: [12, 0, 38], FARM_L: [0, 0, 34], OFFHAND: [-20, 0, 0],
   },
 };
 
@@ -251,7 +251,7 @@ const GENERIC: Record<AnimKey, ActionSpec> = {
   },
   shoot: { // off-hand launcher aimed and fired
     windup: { HIPS: [0, -16, 0], CHEST: [0, -30, 0], HEAD: [0, 26, 2], UARM_L: [0, 0, 84], FARM_L: [0, 0, 6], OFFHAND: [0, 0, -6], hipsX: -0.03 },
-    strike: { HIPS: [0, -14, 0], CHEST: [0, -26, 6], HEAD: [0, 24, 6], UARM_L: [0, 0, 100], FARM_L: [0, 0, 30], OFFHAND: [0, 0, -6], hipsX: -0.08 },
+    strike: { HIPS: [0, -14, 0], CHEST: [0, -26, 6], HEAD: [0, 24, 6], UARM_L: [0, 0, 90], FARM_L: [0, 0, 14], OFFHAND: [0, 0, 6], hipsX: -0.07 },
   },
   slam: {
     windup: { CHEST: [0, -15, 22], SPINE: [0, 0, 10], HIPS: 8, HEAD: 15, CLAV_L: [0, 0, 14], CLAV_R: [0, 0, 14], UARM_R: [-10, 0, 200], FARM_R: [0, 0, 30], UARM_L: [10, 0, 190], FARM_L: [0, 0, 30], WEAPON: [0, 0, 40], hipsY: 0.04 },
@@ -327,9 +327,9 @@ const BY_GRIP: Partial<Record<GripStyle, Partial<Record<AnimKey, ActionSpec>>>> 
     },
   },
   bow: {
-    shoot: { // draw to the cheek, then release
-      windup: { HIPS: [0, -24, 0], CHEST: [0, -30, -2], HEAD: [0, 30, 4], UARM_L: [0, 0, 88], FARM_L: [0, 0, 2], UARM_R: [-20, 0, 92], FARM_R: [0, -30, 152], WEAPON: [0, 0, -20], hipsX: -0.03 },
-      strike: { HIPS: [0, -24, 0], CHEST: [0, -32, 2], HEAD: [0, 30, 6], UARM_L: [0, 0, 92], FARM_L: [0, 0, 6], UARM_R: [-30, 0, 70], FARM_R: [0, -30, 60], WEAPON: [0, 0, -20], hipsX: -0.07 },
+    shoot: { // side-on, bow arm aimed by IK, draw to the jaw, then loose
+      windup: { HIPS: [0, -34, 0], SPINE: [0, -8, 0], CHEST: [0, -40, -2], NECK: [0, 24, 0], HEAD: [0, 46, 4], UARM_R: [-20, 0, 92], FARM_R: [0, -30, 150], WEAPON: [0, 0, -20], hipsX: -0.02 },
+      strike: { HIPS: [0, -34, 0], SPINE: [0, -8, 0], CHEST: [0, -42, 4], NECK: [0, 24, 0], HEAD: [0, 46, 6], UARM_R: [-40, 0, 70], FARM_R: [0, -30, 128], WEAPON: [0, 0, -40], hipsX: -0.06 },
     },
     slash: { // bow bash
       windup: { ...coil, CHEST: [0, -40, 6], UARM_L: [20, 0, 150], FARM_L: [0, 0, 30] },

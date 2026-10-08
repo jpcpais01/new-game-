@@ -22,8 +22,18 @@ const ROSTER: { form: FormId; gear: GearSet }[] = [
   { form: 'ethereal', gear: { main: 'arcane_staff', offhand: 'frost_orb', head: 'chrono_circlet', special: 'phoenix_feather' } },
 ];
 
+/** `?lab=ranged`: bows on three builds plus every ranged secondary. */
+const RANGED: { form: FormId; gear: GearSet }[] = [
+  { form: 'balanced', gear: { main: 'longbow' } },
+  { form: 'mighty', gear: { main: 'longbow', head: 'iron_helm' } },
+  { form: 'agile', gear: { main: 'longbow', boots: 'zephyr_boots' } },
+  { form: 'robust', gear: { main: 'longsword', offhand: 'hand_crossbow' } },
+  { form: 'slender', gear: { main: 'katana', offhand: 'throwing_knives' } },
+  { form: 'ethereal', gear: { main: 'longsword', offhand: 'wind_chakram' } },
+];
+
 /** Script of [seconds, what] the actors loop through. */
-type Beat = 'idle' | 'walkF' | 'walkB' | 'basic' | 'basic2' | 'skill' | 'guard' | 'evade' | 'hit' | 'heavyHit' | 'ko' | 'run';
+type Beat = 'idle' | 'walkF' | 'walkB' | 'basic' | 'basic2' | 'skill' | 'guard' | 'evade' | 'hit' | 'heavyHit' | 'ko' | 'run' | 'ranged' | 'ranged2';
 const SCRIPT: [number, Beat][] = [
   [1.2, 'idle'], [1.0, 'walkF'], [0.9, 'basic'], [0.9, 'basic2'], [1.0, 'walkB'], [1.4, 'skill'], [0.6, 'hit'],
   [1.0, 'guard'], [1.0, 'evade'], [0.8, 'heavyHit'], [0.9, 'run'], [0.9, 'idle'], [2.6, 'ko'],
@@ -31,9 +41,10 @@ const SCRIPT: [number, Beat][] = [
 
 export function installLab(o: { scene: Scene; fx: FxContext; cam: FightCamera; hide: () => void; mode: string; focus?: number }): (dt: number) => void {
   o.hide();
-  const actors: Actor[] = ROSTER.map((r, i) => {
+  const roster = o.mode === 'ranged' ? RANGED : ROSTER;
+  const actors: Actor[] = roster.map((r, i) => {
     const f = createFighter((i % 2) as 0 | 1, { name: r.form, form: r.form, gear: r.gear });
-    const home = (i - (ROSTER.length - 1) / 2) * 2.3;
+    const home = (i - (roster.length - 1) / 2) * 2.3;
     f.x = f.px = home;
     f.facing = 1;
     const v = new FighterView(f, (i % 2) as 0 | 1);
@@ -43,14 +54,22 @@ export function installLab(o: { scene: Scene; fx: FxContext; cam: FightCamera; h
   const script: [number, Beat][] = o.mode === 'idle' ? [[10, 'idle']] : o.mode === 'walk' ? [[1.5, 'walkF'], [1.5, 'walkB'], [1, 'run'], [1, 'idle']]
     : o.mode === 'ko' ? [[1, 'idle'], [3, 'ko']]
       : ['basic', 'skill', 'guard', 'evade', 'hit'].includes(o.mode) ? [[1, 'idle'], [1.2, o.mode as Beat]]
-        : SCRIPT;
+        : o.mode === 'ranged' ? [[0.9, 'idle'], [1.0, 'ranged'], [0.4, 'idle'], [1.4, 'ranged2'], [0.8, 'walkB']]
+          : SCRIPT;
   const total = script.reduce((s, [d]) => s + d, 0);
 
   const startAction = (f: Fighter, slot: string, nth = 0) => {
     let idx = -1, seen = 0;
     f.abilities.forEach((a, i) => { if (a.slot === slot && idx < 0 && seen++ === nth) idx = i; });
     if (idx < 0) f.abilities.forEach((a, i) => { if (a.slot === slot && idx < 0) idx = i; });
-    if (idx < 0) return;
+    if (idx >= 0) startAbility(f, idx, slot);
+  };
+  /** Starts the nth projectile ability (bow shots, throws, bolts). */
+  const startRanged = (f: Fighter, nth: number) => {
+    const ids = f.abilities.map((a, i) => (a.kind === 'projectile' ? i : -1)).filter((i) => i >= 0);
+    if (ids.length) startAbility(f, ids[Math.min(nth, ids.length - 1)], 'skill');
+  };
+  const startAbility = (f: Fighter, idx: number, slot: string) => {
     const a = f.abilities[idx];
     f.action = {
       ability: idx, phase: 'windup', t: 0, total: 0, windup: a.windup, active: a.active, recovery: a.recovery,
@@ -59,7 +78,10 @@ export function installLab(o: { scene: Scene; fx: FxContext; cam: FightCamera; h
     };
   };
 
-  return (dt: number) => {
+  // `&slow=0.25` plays everything at a quarter speed, to study fast moves.
+  const slow = Number(new URLSearchParams(location.search).get('slow')) || 1;
+  return (realDt: number) => {
+    const dt = realDt * slow;
     for (const ac of actors) {
       const f = ac.f;
       ac.clock = (ac.clock + dt) % total;
@@ -78,6 +100,8 @@ export function installLab(o: { scene: Scene; fx: FxContext; cam: FightCamera; h
         if (beat === 'basic2') startAction(f, 'basic');
         if (beat === 'skill') startAction(f, 'skill');
         if (beat === 'guard') startAction(f, 'defense');
+        if (beat === 'ranged') startRanged(f, 0);
+        if (beat === 'ranged2') startRanged(f, 1);
         if (beat === 'evade') startAction(f, 'evade');
         if (beat === 'hit') { ac.v.onHit(false, f.x + 1); f.stagger = 0.25; }
         if (beat === 'heavyHit') { ac.v.onHit(true, f.x + 1); f.stagger = 0.4; }
@@ -118,10 +142,10 @@ export function installLab(o: { scene: Scene; fx: FxContext; cam: FightCamera; h
       // Close-up on one actor.
       o.cam.zoom = 'close';
       const x = actors[o.focus].home;
-      o.cam.update(dt, x - 1.2, x + 1.2, 0, 0);
+      o.cam.update(realDt, x - 1.2, x + 1.2, 0, 0);
     } else {
       o.cam.zoom = 'normal';
-      o.cam.update(dt, actors[0].home - 0.8, actors[actors.length - 1].home + 0.8, 0, 0);
+      o.cam.update(realDt, actors[0].home - 0.8, actors[actors.length - 1].home + 0.8, 0, 0);
     }
   };
 }

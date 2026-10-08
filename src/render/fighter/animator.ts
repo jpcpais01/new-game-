@@ -2,6 +2,7 @@ import { Quaternion, Vector3 } from 'three';
 import { clamp, easeOutCubic, smoothstep } from '../../core/math';
 import { getStatus, type Fighter } from '../../sim/fighter';
 import type { BodyForm } from './forms';
+import { BowRig, type BowWant } from './bow';
 import { Gait } from './gait';
 import { setWorldQuaternion, solveTwoBone } from './ik';
 import {
@@ -59,9 +60,13 @@ export class Animator {
   hasLookAt = false;
   /** Set when a foot lands or the body lands from the air (for dust). */
   landing = 0;
+  /** Bow string, arrow and aiming arms, when the rig carries a bow. */
+  private readonly bow: BowRig | null;
+  private readonly bowWant: BowWant = { aim: 1, draw: 0, hand: 1, low: 1, loose: 0, arrow: true, tremble: 0 };
 
   constructor(private readonly rig: Rig, private readonly form: BodyForm) {
     this.pose.set(stance(rig.look.grip, rig.look.offhand, form));
+    this.bow = BowRig.from(rig);
   }
 
   private get ready(): Pose { return stance(this.rig.look.grip, this.rig.look.offhand, this.form); }
@@ -120,6 +125,9 @@ export class Animator {
     this.roll = 0;
     this.flinch = Math.max(0, this.flinch - dt * 3);
     let gripWant = this.rig.offGrip ? 1 : 0;
+    // Bow at rest: lowered, an arrow nocked, the right hand on the string.
+    const bw = this.bowWant;
+    bw.aim = 1; bw.low = 1; bw.loose = 0; bw.draw = 0.04; bw.hand = 1; bw.arrow = true; bw.tremble = 0;
 
     if (!f.alive) {
       this.koT += dt;
@@ -141,6 +149,7 @@ export class Animator {
         t[J.CHEST * 3 + 2] += Math.sin(this.time * 2) * 0.015;
       }
       gripWant = 0;
+      bw.hand = 0; bw.aim = 0; bw.arrow = false;
       this.gripW += (gripWant - this.gripW) * Math.min(1, dt * 10);
       return;
     }
@@ -152,6 +161,7 @@ export class Animator {
       t[HIPS_Y] += Math.abs(Math.sin(this.time * 4.2)) * 0.05 * (1 - m.heavy * 0.5);
       this.omega = m.omega * 0.7;
       gripWant = 0;
+      bw.hand = 0; bw.aim = 0;
     } else if (f.action) {
       gripWant = this.actionTarget(f, gripWant);
     } else {
@@ -186,6 +196,7 @@ export class Animator {
       t[HIPS_Y] -= 0.1;
       t[HIPS_X] += Math.sin(w * 0.5) * 0.04;
       gripWant = 0;
+      bw.hand = 0; bw.aim = 0;
     }
 
     // Staggered or freshly hit: hold a flinch shape on top of whatever is playing.
@@ -217,6 +228,7 @@ export class Animator {
     const W = useAlt ? ap.alt!.windup : ap.windup;
     const S = useAlt ? ap.alt!.strike : ap.strike;
     if (FREE_OFFHAND.has(ab.anim)) gripWant = 0;
+    if (this.bow) this.bowAction(f);
     const evade = ab.slot === 'evade';
     const fwd = a.dir === f.facing;
 
@@ -277,6 +289,39 @@ export class Animator {
       this.omega = m.omega * 1.1;
     }
     return gripWant;
+  }
+
+  /** Bow timeline: raise and aim, draw to the anchor, loose, then nock the next arrow. */
+  private bowAction(f: Fighter): void {
+    const a = f.action!;
+    const ab = f.abilities[a.ability];
+    const bw = this.bowWant;
+    if (ab.anim !== 'shoot') {
+      // Bashing or dodging: the bow arm follows the move, the drawing hand lets go.
+      bw.hand = 0; bw.aim = 0;
+      return;
+    }
+    const full = ab.heavy ? 1 : 0.9;
+    if (a.feint) {
+      // A feinted shot: ease the draw back down without loosing.
+      bw.low = smoothstep(0.2, 1, a.t / a.recovery);
+      return;
+    }
+    if (a.phase === 'windup') {
+      const k = clamp(a.t / a.windup, 0, 1);
+      bw.low = 1 - smoothstep(0, 0.35, k);
+      bw.draw = full * ease(clamp((k - 0.12) / 0.75, 0, 1));
+      if (ab.heavy && k > 0.6) bw.tremble = Math.sin(this.time * 61) * (k - 0.6) * 0.05;
+    } else if (a.phase === 'active') {
+      bw.low = 0; bw.draw = 0; bw.loose = 1; bw.arrow = false;
+    } else {
+      // Hold the follow-through, then reach back to the string and nock the next arrow.
+      const r = clamp(a.t / a.recovery, 0, 1);
+      bw.low = smoothstep(0.3, 0.95, r);
+      bw.draw = 0;
+      bw.loose = r < 0.3 ? 1 : 0;
+      bw.arrow = r > 0.7;
+    }
   }
 
   private locomotion(f: Fighter, dt: number): void {
@@ -437,6 +482,7 @@ export class Animator {
       solveTwoBone(j[J.UARM_L], j[J.FARM_L], j[J.HAND_L], _a, _pole, this.gripW);
       setWorldQuaternion(j[J.HAND_L], _q, this.gripW);
     }
+    this.bow?.apply(dt, this.bowWant, this.hasLookAt ? this.lookAt : null, ws);
     this.landing = Math.max(0, this.landing - dt * 4);
   }
 }

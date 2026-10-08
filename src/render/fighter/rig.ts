@@ -205,7 +205,9 @@ export function buildRig(look: FighterLook): Rig {
       orbiters.push({ item: id, bone: b });
       return b;
     },
-    setWeapon(base, tip) {
+    setWeapon(base, tip, hand = 'main') {
+      const socket = hand === 'off' ? sockets.offHand : sockets.mainHand;
+      socket.add(weaponBase, weaponTip);
       weaponBase.position.set(...base);
       weaponTip.position.set(...tip);
     },
