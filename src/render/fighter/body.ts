@@ -16,6 +16,16 @@ let detailTier = 2;
 /** Sculpt detail for new fighters: 0 = low, 1 = medium, 2 = high (follows the render quality). */
 export function setBodyDetail(tier: number): void { detailTier = Math.max(0, Math.min(2, Math.round(tier))); }
 export function bodyDetail(): number { return detailTier; }
+/** Sculpt detail for the render quality: close-ups (the creator) get one tier more. */
+export function detailFor(quality: 'high' | 'medium' | 'low', closeUp = false): number {
+  return (quality === 'high' ? 1 : 0) + (closeUp ? 1 : 0);
+}
+/** Runs `fn` with a different sculpt detail (close-up views). */
+export function withBodyDetail<T>(tier: number, fn: () => T): T {
+  const prev = detailTier;
+  setBodyDetail(tier);
+  try { return fn(); } finally { detailTier = prev; }
+}
 
 const TORSO = [J.HIPS, J.SPINE, J.CHEST, J.NECK, J.HEAD] as const;
 const ARM_R = [J.UARM_R, J.FARM_R, J.HAND_R] as const;
@@ -54,4 +64,9 @@ export function buildBody(api: RigBuildApi, j: Bone[]): void {
   put(sculpt.armL, ARM_L);
   put(sculpt.legR, LEG_R);
   put(sculpt.legL, LEG_L);
+  // The sash's loose ends sway from the knot.
+  const hips = j[J.HIPS];
+  const r = sculpt.sash.root;
+  const tail = api.cloth(hips, r[0] - hips.position.x, r[1] - hips.position.y, r[2] - hips.position.z, 1.3);
+  api.part(tail, paintedGeometry(sculpt.sash.mesh, colors), { color: 0xffffff, vertexColors: true } as RigPartSpec);
 }

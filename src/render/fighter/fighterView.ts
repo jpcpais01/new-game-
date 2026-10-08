@@ -1,6 +1,6 @@
 import {
   AdditiveBlending, BackSide, Color, Group, Mesh, MeshBasicMaterial, Object3D, RingGeometry, ShaderMaterial, SphereGeometry,
-  Vector3,
+  Quaternion, Vector3,
 } from 'three';
 import { clamp, damp } from '../../core/math';
 import { getStatus, stacksOf, type Fighter } from '../../sim/fighter';
@@ -19,6 +19,8 @@ export interface FxContext {
 }
 
 const _v = new Vector3();
+const _qr = new Quaternion();
+const _qp = new Quaternion();
 const _v2 = new Vector3();
 
 let bubbleGeo: SphereGeometry | null = null;
@@ -78,6 +80,8 @@ export class FighterView {
   /** Bones that turn on their own (halos, rings, rotors on skinned gear). */
   private readonly spinners: Object3D[] = [];
   private readonly clothVel = new Map<Object3D, number>();
+  private clothV = 0;
+  private clothVy = 0;
   /** World-space positions kept for effects (weapon trail etc.). */
   readonly tipWorld = new Vector3();
   readonly baseWorld = new Vector3();
@@ -263,11 +267,30 @@ export class FighterView {
     if (dt <= 0) return;
     // Swing back against the motion, lift when airborne, settle with a soft spring.
     const v = f.vx * (this.yaw > -Math.PI / 2 ? 1 : -1);
+    // Speeding up or stopping kicks the cloth the other way; so do jumps and landings.
+    const dv = v - this.clothV;
+    const dy = f.vy - this.clothVy;
+    this.clothV = v;
+    this.clothVy = f.vy;
+    this.rig.root.getWorldQuaternion(_qr).invert();
     for (const c of this.rig.cloth) {
       const k = (c.userData.stiffness as number | undefined) ?? 1;
       const target = clamp(-v * 0.09, -0.6, 0.7) + Math.sin(this.time * 2.6 + c.id) * 0.06 + (f.y > 0.3 ? 0.5 : 0) + (f.alive ? 0 : 0.3);
       const w = 9 * k;
       let vel = this.clothVel.get(c) ?? 0;
+      // Inertia: when the parent (head, hips) swings, the cloth keeps its heading for a moment and trails behind.
+      c.parent!.getWorldQuaternion(_qp).premultiply(_qr);
+      _v.set(0, 1, 0).applyQuaternion(_qp);
+      const ang = Math.atan2(-_v.x, _v.y);
+      const prev = c.userData.parentAng as number | undefined;
+      c.userData.parentAng = ang;
+      if (prev !== undefined) {
+        let d = ang - prev;
+        if (d > Math.PI) d -= Math.PI * 2;
+        else if (d < -Math.PI) d += Math.PI * 2;
+        c.rotation.z -= clamp(d, -0.5, 0.5) * 0.85 / k;
+      }
+      vel += clamp(-dv * 1.6 - Math.abs(dy) * 0.4, -6, 6) / k;
       vel += (w * w * (target - c.rotation.z) - 2 * 0.35 * w * vel) * dt;
       c.rotation.z = clamp(c.rotation.z + vel * dt, -1.4, 1.4);
       this.clothVel.set(c, vel);

@@ -1,10 +1,10 @@
-import { Bone, Mesh, MeshBasicMaterial, Object3D, Quaternion, SphereGeometry, Vector3, type BufferGeometry } from 'three';
+import { Bone, Euler, Mesh, MeshBasicMaterial, Object3D, Quaternion, SphereGeometry, TorusGeometry, Vector3, type BufferGeometry } from 'three';
 import type { Appearance } from '../../character/appearance';
 import type { PartSpec } from '../meshBuilder';
 import { bodyDetail } from './body';
 import type { RigDecorator } from './look';
 import type { RigPartSpec } from './rig';
-import { EYE, HEAD_R, sculptHead } from './sculpt/head';
+import { EYE, EYE_LIDS, HEAD_R, sculptHead } from './sculpt/head';
 import { M, paintedGeometry, type PaintColors } from './sculpt/paint';
 import { noise3 } from './sculpt/sdf';
 
@@ -71,11 +71,30 @@ function part(parent: Object3D, g: BufferGeometry, spec: PartSpec | number, pos:
 const painted: RigPartSpec = { color: 0xffffff, vertexColors: true };
 const sphereCache = new Map<string, SphereGeometry>();
 /** Sphere, or a cap of it around +Y (`ang` = angular radius). */
-function sph(r: number, ang = Math.PI, w = 24, h = 14): SphereGeometry {
-  const k = `${r}:${ang}:${w}:${h}`;
+function sph(r: number, ang = Math.PI, w = 24, h = 14, from = 0): SphereGeometry {
+  const k = `${r}:${ang}:${w}:${h}:${from}`;
   let g = sphereCache.get(k);
-  if (!g) { g = new SphereGeometry(r, w, h, 0, Math.PI * 2, 0, ang); sphereCache.set(k, g); }
+  if (!g) { g = new SphereGeometry(r, w, h, 0, Math.PI * 2, from, ang); sphereCache.set(k, g); }
   return g;
+}
+const torusCache = new Map<string, TorusGeometry>();
+/** Half a ring (the front half once rotated by `rimQ`). */
+function rim(r: number, tube: number): TorusGeometry {
+  const k = `${r}:${tube}`;
+  let g = torusCache.get(k);
+  if (!g) { g = new TorusGeometry(r, tube, 6, 28, Math.PI); torusCache.set(k, g); }
+  return g;
+}
+const _e = new Euler();
+const _qa = new Quaternion();
+/** Rotation of a lid of one eye: yawed outwards, tilted at the corner, its edge raised (or lowered) by `edge` radians. */
+function lidQ(out: Quaternion, side: number, tilt: number, edge: number, ring: boolean): Quaternion {
+  out.setFromEuler(_e.set(0, -side * 0.12, 0));
+  out.multiply(_qa.setFromEuler(_e.set(-side * tilt, 0, 0)));
+  out.multiply(_qa.setFromEuler(_e.set(0, 0, edge)));
+  // The ring's half circle runs from the inner corner over the front to the outer corner.
+  if (ring) out.multiply(_qa.setFromEuler(_e.set(0, Math.PI / 2, 0))).multiply(_qa.setFromEuler(_e.set(Math.PI / 2, 0, 0)));
+  return out;
 }
 
 // -----------------------------------------------------------------------------
@@ -91,6 +110,8 @@ export interface HeadLookOpts {
   noEars?: boolean;
   /** Creates a swaying bone (hair tails); defaults to a plain Bone. */
   cloth?: (parent: Object3D, pos: V3, stiffness: number) => Object3D;
+  /** Creates an animatable bone (blinking upper lids) and names it for the animator. */
+  bone?: (parent: Object3D, pos: V3, name: string) => Object3D;
 }
 
 /** Reference skull radius the head is authored at; other sizes scale from it. */
@@ -109,6 +130,7 @@ export function headLook(a: Appearance): RigDecorator {
       noHair: api.isHidden('hair'),
       noEars: api.isHidden('ears'),
       cloth: (parent, pos, stiffness) => api.cloth(parent, ...pos, stiffness),
+      bone: (parent, pos, name) => { const b = api.bone(parent, pos); api.tag(name, b); return b; },
     });
   };
 }
@@ -193,8 +215,13 @@ export function addHeadLook(head: Object3D, r: number, headY: number, a: Appeara
     part(b, paintedGeometry(t.mesh, colors), painted);
   }
 
-  // Eyes: glossy eyeballs with layered irises, looking a touch outwards.
+  // Eyes: glossy eyeballs with layered irises, looking a touch outwards,
+  // under smooth lids with a lash line along the upper edge.
   const er = EYE.r * HEAD_R;
+  const lids = EYE_LIDS[a.eyes];
+  const lidR = er * 1.08;
+  const skinLid = mix(a.skin, 0x6a4048, 0.14);
+  const lash = mix(a.hairColor, 0x0a0810, 0.75);
   for (const s of [-1, 1]) {
     const c: V3 = [EYE.x * HEAD_R, EYE.y * HEAD_R, s * EYE.z * HEAD_R];
     _dir.set(1, -0.04, s * 0.14).normalize();
@@ -202,15 +229,32 @@ export function addHeadLook(head: Object3D, r: number, headY: number, a: Appeara
     const cap = (rad: number, ang: number, spec: PartSpec) => { part(grp, sph(rad, ang), spec, c).quaternion.copy(_q); };
     if (a.eyes === 'glow') {
       part(grp, sph(er), { color: a.eyeColor, glow: 2.4 }, c);
-      continue;
+    } else {
+      part(grp, sph(er), { color: 0xf6f2ec, gloss: 0.9, outline: false }, c);
+      cap(er * 1.004, 0.62, { color: shade(a.eyeColor, -0.55), outline: false, gloss: 1 });
+      cap(er * 1.007, 0.55, { color: a.eyeColor, outline: false, gloss: 1 });
+      cap(er * 1.009, 0.42, { color: shade(a.eyeColor, 0.25), outline: false, gloss: 1 });
+      cap(er * 1.012, 0.25, { color: 0x07060b, outline: false, gloss: 1 });
+      // Catch light.
+      _dir.set(1, 0.35, s * 0.05).normalize();
+      part(grp, sph(er * 0.14, Math.PI, 8, 6), { color: 0xffffff, glow: 1.3 }, [c[0] + _dir.x * er * 1.0, c[1] + _dir.y * er * 1.0, c[2] + s * 0.02 * er]);
     }
-    part(grp, sph(er), { color: 0xf6f2ec, gloss: 0.9, outline: false }, c);
-    cap(er * 1.004, 0.6, { color: shade(a.eyeColor, -0.55), outline: false, gloss: 1 });
-    cap(er * 1.007, 0.53, { color: a.eyeColor, outline: false, gloss: 1 });
-    cap(er * 1.01, 0.27, { color: 0x07060b, outline: false, gloss: 1 });
-    // Catch light.
-    _dir.set(1, 0.35, s * 0.05).normalize();
-    part(grp, sph(er * 0.16, Math.PI, 8, 6), { color: 0xffffff, glow: 1.3 }, [c[0] + _dir.x * er * 0.98, c[1] + _dir.y * er * 0.98, c[2] + s * 0.02 * er]);
+    // Upper lid (a hemisphere tilted back so its edge arcs over the iris) on
+    // a bone that turns about the eye to blink, and the lower lid.
+    let upper: Object3D = grp;
+    let at: V3 = c;
+    if (opts.bone) {
+      upper = opts.bone(grp, c, s > 0 ? 'lidR' : 'lidL');
+      upper.quaternion.copy(lidQ(new Quaternion(), s, lids.tilt, 0, false));
+      upper.userData.base = upper.quaternion.clone();
+      upper.userData.shut = lids.up + lids.lo - 0.04;
+      at = [0, 0, 0];
+    }
+    const local = (q: Quaternion) => (upper === grp ? q : q.premultiply(_qa.copy(upper.quaternion).invert()));
+    part(upper, sph(lidR, Math.PI / 2, 32, 10), { color: skinLid, gloss: 0.15, outline: false }, at).quaternion.copy(local(lidQ(new Quaternion(), s, lids.tilt, lids.up, false)));
+    part(upper, rim(lidR, er * 0.13), { color: lash, gloss: 0.3, outline: false }, at).quaternion.copy(local(lidQ(new Quaternion(), s, lids.tilt, lids.up, true)));
+    part(grp, sph(lidR * 0.995, Math.PI / 2, 32, 10, Math.PI / 2), { color: a.skin, gloss: 0.12, outline: false }, c).quaternion.copy(lidQ(new Quaternion(), s, lids.tilt, -lids.lo, false));
+    part(grp, rim(lidR * 0.995, er * 0.06), { color: mix(a.skin, 0x5a2a2a, 0.3), outline: false }, c).quaternion.copy(lidQ(new Quaternion(), s, lids.tilt, -lids.lo, true));
   }
   return cloth;
 }

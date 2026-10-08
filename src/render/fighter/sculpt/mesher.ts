@@ -226,3 +226,35 @@ export function mirrorZ(m: SculptMesh): SculptMesh {
   for (let i = 0; i < idx.length; i += 3) { const t = idx[i + 1]; idx[i + 1] = idx[i + 2]; idx[i + 2] = t; }
   return { pos, nor, mat: m.mat, ao: m.ao, curv: m.curv, idx, count: m.count };
 }
+
+/**
+ * Drops the triangles buried inside another field (more than `margin` deep
+ * at all three corners), e.g. the scalp under a hairstyle, and compacts the
+ * vertices that are left.
+ */
+export function cullInside(m: SculptMesh, cover: Sdf, margin: number): SculptMesh {
+  const n = m.count;
+  const hidden = new Uint8Array(n);
+  for (let i = 0; i < n; i++) hidden[i] = cover.d(m.pos[i * 3], m.pos[i * 3 + 1], m.pos[i * 3 + 2]) < -margin ? 1 : 0;
+  const keep = new Int32Array(n).fill(-1);
+  const idx: number[] = [];
+  let count = 0;
+  for (let t = 0; t < m.idx.length; t += 3) {
+    const a = m.idx[t], b = m.idx[t + 1], c = m.idx[t + 2];
+    if (hidden[a] && hidden[b] && hidden[c]) continue;
+    for (const v of [a, b, c]) {
+      if (keep[v] < 0) keep[v] = count++;
+      idx.push(keep[v]);
+    }
+  }
+  const pos = new Float32Array(count * 3), nor = new Float32Array(count * 3);
+  const mat = new Uint8Array(count), ao = new Float32Array(count), curv = new Float32Array(count);
+  for (let i = 0; i < n; i++) {
+    const j = keep[i];
+    if (j < 0) continue;
+    pos[j * 3] = m.pos[i * 3]; pos[j * 3 + 1] = m.pos[i * 3 + 1]; pos[j * 3 + 2] = m.pos[i * 3 + 2];
+    nor[j * 3] = m.nor[i * 3]; nor[j * 3 + 1] = m.nor[i * 3 + 1]; nor[j * 3 + 2] = m.nor[i * 3 + 2];
+    mat[j] = m.mat[i]; ao[j] = m.ao[i]; curv[j] = m.curv[i];
+  }
+  return { pos, nor, mat, ao, curv, idx: Uint32Array.from(idx), count };
+}

@@ -5,6 +5,7 @@ import type { FormId, GearSet } from './sim/types';
 import { SKINS } from './gear/skins';
 import type { FightCamera } from './render/camera';
 import { FighterView, type FxContext } from './render/fighter/fighterView';
+import { bodyDetail, withBodyDetail } from './render/fighter/body';
 
 /**
  * Animation lab (`?lab`): every body form side by side, each with a different
@@ -88,7 +89,8 @@ export function installLab(o: { scene: Scene; fx: FxContext; cam: FightCamera; h
     const home = (i - (roster.length - 1) / 2) * 2.3;
     f.x = f.px = home;
     f.facing = 1;
-    const v = new FighterView(f, (i % 2) as 0 | 1);
+    // Portrait shots review the close-up detail tier.
+    const v = withBodyDetail(q.has('shot') ? 2 : bodyDetail(), () => new FighterView(f, (i % 2) as 0 | 1));
     o.scene.add(v.group);
     return { f, v, home, clock: o.mode === 'combos' ? 0 : i * 0.37 };
   });

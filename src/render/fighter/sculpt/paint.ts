@@ -110,7 +110,7 @@ export function baseColor(m: number, c: PaintColors): number {
     case M.SCAR: return mixHex(c.skin, 0x8a3a3a, 0.35);
     case M.PAINT: return c.mark;
     case M.GLOW: return c.eyes;
-    case M.SHAVE: return mixHex(c.hair, c.skin, 0.55);
+    case M.SHAVE: return mixHex(c.hair, c.skin, 0.78);
     case M.STUBBLE: return mixHex(c.skin, c.hair, 0.38);
     case M.BLUSH: return mixHex(c.skin, 0xe0605a, 0.07);
     case M.FRECKLE: return mixHex(c.skin, 0x8a4a2a, 0.35);

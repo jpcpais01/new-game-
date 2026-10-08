@@ -2,7 +2,7 @@ import type { FormShape } from '../forms';
 import { meshSdf, mirrorZ, type SculptMesh } from './mesher';
 import { M } from './paint';
 import {
-  ball, caps, cone, Displace, ell, Fn, inter, loft, MirrorZ, noise3, Offset, Paint, plane, rbox, shell, strand, sub, torus, union,
+  ball, caps, cone, Displace, ell, Fn, inter, loft, MirrorZ, noise3, Offset, Paint, plane, rbox, shell, Squash, strand, sub, torus, union,
   type Sdf, type Vec3,
 } from './sdf';
 
@@ -115,22 +115,22 @@ function torsoField(s: FormShape, j: BindJoints): Sdf {
   });
 
   // --- Raised details hugging the body ------------------------------------
-  const lapelW = 0.017;
+  const lapelW = 0.021;
   const lapelLine = (x: number, y: number, z: number) => {
     if (x < -0.02 || y < yApex - 0.02 || y > yN + 0.02) return 1;
     // Distance to the two V edges in the y-z plane.
     const edge = Math.abs(Math.abs(z) - (y - yApex) * slope) / Math.sqrt(1 + slope * slope);
     return edge - lapelW;
   };
-  const lapel = inter(shell(core, 0.004, 0.005, M.TRIM), new Fn(lapelLine, [-0.1, yApex - 0.05, -0.3, 0.4, yN + 0.05, 0.3], M.TRIM));
+  const lapel = inter(shell(core, 0.004, 0.0055, M.TRIM), new Fn(lapelLine, [-0.1, yApex - 0.05, -0.3, 0.4, yN + 0.05, 0.3], M.TRIM), 0.005);
   // The overlap of the wrap: from the V apex diagonally down to the sash.
   const wrapX = (y: number) => (y - yBelt) / Math.max(0.05, yApex - yBelt);
   const wrapEdge = (x: number, y: number, z: number) => {
     if (x < 0 || y > yApex + 0.01 || y < yBelt - 0.01) return 1;
     const zz = -0.11 * (1 - wrapX(y)) * (s.chestW / 0.25);
-    return Math.abs(z - zz) - 0.009;
+    return Math.abs(z - zz) - 0.012;
   };
-  const wrap = inter(shell(core, 0.003, 0.004, M.TRIM), new Fn(wrapEdge, [-0.05, yBelt - 0.05, -0.3, 0.4, yApex + 0.05, 0.3], M.TRIM));
+  const wrap = inter(shell(core, 0.003, 0.0045, M.TRIM), new Fn(wrapEdge, [-0.05, yBelt - 0.05, -0.3, 0.4, yApex + 0.05, 0.3], M.TRIM), 0.005);
   // Collar: a folded band around the base of the neck, open at the front.
   const collar = inter(
     torus([-0.012, yN - 0.012, 0], s.neckR * 1.32, 0.017, M.SHIRT, [0, 0, 0.18]),
@@ -139,11 +139,8 @@ function torsoField(s: FormShape, j: BindJoints): Sdf {
   // Sash: a broad band over the waist, knotted at the front.
   const sashBand = inter(shell(core, 0.008, 0.012, M.SASH), new Fn((_x, y) => Math.abs(y - yBelt) - 0.036, [-1, yBelt - 0.05, -1, 1, yBelt + 0.05, 1], M.SASH));
   const knotZ = -s.waistW * 0.42;
-  const knot = union(0.012,
-    ell([waistD * 0.86, yBelt + 0.004, knotZ], [0.03, 0.034, 0.036], M.SASH),
-    cone([waistD * 0.86, yBelt - 0.01, knotZ - 0.015], [waistD * 0.95, yBelt - 0.16, knotZ - 0.04], 0.024, 0.018, M.SASH),
-    cone([waistD * 0.86, yBelt - 0.01, knotZ + 0.01], [waistD * 0.98, yBelt - 0.12, knotZ + 0.02], 0.022, 0.016, M.SASH),
-  );
+  // The knot (its hanging ends sway on their own bone: see sashTails).
+  const knot = ell([waistD * 0.86, yBelt + 0.004, knotZ], [0.03, 0.034, 0.036], M.SASH);
   // Tunic hem: a flared lip with soft folds over the hips.
   const hemFolds = (x: number, y: number, z: number) => {
     const t = 1 - Math.min(1, Math.abs(y - (yHem + 0.035)) / 0.06);
@@ -289,6 +286,20 @@ function legField(s: FormShape, j: BindJoints, ankleH: number): Sdf {
   return union(0.01, new Paint(pants, (_x, y) => (y < yBoot + 0.005 ? M.BOOT : M.PANTS)), boot);
 }
 
+/** Where the sash is knotted (body space): the root of its swaying ends. */
+function sashKnot(s: FormShape, j: BindJoints): Vec3 {
+  const waistD = s.waistW * 0.8 + s.belly * 0.05;
+  return [waistD * 0.86 + 0.01, j.hips[1] + 0.07 - 0.008, -s.waistW * 0.42];
+}
+
+/** The two loose ends of the sash, hanging from the knot (knot-local space), flattened like cloth. */
+function sashTails(): Sdf {
+  return new Squash(union(0.01,
+    cone([0, 0, -0.012], [0.012, -0.2, -0.035], 0.022, 0.028, M.SASH),
+    cone([0, 0, 0.01], [0.018, -0.15, 0.022], 0.02, 0.025, M.SASH),
+  ), [0, 0, 0], [0.45, 1, 1]);
+}
+
 // -----------------------------------------------------------------------------
 // Meshing and cache
 // -----------------------------------------------------------------------------
@@ -299,6 +310,8 @@ export interface BodySculpt {
   armL: SculptMesh;
   legR: SculptMesh;
   legL: SculptMesh;
+  /** The sash's loose ends and where they hang from (body space). */
+  sash: { mesh: SculptMesh; root: Vec3 };
 }
 
 /** Grid spacing per detail tier (body-space metres). */
@@ -316,9 +329,9 @@ export function sculptBody(key: string, s: FormShape, hipH: number, ankleH: numb
   const torso = meshSdf(torsoField(s, j), { h, ao });
   const armR = meshSdf(armField(s, j), { h: h * 0.85, ao: ao * 0.8 });
   const legR = meshSdf(legField(s, j, ankleH), { h, ao });
-  b = { torso, armR, armL: mirrorZ(armR), legR, legL: mirrorZ(legR) };
+  const sash = { mesh: meshSdf(sashTails(), { h: h * 0.7, ao: ao * 0.7 }), root: sashKnot(s, j) };
+  b = { torso, armR, armL: mirrorZ(armR), legR, legL: mirrorZ(legR), sash };
   cache.set(ck, b);
   return b;
 }
-/** @internal profiling hook */
-export const __fields = (s: FormShape, j: BindJoints, ankleH: number) => ({ torso: torsoField(s, j), arm: armField(s, j), leg: legField(s, j, ankleH) });
+
