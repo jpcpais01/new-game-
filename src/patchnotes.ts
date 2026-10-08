@@ -12,6 +12,12 @@ export interface PatchNote {
 
 export const PATCH_NOTES: PatchNote[] = [
   {
+    version: '0.8.3',
+    date: '2026-10-08',
+    title: 'Cleaner battles',
+    notes: ['The version number no longer shows during battles, only in the menus.'],
+  },
+  {
     version: '0.8.2',
     date: '2026-10-08',
     title: 'Edge to edge on phones',
