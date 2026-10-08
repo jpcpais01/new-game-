@@ -74,7 +74,6 @@ export class FighterView {
   private readonly ice: Mesh;
   private readonly stars: Group;
   private readonly mark: Mesh;
-  private readonly orbiters: { item: string; mesh: Object3D; phase: number; radius: number }[] = [];
   private readonly scale: number;
   private shieldShown = 0;
   private phoenix: Object3D | null = null;
@@ -91,8 +90,6 @@ export class FighterView {
   private readonly teamRing: Mesh;
   /** Signature aura of the special item (null without one). */
   readonly aura: SpecialAura | null;
-  private readonly auraOrb: Object3D | null = null;
-  private readonly orbWorld = new Vector3();
 
   constructor(f: Fighter, team: 0 | 1, look: FighterLook = lookFor(f)) {
     const items = f.gearIds;
@@ -122,12 +119,8 @@ export class FighterView {
     }
     this.phoenix = this.rig.phoenix;
     for (const [name, o] of this.rig.tags) if (name.startsWith('spin:')) this.spinners.push(o);
-    this.rig.orbiters.forEach((o, i) => this.orbiters.push({ item: o.item, mesh: o.bone, phase: i * 2.1, radius: 0.78 + i * 0.08 }));
     this.aura = SpecialAura.for(f.gear, f.skins);
-    if (this.aura) {
-      this.aura.attach(this.group);
-      this.auraOrb = this.rig.orbiters.find((o) => o.item === f.gear.special)?.bone ?? null;
-    }
+    this.aura?.attach(this.group);
 
     // Shield bubble (Aegis or any shield).
     bubbleGeo ??= new SphereGeometry(1, 24, 16);
@@ -227,10 +220,7 @@ export class FighterView {
     this.updateStatusVisuals(f, dt, frozen);
     this.updateCloth(f, dt);
     this.emitParticles(f, dt, fx);
-    if (this.aura) {
-      const orb = this.auraOrb ? this.auraOrb.getWorldPosition(this.orbWorld) : null;
-      this.aura.update(f, dt, fx.add, fx.smoke, x, y, this.headWorld, orb, this.scale);
-    }
+    this.aura?.update(f, dt, fx.add, fx.smoke, x, y, this.headWorld, this.scale);
   }
 
   private updateStatusVisuals(f: Fighter, dt: number, frozen: boolean): void {
@@ -261,17 +251,6 @@ export class FighterView {
       this.mark.rotation.z += dt * 2;
     }
 
-    // Orbiting item relics.
-    for (const o of this.orbiters) {
-      o.phase += dt * 1.6;
-      const r = o.radius;
-      o.mesh.position.set(Math.cos(o.phase) * r, 1.5 + Math.sin(o.phase * 1.7) * 0.15, Math.sin(o.phase) * r);
-      o.mesh.rotation.y += dt * 3;
-      let on = 1;
-      if (o.item === 'mirror_aegis') on = f.mirrorCd <= 0 ? 1 : 0.35;
-      if (o.item === 'storm_crown') on = 0.5 + f.stormCounter * 0.25;
-      o.mesh.scale.setScalar(Math.max(0.01, (f.alive ? 1 : 0) * on * (1 + Math.sin(this.time * 6) * 0.05 * on)));
-    }
     // Collapse the spent feather into the head (never scale to exactly zero: NaN normals).
     if (this.phoenix) this.phoenix.scale.setScalar(f.phoenixUsed ? 0.01 : 1);
     for (const o of this.spinners) o.rotation.y += (o.userData.spin as number) * dt;

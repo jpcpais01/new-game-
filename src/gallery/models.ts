@@ -4,6 +4,7 @@ import { bodyForm } from '../render/fighter/forms';
 import { lookFor } from '../render/fighter/look';
 import { HIPS_Y, J, JOINT_COUNT, stance } from '../render/fighter/poses';
 import { buildRig, type Rig } from '../render/fighter/rig';
+import { showRelics } from '../render/gear/models';
 import { GameRenderer } from '../render/renderer';
 import { STYLE } from '../render/materials';
 import { GEAR, GEAR_SLOTS, gearOf, type GearDef } from '../sim/gear';
@@ -30,6 +31,7 @@ interface Cell { gear: GearSet; skins?: SkinChoice }
 
 /** Shared turntable stage: lights, grade and a camera that frames rows of fighters. */
 function turntable(canvas: HTMLCanvasElement, rows: Cell[][], form: FormId, focus?: { y: number; height: number }): void {
+  showRelics(true);
   const renderer = new GameRenderer(canvas, 'high');
   const scene = new Scene();
   scene.background = new Color(0x3c4560);
