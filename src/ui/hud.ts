@@ -8,6 +8,10 @@ import { h } from './dom';
 import { fmtHp } from './format';
 import { wornIcon } from './skinIcons';
 import { icon, statusIcon } from './icons';
+import { pips } from './online';
+
+/** Online: the round and score shown under the clock. */
+export interface HudMatch { round: number; score: [number, number] }
 
 const SPEEDS = [1, 2, 4];
 
@@ -55,6 +59,8 @@ export class Hud {
   private lastClock = -1;
   private speed = 1;
   private battle: Battle | null = null;
+  private match: HudMatch | null = null;
+  private matchChip!: HTMLElement;
 
   constructor(private readonly cb: HudCallbacks) {
     this.el = h<HTMLDivElement>('div.hud');
@@ -89,7 +95,8 @@ export class Hud {
       if (side === 0) top.append(bar);
       else {
         this.clock = h('div.clock', null, h('span', null, String(ROUND_TIME)));
-        top.append(this.clock, bar);
+        this.matchChip = h('div.match-chip');
+        top.append(h('div.mid', null, this.clock, this.matchChip), bar);
       }
     }
 
@@ -111,6 +118,16 @@ export class Hud {
     this.ultCalls = [0, 1].map((s) => h(`div.ult-call.side-${s}`));
     this.el.replaceChildren(top, bottom, this.banner, ...this.ultCalls);
     this.lastClock = -1;
+    this.setMatch(this.match);
+  }
+
+  /** Online matches show the score under the clock and can't be paused. */
+  setMatch(m: HudMatch | null): void {
+    this.match = m;
+    if (!this.matchChip) return;
+    this.matchChip.hidden = !m;
+    this.pauseBtn.hidden = !!m;
+    if (m) this.matchChip.replaceChildren(pips(0, m.score[0]), h('small', null, `R${m.round}`), pips(1, m.score[1]));
   }
 
   setZoom(label: string): void {

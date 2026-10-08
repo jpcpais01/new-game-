@@ -1,5 +1,5 @@
 import { Rng } from '../core/rng';
-import { clamp } from '../core/math';
+import { clamp, dsin } from '../core/math';
 import { Brain, type FighterBrain } from './ai/brain';
 import {
   ARENA_HALF_WIDTH, BASE_ENERGY_REGEN, BODY_GAP, DT, ENERGY_ON_DEAL, ENERGY_ON_TAKE, MAX_ENERGY,
@@ -342,7 +342,7 @@ export class Battle {
       const leapAttack = ab.airborne && ab.kind !== 'dash';
       if (leapAttack) {
         const p = a.t / a.windup;
-        f.y = Math.sin(Math.min(1, p) * Math.PI) * 2.2;
+        f.y = dsin(Math.min(1, p) * Math.PI) * 2.2;
       }
       if (a.t >= a.windup) {
         a.phase = 'active';
@@ -373,7 +373,7 @@ export class Battle {
         const before = Math.sign(e.x - f.x);
         f.x += a.dir * speed * DT;
         // Leaping evades arc over the ground.
-        if (ab.airborne) f.y = Math.sin(Math.min(1, a.t / a.active) * Math.PI) * 1.3;
+        if (ab.airborne) f.y = dsin(Math.min(1, a.t / a.active) * Math.PI) * 1.3;
         if (a.through && ab.dash!.strike && !a.connected) {
           const after = Math.sign(e.x - f.x);
           if (before !== after && before !== 0 && Math.abs(e.y - f.y) < 1.5) {

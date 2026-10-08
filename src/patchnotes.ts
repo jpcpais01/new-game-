@@ -12,6 +12,22 @@ export interface PatchNote {
 
 export const PATCH_NOTES: PatchNote[] = [
   {
+    version: '0.10.0',
+    date: '2026-10-08',
+    title: 'Online duels',
+    notes: [
+      'Play online against a friend: tap Online in the menu, create a room and send them the code or the invite link. They join by typing the code or just opening the link.',
+      'Matches are best of five: the first to three victories wins.',
+      'Before every round you both pick a new build, form, gear and skins included, then lock it in with Ready. Picks stay hidden until the fight starts.',
+      'A pick timer keeps rounds moving: whatever you have picked when it runs out is locked in.',
+      'Both devices play the exact same fight and check that they agree on the result.',
+      'Dropped connections recover on their own. The pick clock pauses while your rival reconnects, and reloading the page puts you back into the match.',
+      "Online fights can't be paused, but each of you can still change the speed.",
+      'When the match ends, ask for a rematch or head back to the menu.',
+      "Fixed the rival's form sheet opening empty on phones in landscape.",
+    ],
+  },
+  {
     version: '0.9.0',
     date: '2026-10-08',
     title: 'Orbit camera',

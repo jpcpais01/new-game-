@@ -14,6 +14,7 @@ import { canInstall, onInstallChange, promptInstall } from './install';
 import { withSkin } from '../gear/skins';
 import { ARENA_IDS, ARENA_NAMES, type ArenaId } from '../render/scene/arena';
 import { NO_INSETS, type Insets, type Zoom } from '../render/camera';
+import { pips } from './online';
 
 export const ZOOM_LABEL: Record<Zoom, string> = { close: 'Close', normal: 'Normal', distant: 'Distant' };
 export const ZOOM_ORDER: Zoom[] = ['close', 'normal', 'distant'];
@@ -33,6 +34,16 @@ export interface MenuSettings {
   zoom: Zoom;
 }
 
+/** The pick screen of an online match: whose corner is whose, the score and the clock. */
+export interface OnlinePick {
+  you: 0 | 1;
+  round: number;
+  score: [number, number];
+  ready: [boolean, boolean];
+  /** performance.now() time the pick timer runs out (Infinity while it's frozen). */
+  deadline: number;
+}
+
 export interface MenuCallbacks {
   onChange(loadouts: [Loadout, Loadout]): void;
   /** Open the character editor (name, form and look of the player's fighter). */
@@ -41,6 +52,10 @@ export interface MenuCallbacks {
   onNewRival(): void;
   onFight(): void;
   onSettings(s: MenuSettings): void;
+  onOnline(): void;
+  /** Online pick: lock the build in, or unlock it to keep editing. */
+  onReady(): void;
+  onLeave(): void;
 }
 
 export function randomLoadout(): Loadout {
@@ -55,6 +70,10 @@ export class Menu {
   private activeSide: 0 | 1 = 0;
   private vsTabs: HTMLElement | null = null;
   private insetCache: Insets | null = null;
+  /** Set while picking a build for an online round. */
+  online: OnlinePick | null = null;
+  private clockEl: HTMLElement | null = null;
+  private clockShown = '';
 
   constructor(
     public loadouts: [Loadout, Loadout],
@@ -70,26 +89,79 @@ export class Menu {
     this.render();
   }
 
+  /** Which corner the phone-portrait layout opens on. */
+  activeCorner(side: 0 | 1): void {
+    this.activeSide = side;
+  }
+
+  /** The player's own corner: blue offline, whichever side they hold online. */
+  private get mine(): 0 | 1 {
+    return this.online?.you ?? 0;
+  }
+
   render(): void {
     this.insetCache = null;
+    const on = this.online;
     const tab = (side: 0 | 1) => h(`button.vs-tab.side-${side}` + (this.activeSide === side ? '.on' : ''), {
       role: 'tab', 'aria-selected': String(this.activeSide === side),
       onclick: () => { if (this.activeSide === side) return; sfx.play('ui'); this.activeSide = side; this.render(); },
-    }, h('small', null, side === 0 ? 'You' : 'Rival'), h('span', null, this.loadouts[side].name));
+    }, h('small', null, side === this.mine ? 'You' : on?.ready[side] ? 'Rival · Ready' : 'Rival'), h('span', null, this.loadouts[side].name));
+    const settingsBtn = h('button.btn.icon-btn', { title: 'Settings', 'aria-label': 'Settings', onclick: () => { sfx.play('ui'); this.openSettings(); } },
+      icon('settings', 'glyph'), h('span.lbl', null, 'Settings'));
     this.el.replaceChildren(
-      h('div.title', null, h('h1.wordmark', { 'aria-label': 'Clashborn' }, 'CLASH', h('em', null, 'BORN')), h('p', null, 'Auto Duel Arena')),
+      on ? this.matchBar(on) : h('div.title', null, h('h1.wordmark', { 'aria-label': 'Clashborn' }, 'CLASH', h('em', null, 'BORN')), h('p', null, 'Auto Duel Arena')),
       this.vsTabs = h('div.vs-tabs', { role: 'tablist' }, tab(0), h('b', null, 'VS'), tab(1)),
       this.corner(0),
       this.corner(1),
-      h('div.menu-bottom', null,
-        this.arenaRow(),
-        h('button.btn.icon-btn', { title: 'Settings', 'aria-label': 'Settings', onclick: () => { sfx.play('ui'); this.openSettings(); } },
-          icon('settings', 'glyph'), h('span.lbl', null, 'Settings')),
-        h('button.btn-fight', { onclick: () => this.cb.onFight() }, h('span.face', null, icon('swords'), 'FIGHT')),
-        h('button.btn.icon-btn', { title: 'New rival', 'aria-label': 'New rival', onclick: () => { sfx.play('ui'); this.cb.onNewRival(); } },
-          icon('dice', 'glyph'), h('span.lbl', null, 'New rival')),
-      ),
+      on
+        ? h('div.menu-bottom.online', null,
+          this.arenaRow(),
+          settingsBtn,
+          h('button.btn-fight.ready-btn' + (on.ready[on.you] ? '.locked' : ''), {
+            title: on.ready[on.you] ? 'Locked in: tap to change your build' : 'Lock in this build',
+            onclick: () => { sfx.play('ui'); this.cb.onReady(); },
+          }, h('span.face', null, icon('check'), on.ready[on.you] ? 'LOCKED' : 'READY')),
+          h('button.btn.icon-btn', { title: 'Leave match', 'aria-label': 'Leave match', onclick: () => { sfx.play('ui'); this.cb.onLeave(); } },
+            icon('exit', 'glyph'), h('span.lbl', null, 'Leave')))
+        : h('div.menu-bottom', null,
+          this.arenaRow(),
+          settingsBtn,
+          h('button.btn.icon-btn', { title: 'Play online', 'aria-label': 'Play online', onclick: () => { sfx.play('ui'); this.cb.onOnline(); } },
+            icon('globe', 'glyph'), h('span.lbl', null, 'Online')),
+          h('button.btn-fight', { onclick: () => this.cb.onFight() }, h('span.face', null, icon('swords'), 'FIGHT')),
+          h('button.btn.icon-btn', { title: 'New rival', 'aria-label': 'New rival', onclick: () => { sfx.play('ui'); this.cb.onNewRival(); } },
+            icon('dice', 'glyph'), h('span.lbl', null, 'New rival')),
+        ),
     );
+    this.tick();
+  }
+
+  /** Online: score, round and pick clock where the wordmark usually sits. */
+  private matchBar(on: OnlinePick): HTMLElement {
+    const rival = on.you === 0 ? 1 : 0;
+    const status = on.ready[on.you] && on.ready[rival] ? 'Fight!'
+      : on.ready[on.you] ? 'Waiting for your rival'
+        : on.ready[rival] ? 'Your rival is ready' : 'Pick your build';
+    this.clockEl = h('b.mb-clock');
+    this.clockShown = '';
+    return h('div.title.match-title', null,
+      h('div.match-bar', null,
+        pips(0, on.score[0]),
+        h('div.mb-mid', null, h('small', null, `Round ${on.round}`), this.clockEl),
+        pips(1, on.score[1])),
+      h('p', null, status));
+  }
+
+  /** Ticks the pick clock (cheap: writes only when the shown second changes). */
+  tick(): void {
+    const el = this.clockEl, on = this.online;
+    if (!el || !on || this.el.hidden) return;
+    const left = on.deadline === Infinity ? -1 : Math.max(0, Math.ceil((on.deadline - performance.now()) / 1000));
+    const shown = left < 0 ? '–:––' : `${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`;
+    if (shown === this.clockShown) return;
+    this.clockShown = shown;
+    el.textContent = shown;
+    el.classList.toggle('low', left >= 0 && left <= 10 && !on.ready[on.you]);
   }
 
   /**
@@ -109,7 +181,7 @@ export class Menu {
     const W = this.el.clientWidth, H = this.el.clientHeight;
     const corners = [...this.el.querySelectorAll<HTMLElement>('.corner')].filter((c) => c.offsetParent);
     const bottomRow = this.el.querySelector<HTMLElement>('.menu-bottom');
-    const title = this.el.querySelector<HTMLElement>('.title h1');
+    const title = this.el.querySelector<HTMLElement>('.title h1, .title .match-bar');
     if (!W || !H || !corners.length || !bottomRow) return NO_INSETS;
     const rc = corners.map((c) => c.getBoundingClientRect());
     const t = (title?.getBoundingClientRect().bottom ?? 0) / H;
@@ -191,6 +263,11 @@ export class Menu {
 
   private corner(side: 0 | 1): HTMLElement {
     const lo = this.loadouts[side];
+    const on = this.online;
+    const mine = side === this.mine;
+    // Online, only your own corner is yours to change, and only until you lock it in.
+    const editable = !on || (mine && !on.ready[side]);
+    const formRow = on ? mine : side === 1;
     const form = FORMS[lo.form];
     const stats = computeBaseStats(lo.form, lo.gear);
     const statRow = (label: string, v: number, max: number, shown: string) =>
@@ -199,25 +276,32 @@ export class Menu {
 
     return h(`div.corner.plate.side-${side}` + (this.activeSide === side ? '.active' : ''), null,
       h('header', null,
-        // The emblem is the way in: your fighter's editor, or the rival's form.
-        h('button.medal', {
+        // The emblem is the way in: your fighter's editor, or the form (rival offline, yours online).
+        h('button.medal' + (editable ? '' : '.ro'), {
           style: { '--c': hex(form.color) },
-          title: side === 0 ? `${form.name}: edit your fighter` : `${form.name}: change the rival's form`,
-          'aria-label': side === 0 ? 'Edit your fighter' : 'Change rival form',
-          onclick: () => { sfx.play('ui'); if (side === 0) this.cb.onEditCharacter(); else this.openFormPicker(); },
-        }, formIcon(lo.form), h('span.medal-badge', null, icon('edit'))),
+          title: !editable ? form.name : on || side === 1 ? `${form.name}: change the form` : `${form.name}: edit your fighter`,
+          'aria-label': !editable ? form.name : on || side === 1 ? 'Change form' : 'Edit your fighter',
+          onclick: () => {
+            if (!editable) return;
+            sfx.play('ui');
+            if (!on && side === 0) this.cb.onEditCharacter(); else this.openFormPicker(side);
+          },
+        }, formIcon(lo.form), editable ? h('span.medal-badge', null, icon('edit')) : null),
         h('div.who', null,
-          h('div.tag', null, side === 0 ? 'You · Blue corner' : 'Rival · Red corner'),
+          h('div.tag', null, on
+            ? (mine ? `You · ${side === 0 ? 'Blue' : 'Red'} corner` : on.ready[side] ? 'Rival · Ready' : 'Rival · Picking')
+            : side === 0 ? 'You · Blue corner' : 'Rival · Red corner'),
           h('div.name', null, lo.name),
           h('div.sub', null, `${form.name} · ${form.title}`),
         ),
-        side === 0
+        !on && side === 0
           ? h('button.btn.icon-btn.edit', { title: 'Edit your fighter', 'aria-label': 'Edit your fighter', onclick: () => { sfx.play('ui'); this.cb.onEditCharacter(); } },
             icon('edit', 'glyph'), h('span.lbl', null, 'Edit'))
           : null,
       ),
-      // Your form is part of who your character is: it changes in the editor.
-      side === 0 ? null : h('div.classes.forms', null, ...FORM_IDS.map((id) =>
+      // Offline your form is part of who your character is (it changes in the editor);
+      // online every round is a fresh pick, form included.
+      !formRow || !editable ? null : h('div.classes.forms', null, ...FORM_IDS.map((id) =>
         h('button.class-btn' + (id === lo.form ? '.sel' : ''), {
           style: { '--c': hex(FORMS[id].color) },
           title: `${FORMS[id].name}: ${FORMS[id].blurb}`,
@@ -225,7 +309,9 @@ export class Menu {
           onclick: () => set({ ...lo, form: id }),
         }, h('span.glyph', null, formIcon(id)), h('span.nm', null, FORMS[id].name)),
       )),
-      h('p.blurb', null, form.blurb),
+      h('p.blurb', null, on && !mine
+        ? (on.round === 1 ? 'Their saved build. They can change everything before the fight; you see their pick when it starts.' : 'What they fought with last round. Their new pick shows when the fight starts.')
+        : form.blurb),
       h('div.stats', null,
         ...statRow('HP', stats.maxHp, 2400, String(Math.round(stats.maxHp))),
         ...statRow('Power', stats.power, 80, String(Math.round(stats.power))),
@@ -238,27 +324,28 @@ export class Menu {
       h('div.slots.gear-slots', null, ...GEAR_SLOTS.map((slot) => {
         const id = lo.gear[slot];
         const it = id ? gearOf(id) : null;
-        return h('button.slot' + (it ? `.filled.r-${it.rarity}` : ''), {
-          title: it ? `${SLOT_NAMES[slot]} · ${it.name}: ${it.desc}` : `${SLOT_NAMES[slot]}: choose`,
-          onclick: () => { sfx.play('ui'); this.openPicker(side, slot); },
+        return h('button.slot' + (it ? `.filled.r-${it.rarity}` : '') + (editable ? '' : '.ro'), {
+          title: it ? `${SLOT_NAMES[slot]} · ${it.name}: ${it.desc}` : editable ? `${SLOT_NAMES[slot]}: choose` : `${SLOT_NAMES[slot]}: empty`,
+          tabindex: editable ? undefined : '-1',
+          onclick: editable ? () => { sfx.play('ui'); this.openPicker(side, slot); } : undefined,
         }, h('span.slot-name', null, SLOT_NAMES[slot]), h('span.ico', null, id ? wornIcon(id, lo.skins) : emptySlotIcon(slot)), h('span.slot-item', null, it ? it.name : 'Empty'));
       })),
     );
   }
 
-  /** The rival's body form, as a sheet (phones in landscape hide the inline choice). */
-  private openFormPicker(): void {
-    const lo = this.loadouts[1];
+  /** A corner's body form, as a sheet (phones in landscape hide the inline choice). */
+  private openFormPicker(side: 0 | 1): void {
+    const lo = this.loadouts[side];
     const body = h('div.modal-body', null, h('div.classes.forms.form-sheet', null, ...FORM_IDS.map((id) =>
       h('button.class-btn' + (id === lo.form ? '.sel' : ''), {
         style: { '--c': hex(FORMS[id].color) },
         onclick: () => {
           sfx.play('ui');
           this.closeModal();
-          if (id !== lo.form) { this.loadouts[1] = { ...lo, form: id }; this.changed(); }
+          if (id !== lo.form) { this.loadouts[side] = { ...lo, form: id }; this.changed(); }
         },
       }, h('span.glyph', null, formIcon(id)), h('span.nm', null, FORMS[id].name), h('small', null, FORMS[id].title)))));
-    this.openModal(`Form · ${lo.name}`, body, 'modal.form-modal.side-1');
+    this.openModal(`Form · ${lo.name}`, body, `modal.form-modal.side-${side}`);
   }
 
   private openPicker(side: 0 | 1, slot: GearSlot): void {
