@@ -23,6 +23,7 @@ const PATHS = {
   soundOff: S('M4 9.5v5h3.5l5 4v-13l-5 4z') + S('M16 9.5l5 5M21 9.5l-5 5'),
   install: S('M12 3.5v11M7.5 10l4.5 4.5 4.5-4.5M5 19.5h14'),
   check: S('M5 12.5l4.5 4.5L19 7.5'),
+  notes: '<rect x="5" y="3.5" width="14" height="17" rx="3"/>' + S('M8.6 8.5h6.8M8.6 12h6.8M8.6 15.5h4'),
   highlands: S('M2.5 19.5l6.8-11.5 4 6.6 2.4-3.6 5.8 8.5z') + S('M7.4 11.2l1.9 1.4 1.6-1.6'),
   colosseum: S('M3.5 20h17M4.5 8.5h15M12 3.5l-8 5h16zM7.5 8.5V20M12 8.5V20M16.5 8.5V20'),
   // creator tabs

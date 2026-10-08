@@ -5,7 +5,7 @@ import { registerSW } from 'virtual:pwa-register';
 import { sfx } from './audio/sfx';
 import { randomSeed } from './core/rng';
 import { BattleView } from './render/battleView';
-import { FightCamera, type Zoom } from './render/camera';
+import { FightCamera, NO_INSETS, type Zoom } from './render/camera';
 import { Particles } from './render/fx/particles';
 import { detectQuality, GameRenderer, settingsFor, type Quality } from './render/renderer';
 import { ARENA_IDS, createArena, type Arena, type ArenaId } from './render/scene/arena';
@@ -19,6 +19,7 @@ import { Menu, ZOOM_LABEL, ZOOM_ORDER, type Loadout, type MenuSettings } from '.
 import { Results } from './ui/results';
 import { setupPhoneFullscreen } from './ui/fullscreen';
 import { Creator } from './ui/creator';
+import { versionBadge } from './ui/patchNotes';
 import { CharacterStage } from './render/characterStage';
 import { detailFor, setBodyDetail } from './render/fighter/body';
 import {
@@ -32,7 +33,7 @@ const ui = document.getElementById('ui')!;
 const fxLayer = document.getElementById('fx-layer')!;
 
 const params = new URLSearchParams(location.search);
-const settings: MenuSettings = { quality: 'auto', sound: true, fps: false, arena: 'highlands', zoom: 'normal', ...store<Partial<MenuSettings>>('cb.settings', {}) };
+const settings: MenuSettings = { quality: 'auto', sound: true, fps: false, feed: true, arena: 'highlands', zoom: 'normal', ...store<Partial<MenuSettings>>('cb.settings', {}) };
 // URL overrides for testing/sharing: ?arena=colosseum&zoom=close
 if (ARENA_IDS.includes(params.get('arena') as ArenaId)) settings.arena = params.get('arena') as ArenaId;
 if (ZOOM_ORDER.includes(params.get('zoom') as Zoom)) settings.zoom = params.get('zoom') as Zoom;
@@ -144,7 +145,7 @@ const creator = new Creator({
 const fpsEl = h('div.fps');
 ui.append(hud.el, menu.el, results.el, creator.el, fpsEl);
 // First in #ui so every panel paints over it instead of the other way round.
-ui.prepend(h('div.version', { 'aria-hidden': 'true' }, __APP_VERSION__));
+ui.prepend(versionBadge(__APP_VERSION__));
 hud.show(false);
 
 function applySettings(s: MenuSettings): void {
@@ -154,6 +155,7 @@ function applySettings(s: MenuSettings): void {
   save('cb.settings', settings);
   sfx.setMuted(!s.sound);
   fpsEl.hidden = !s.fps;
+  hud.setFeed(s.feed);
   cam.zoom = s.zoom;
   hud.setZoom(ZOOM_LABEL[s.zoom]);
   if (s.quality !== prevQuality) {
@@ -197,7 +199,7 @@ function openCreator(): void {
   stage.snap(cam.camera);
   stage.show(true);
   creator.open(player ?? guest, !player);
-  cam.setLift(0, true);
+  cam.setInsets(NO_INSETS, true);
   layoutStage();
 }
 
@@ -269,8 +271,8 @@ function frame(now: number): void {
   const cw = canvas.clientWidth, ch = canvas.clientHeight;
   if (cw && ch && (Math.abs(cw / ch - renderer.aspect) > 0.002 || Math.abs(cam.camera.aspect - renderer.aspect) > 0.002)) onResize();
   if (state === 'create') layoutStage();
-  // On phones in portrait the loadout sheet covers the lower half: lift the duel above it.
-  else cam.setLift(state === 'menu' ? Math.max(0, menu.bottomCover - 0.34) : 0);
+  // Frame the duel in the space the loadout panels leave free (phones mostly).
+  else cam.setInsets(state === 'menu' ? menu.insets : NO_INSETS);
   const simulating = state === 'battle' || state === 'ending' || state === 'results';
   if (state === 'intro' && !paused) {
     phaseT += realDt;
@@ -328,10 +330,13 @@ function frame(now: number): void {
 }
 
 function onResize(): void {
+  menu.relayout();
   renderer.resize();
   cam.resize(renderer.aspect);
 }
-renderer.onResize = () => cam.resize(renderer.aspect);
+renderer.onResize = () => { menu.relayout(); cam.resize(renderer.aspect); };
+// Panel sizes change once the UI font arrives.
+void document.fonts?.ready.then(() => menu.relayout());
 window.addEventListener('resize', onResize);
 screen.orientation?.addEventListener?.('change', onResize);
 document.addEventListener('fullscreenchange', onResize);
@@ -375,6 +380,7 @@ async function boot(): Promise<void> {
   hud.setZoom(ZOOM_LABEL[settings.zoom]);
   sfx.setMuted(!settings.sound);
   fpsEl.hidden = !settings.fps;
+  hud.setFeed(settings.feed);
   newBattle(randomSeed());
   view.update(0, 0, false);
   // Compile every shader up front so the first hit doesn't hitch.

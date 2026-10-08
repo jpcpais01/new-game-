@@ -7,6 +7,11 @@ const MAX_HFOV = 51;
 const MAX_VFOV = 34;
 export const ZOOM_FACTOR: Record<Zoom, number> = { close: 0.7, normal: 1, distant: 1.42 };
 
+/** Share of the screen covered by UI on each edge (0..1 of the width for l/r, of the height for t/b). */
+export interface Insets { l: number; r: number; t: number; b: number }
+export const NO_INSETS: Insets = { l: 0, r: 0, t: 0, b: 0 };
+const SIDES = ['l', 'r', 't', 'b'] as const;
+
 /**
  * Side-on fight camera. Frames both fighters, eases between targets, and
  * layers trauma-based shake and zoom "punches" on top for impact.
@@ -25,9 +30,9 @@ export class FightCamera {
   /** Player zoom preference (battle framing only). */
   zoom: Zoom = 'normal';
   private zoomK = 1;
-  /** Share of the screen height the picture is slid up by, to clear UI along the bottom. */
-  private lift = 0;
-  private liftTarget = 0;
+  /** Screen edges covered by UI: the duel is framed in the free rectangle between them. */
+  private ins: Insets = { ...NO_INSETS };
+  private insTarget: Insets = { ...NO_INSETS };
 
   constructor(aspect: number) {
     this.camera = new PerspectiveCamera(30, aspect, 0.1, 400);
@@ -35,8 +40,7 @@ export class FightCamera {
 
   resize(aspect: number): void {
     this.camera.aspect = aspect;
-    const view = this.camera.view;
-    if (view?.enabled) { view.fullWidth = aspect; view.width = aspect; }
+    this.applyInsets(true);
     // One lens for every screen shape: never wider than 16:9 at 30° (51° across)
     // nor taller than 34°. Wide phones and portrait screens pull the camera back
     // to fit the duel instead of widening the lens, which stretched everything
@@ -49,25 +53,39 @@ export class FightCamera {
   }
 
   /**
-   * Slides the picture up by `frac` of the screen height (a view offset, so the
-   * perspective doesn't change), e.g. to keep the duel above a phone's bottom sheet.
+   * Frames the duel in the part of the screen the UI leaves free: the picture
+   * slides to the centre of that rectangle (a view offset, so the lens and
+   * perspective don't change) and the camera pulls back until both fighters fit in it.
    */
-  setLift(frac: number, snap = false): void {
-    this.liftTarget = clamp(frac, 0, 0.45);
-    if (snap) this.applyLift(this.liftTarget);
+  setInsets(i: Insets, snap = false): void {
+    for (const k of SIDES) this.insTarget[k] = clamp(i[k], 0, 0.45);
+    if (snap) { Object.assign(this.ins, this.insTarget); this.applyInsets(true); }
   }
 
-  private applyLift(v: number): void {
-    if (v < 1e-3) v = 0;
-    if (v === this.lift) return;
-    this.lift = v;
-    if (v === 0) this.camera.clearViewOffset();
+  /** Free share of the screen width and height. */
+  private get free(): [number, number] {
+    const i = this.ins;
+    return [Math.max(0.3, 1 - i.l - i.r), Math.max(0.3, 1 - i.t - i.b)];
+  }
+
+  private applyInsets(force = false, dt = 0): void {
+    let moved = force;
+    for (const k of SIDES) {
+      const target = this.insTarget[k], cur = this.ins[k];
+      if (cur === target) continue;
+      this.ins[k] = Math.abs(target - cur) < 1e-3 || !dt ? target : damp(cur, target, 5, dt);
+      moved = true;
+    }
+    if (!moved) return;
+    const i = this.ins, a = this.camera.aspect;
+    const [fw, fh] = this.free;
+    // Offset that moves the screen centre to the free rectangle's centre.
+    const ox = (0.5 - (i.l + fw / 2)) * a, oy = 0.5 - (i.t + fh / 2);
+    if (Math.abs(ox) < 1e-4 && Math.abs(oy) < 1e-4) this.camera.clearViewOffset();
     // setViewOffset also sets aspect = fullWidth / fullHeight, so pass the real
     // aspect (a 1×1 frame here once squashed the whole picture to a square).
-    else {
-      const a = this.camera.aspect;
-      this.camera.setViewOffset(a, 1, 0, v, a, 1);
-    }
+    else this.camera.setViewOffset(a, 1, ox, oy, a, 1);
+    this.camera.updateProjectionMatrix();
   }
 
   shake(amount: number): void {
@@ -85,14 +103,17 @@ export class FightCamera {
     const sep = Math.abs(ax - bx);
     // Close zoom crops tighter around the duel; distant shows the whole arena.
     this.zoomK = damp(this.zoomK, ZOOM_FACTOR[this.zoom], 4, dt);
-    this.applyLift(Math.abs(this.liftTarget - this.lift) < 1e-3 ? this.liftTarget : damp(this.lift, this.liftTarget, 5, dt));
+    this.applyInsets(false, dt);
+    const [fw, fh] = this.free;
     const zk = this.zoomK + (1 - this.zoomK) * this.showcase;
     // Both fighters always stay in frame: close zoom only trims the margins
     // and the height headroom, distant pulls the whole shot back.
     const tight = zk < 1 ? (zk - 0.7) / 0.3 : 1; // 0 at Close, 1 at Normal
-    const margin = (2.6 + this.showcase * 1.2) * (0.55 + 0.45 * tight);
-    const needW = (sep / 2 + margin) / (tanHalf * cam.aspect);
-    const needH = (2.7 + Math.max(ay, by) * 0.5) / tanHalf;
+    // The menu's roomy margin isn't needed when the panels already fence the sides off.
+    const showMargin = this.ins.l + this.ins.r > 0.05 ? 0.3 : 1.2;
+    const margin = (2.6 + this.showcase * showMargin) * (0.55 + 0.45 * tight);
+    const needW = (sep / 2 + margin) / (tanHalf * cam.aspect * fw);
+    const needH = (2.7 + Math.max(ay, by) * 0.5) / (tanHalf * fh);
     const target = clamp(Math.max(needW, needH * Math.min(1, zk)) * Math.max(1, zk), 6.5, 140) * (1 - this.punch * 0.09);
     const midX = (ax + bx) / 2;
 

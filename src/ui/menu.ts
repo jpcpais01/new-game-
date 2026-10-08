@@ -13,7 +13,7 @@ import { formIcon, icon, type IconName } from './icons';
 import { canInstall, onInstallChange, promptInstall } from './install';
 import { withSkin } from '../gear/skins';
 import { ARENA_IDS, ARENA_NAMES, type ArenaId } from '../render/scene/arena';
-import type { Zoom } from '../render/camera';
+import { NO_INSETS, type Insets, type Zoom } from '../render/camera';
 
 export const ZOOM_LABEL: Record<Zoom, string> = { close: 'Close', normal: 'Normal', distant: 'Distant' };
 export const ZOOM_ORDER: Zoom[] = ['close', 'normal', 'distant'];
@@ -27,6 +27,8 @@ export interface MenuSettings {
   quality: 'auto' | 'high' | 'medium' | 'low';
   sound: boolean;
   fps: boolean;
+  /** The fighters' running commentary in the battle's bottom corner. */
+  feed: boolean;
   arena: ArenaId;
   zoom: Zoom;
 }
@@ -52,6 +54,7 @@ export class Menu {
   /** Which corner the phone-portrait layout shows (both are shown everywhere else). */
   private activeSide: 0 | 1 = 0;
   private vsTabs: HTMLElement | null = null;
+  private insetCache: Insets | null = null;
 
   constructor(
     public loadouts: [Loadout, Loadout],
@@ -68,6 +71,7 @@ export class Menu {
   }
 
   render(): void {
+    this.insetCache = null;
     const tab = (side: 0 | 1) => h(`button.vs-tab.side-${side}` + (this.activeSide === side ? '.on' : ''), {
       role: 'tab', 'aria-selected': String(this.activeSide === side),
       onclick: () => { if (this.activeSide === side) return; sfx.play('ui'); this.activeSide = side; this.render(); },
@@ -88,11 +92,35 @@ export class Menu {
     );
   }
 
-  /** Share of the screen height the phone-portrait sheet covers from the bottom (0 in other layouts). */
-  get bottomCover(): number {
-    const tabs = this.vsTabs, hgt = this.el.clientHeight;
-    if (this.el.hidden || !tabs?.offsetParent || !hgt) return 0;
-    return 1 - tabs.offsetTop / hgt;
+  /**
+   * How much of each screen edge the menu covers, so the camera can frame the duel
+   * in the space left over. Measured once per layout (call `relayout` on resize).
+   */
+  get insets(): Insets {
+    if (this.el.hidden) return NO_INSETS;
+    return this.insetCache ??= this.measure();
+  }
+
+  relayout(): void {
+    this.insetCache = null;
+  }
+
+  private measure(): Insets {
+    const W = this.el.clientWidth, H = this.el.clientHeight;
+    const corners = [...this.el.querySelectorAll<HTMLElement>('.corner')].filter((c) => c.offsetParent);
+    const bottomRow = this.el.querySelector<HTMLElement>('.menu-bottom');
+    const title = this.el.querySelector<HTMLElement>('.title h1');
+    if (!W || !H || !corners.length || !bottomRow) return NO_INSETS;
+    const rc = corners.map((c) => c.getBoundingClientRect());
+    const t = (title?.getBoundingClientRect().bottom ?? 0) / H;
+    // Phone portrait: one corner in a bottom sheet under the VS tabs.
+    if (this.vsTabs?.offsetParent) return { l: 0, r: 0, t, b: 1 - this.vsTabs.getBoundingClientRect().top / H };
+    // Corners along the bottom (narrow windows, tablets in portrait).
+    const top = Math.min(...rc.map((r) => r.top));
+    if (top > H * 0.3) return { l: 0, r: 0, t, b: 1 - top / H };
+    // Corners down the sides: phones in landscape. Roomy desktops keep the full width.
+    if (H > 560 || rc.length < 2) return NO_INSETS;
+    return { l: rc[0].right / W, r: 1 - rc[1].left / W, t, b: 1 - bottomRow.getBoundingClientRect().top / H };
   }
 
   private setSettings(patch: Partial<MenuSettings>): void {
@@ -126,6 +154,7 @@ export class Menu {
         seg('Camera', ZOOM_ORDER.map((z) => [z, ZOOM_LABEL[z]] as [Zoom, string]), s.zoom, (zoom) => this.setSettings({ zoom })),
         seg('Graphics', [['auto', 'Auto'], ['high', 'High'], ['medium', 'Med'], ['low', 'Low']], s.quality, (quality) => this.setSettings({ quality })),
         seg('Sound', [['on', 'On', 'soundOn'], ['off', 'Off', 'soundOff']], s.sound ? 'on' : 'off', (v) => this.setSettings({ sound: v === 'on' })),
+        seg('Battle feed', [['on', 'On'], ['off', 'Off']], s.feed ? 'on' : 'off', (v) => this.setSettings({ feed: v === 'on' })),
         seg('FPS counter', [['off', 'Off'], ['on', 'On']], s.fps ? 'on' : 'off', (v) => this.setSettings({ fps: v === 'on' })),
         // Only when the browser offers it (Chrome/Edge/Android, not yet installed).
         canInstall() ? h('section.set-row.set-install', null,
@@ -170,7 +199,13 @@ export class Menu {
 
     return h(`div.corner.plate.side-${side}` + (this.activeSide === side ? '.active' : ''), null,
       h('header', null,
-        h('span.medal', { style: { '--c': hex(form.color) }, title: form.name }, formIcon(lo.form)),
+        // The emblem is the way in: your fighter's editor, or the rival's form.
+        h('button.medal', {
+          style: { '--c': hex(form.color) },
+          title: side === 0 ? `${form.name}: edit your fighter` : `${form.name}: change the rival's form`,
+          'aria-label': side === 0 ? 'Edit your fighter' : 'Change rival form',
+          onclick: () => { sfx.play('ui'); if (side === 0) this.cb.onEditCharacter(); else this.openFormPicker(); },
+        }, formIcon(lo.form), h('span.medal-badge', null, icon('edit'))),
         h('div.who', null,
           h('div.tag', null, side === 0 ? 'You · Blue corner' : 'Rival · Red corner'),
           h('div.name', null, lo.name),
@@ -209,6 +244,21 @@ export class Menu {
         }, h('span.slot-name', null, SLOT_NAMES[slot]), h('span.ico', null, id ? wornIcon(id, lo.skins) : emptySlotIcon(slot)), h('span.slot-item', null, it ? it.name : 'Empty'));
       })),
     );
+  }
+
+  /** The rival's body form, as a sheet (phones in landscape hide the inline choice). */
+  private openFormPicker(): void {
+    const lo = this.loadouts[1];
+    const body = h('div.modal-body', null, h('div.classes.forms.form-sheet', null, ...FORM_IDS.map((id) =>
+      h('button.class-btn' + (id === lo.form ? '.sel' : ''), {
+        style: { '--c': hex(FORMS[id].color) },
+        onclick: () => {
+          sfx.play('ui');
+          this.closeModal();
+          if (id !== lo.form) { this.loadouts[1] = { ...lo, form: id }; this.changed(); }
+        },
+      }, h('span.glyph', null, formIcon(id)), h('span.nm', null, FORMS[id].name), h('small', null, FORMS[id].title)))));
+    this.openModal(`Form · ${lo.name}`, body, 'modal.form-modal.side-1');
   }
 
   private openPicker(side: 0 | 1, slot: GearSlot): void {

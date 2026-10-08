@@ -227,6 +227,14 @@ button:focus-visible { outline: 2px solid var(--ember-hi); outline-offset: 2px; 
   box-shadow: inset 0 -3px 0 rgba(0, 0, 0, 0.2), 0 2px 0 var(--ink);
 }
 .medal .ic { width: 58%; height: 58%; filter: drop-shadow(0 1.5px 0 rgba(23, 15, 29, 0.55)); }
+button.medal { position: relative; padding: 0; transition: transform 0.08s, box-shadow 0.08s; }
+button.medal:active { transform: translateY(2px); box-shadow: inset 0 -3px 0 rgba(0, 0, 0, 0.2), 0 0 0 var(--ink); }
+.medal-badge {
+  position: absolute; right: -5px; bottom: -4px; width: 17px; height: 17px; border-radius: 50%;
+  display: grid; place-items: center; color: var(--ink);
+  background: var(--ember-hi); border: 1.5px solid var(--ink);
+}
+.medal .medal-badge .ic { width: 10px; height: 10px; stroke-width: 3; filter: none; }
 
 /* Slanted label badge. */
 .tag, .chip, .res-names span, .cr-kicker {
@@ -381,6 +389,12 @@ button:focus-visible { outline: 2px solid var(--ember-hi); outline-offset: 2px; 
 }
 @keyframes pop { from { opacity: 0; transform: translateY(14px) scale(0.97); } }
 .settings-modal { width: min(460px, 100%); }
+.form-modal { width: min(440px, 100%); }
+.classes.form-sheet { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.form-sheet .class-btn { padding: 10px 4px 9px; font-size: 13px; gap: 4px; }
+.form-sheet .class-btn .glyph { width: 40px; height: 40px; }
+.form-sheet .class-btn .glyph .ic { width: 22px; height: 22px; }
+.form-sheet .class-btn small { max-width: 100%; font-size: 10px; font-weight: 600; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .modal-head {
   display: flex; align-items: center; gap: 10px; padding: 10px 10px 10px 16px;
   background: linear-gradient(180deg, rgba(255, 180, 60, 0.12), transparent);
@@ -580,8 +594,11 @@ button:focus-visible { outline: 2px solid var(--ember-hi); outline-offset: 2px; 
 .controls .btn { min-width: 40px; min-height: 38px; padding: 7px 11px; font-size: 13.5px; font-weight: 800; }
 .controls .btn .ic { font-size: 16px; }
 .controls .zoom { display: inline-flex; align-items: center; gap: 6px; }
-.speed-seg { display: flex; gap: 5px; }
-.speed-cycle { display: none; }
+.speed-cycle { min-width: 64px; gap: 5px; }
+.speed-cycle .glyph { font-size: 15px; opacity: 0.55; }
+.speed-cycle .val { min-width: 1.6em; text-align: left; }
+.speed-cycle.fast { color: var(--ember-hi); }
+.speed-cycle.fast .glyph { opacity: 1; }
 
 .banner {
   position: absolute; left: 50%; top: 42%; transform: translate(-50%, -50%);
@@ -675,18 +692,67 @@ button:focus-visible { outline: 2px solid var(--ember-hi); outline-offset: 2px; 
   border: 1.5px solid var(--ink); pointer-events: none !important;
 }
 
-/* Build label: faint, tucked into the bottom-left edge, never takes a tap. */
+/* Build label and patch notes button, bottom-left. The label is faint and never takes
+   a tap; the button is a small keycap. Both sit under every panel (first in #ui). */
 #ui > .version {
-  position: absolute; left: calc(6px + var(--safe-l)); bottom: calc(3px + var(--safe-b));
+  position: absolute; left: calc(8px + var(--safe-l)); bottom: calc(8px + var(--safe-b));
+  display: flex; align-items: center; gap: 6px;
+  pointer-events: none;
+}
+.version-txt {
   font: 700 9.5px/1 var(--font); font-stretch: 85%; letter-spacing: 0.06em;
   color: rgba(255, 244, 228, 0.42); -webkit-text-stroke: 2.5px rgba(23, 15, 29, 0.55); paint-order: stroke fill;
-  white-space: nowrap; pointer-events: none;
+  white-space: nowrap;
 }
+.version .notes-btn {
+  position: relative; order: -1; pointer-events: auto;
+  width: 30px; height: 30px; min-height: 0; padding: 0; border-radius: 9px;
+  color: var(--muted); box-shadow: var(--hi), 0 2px 0 var(--ink);
+}
+.notes-btn .ic { width: 17px; height: 17px; }
+.notes-btn:hover { color: var(--text); }
+.notes-btn:active { box-shadow: var(--hi), 0 0 0 var(--ink); }
+.notes-btn.unseen { color: var(--text); }
+.notes-btn.unseen::after {
+  content: ''; position: absolute; top: -4px; right: -4px; width: 9px; height: 9px; border-radius: 50%;
+  background: var(--ember); border: 2px solid var(--ink);
+}
+/* The menu layer and its bottom row span the screen; only their contents should take taps. */
+#ui > .menu, .menu-bottom { pointer-events: none; }
+.menu-bottom > * { pointer-events: auto; }
+/* In battle only the label shows, tucked into the edge. */
+#ui:has(> .hud:not([hidden])) > .version { left: calc(6px + var(--safe-l)); bottom: calc(3px + var(--safe-b)); }
+#ui:has(> .hud:not([hidden])) .notes-btn { display: none; }
 /* Portrait: the menu's bottom row and the creator sheet fill the bottom edge, so
-   outside battles the label moves to the top-left, clear of the centred title. */
+   outside battles it moves to the top-left, the button under the label, clear of the title. */
 @media (orientation: portrait) {
-  #ui:not(:has(> .hud:not([hidden]))) > .version { top: calc(4px + var(--safe-t)); bottom: auto; }
+  #ui:not(:has(> .hud:not([hidden]))) > .version {
+    top: calc(6px + var(--safe-t)); bottom: auto; left: calc(6px + var(--safe-l));
+    flex-direction: column; align-items: flex-start; gap: 5px;
+  }
+  #ui:not(:has(> .hud:not([hidden]))) .notes-btn { order: 0; }
 }
+
+/* Patch notes sheet */
+.notes-modal { width: min(560px, 100%); }
+.notes-body { display: grid; gap: 10px; align-content: start; }
+.note {
+  padding: 10px 12px 11px; border-radius: 13px;
+  background: rgba(23, 15, 29, 0.35); border: 2px solid var(--ink);
+}
+.note.latest { background: linear-gradient(180deg, rgba(255, 180, 60, 0.13), rgba(23, 15, 29, 0.3) 70%); box-shadow: inset 0 0 0 1.5px rgba(255, 180, 60, 0.35); }
+.note-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.note-ver {
+  display: inline-block; transform: skewX(var(--slant)); flex: none;
+  padding: 2px 8px; border-radius: 5px; font-size: 11.5px; font-weight: 800; letter-spacing: 0.04em;
+  color: var(--text); background: var(--plate-3); box-shadow: 0 2px 0 var(--ink);
+}
+.note.latest .note-ver { color: var(--ink); background: linear-gradient(180deg, var(--ember-hi), var(--ember)); }
+.note-title { flex: 1; min-width: 0; font-size: 15px; font-weight: 800; }
+.note-date { font-size: 11px; color: var(--dim); white-space: nowrap; }
+.note ul { margin: 7px 0 0; padding-left: 18px; display: grid; gap: 4px; }
+.note li { font-size: 13px; line-height: 1.4; color: #e6d9e8; }
+.note li::marker { color: var(--ember); }
 
 /* ---------------------------------------------------------------- character creator */
 /* #ui > * turns pointer events on; the full-screen layer must let drags reach the canvas. */
@@ -942,8 +1008,7 @@ button:focus-visible { outline: 2px solid var(--ember-hi); outline-offset: 2px; 
   .feed div { font-size: 11.5px; }
   .controls { align-self: center; gap: 6px; }
   .controls .btn { min-width: 48px; min-height: 44px; padding: 8px 10px; font-size: 14px; }
-  .controls .zoom .lbl, .speed-seg { display: none; }
-  .speed-cycle { display: inline-flex; }
+  .controls .zoom .lbl { display: none; }
   .ult-call { font-size: 19px; padding-block: 6px; top: 24%; }
   .fps { bottom: calc(76px + var(--safe-b)); }
 
@@ -993,7 +1058,7 @@ button:focus-visible { outline: 2px solid var(--ember-hi); outline-offset: 2px; 
 /* ---- phone landscape (the main phone layout once fullscreen): corners at the sides, duel in the middle */
 @media (orientation: landscape) and (max-height: 560px) {
   .menu {
-    grid-template-columns: minmax(0, clamp(196px, 28vw, 250px)) minmax(0, 1fr) minmax(0, clamp(196px, 28vw, 250px));
+    grid-template-columns: clamp(150px, 19vw, 188px) minmax(0, 1fr) clamp(150px, 19vw, 188px);
     grid-template-rows: auto minmax(0, 1fr) auto;
     gap: 8px;
     padding: calc(8px + var(--safe-t)) calc(10px + var(--safe-r)) calc(12px + var(--safe-b)) calc(10px + var(--safe-l));
@@ -1005,20 +1070,19 @@ button:focus-visible { outline: 2px solid var(--ember-hi); outline-offset: 2px; 
   .corner.side-1 { grid-column: 3; }
   .corner header { min-height: 36px; gap: 8px; }
   .medal { width: 32px; height: 32px; }
-  .corner .tag { font-size: 8.5px; padding: 1px 6px; letter-spacing: 0.12em; }
-  .corner .name { font-size: 18px; }
-  .corner .sub { display: none; }
-  .corner .edit { width: 36px; height: 36px; padding: 0; }
-  .corner .edit .lbl { display: none; }
-  /* Wide phones (over 900px) also land here: keep the same compact corner. */
-  .blurb, .stats, .abilities, .slot .slot-name { display: none; }
+  .corner .name { font-size: 17px; }
+  .corner .sub { font-size: 10.5px; }
+  /* Compact strips that keep the middle of the screen for the duel: the emblem
+     opens the editor (you) or the form sheet (rival), slots are icons only.
+     Wide phones (over 900px) also land here: keep the same compact corner. */
+  .corner .tag, .corner .edit, .classes.forms, .blurb, .stats, .abilities, .slot .slot-name, .slot .slot-item { display: none; }
   .class-btn { padding: 4px 1px; font-size: 9.5px; gap: 2px; border-radius: 10px; }
   .class-btn .glyph { width: 24px; height: 24px; }
   .class-btn .glyph .ic { width: 14px; height: 14px; }
   .classes.forms { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; }
   .gear-slots { gap: 6px; }
-  .gear-slots .slot { min-height: 0; padding: 4px 2px; gap: 2px; font-size: 9px; border-radius: 11px; }
-  .slot .ico { width: 30px; height: 30px; }
+  .gear-slots .slot { min-height: 0; aspect-ratio: 1; padding: 3px; border-radius: 11px; }
+  .slot .ico { width: 100%; height: 100%; max-width: 40px; max-height: 40px; }
   .menu-bottom { grid-row: 3; grid-column: 2; flex-wrap: nowrap; gap: 10px; }
   .menu-bottom .arena-pick, .menu-bottom .lbl { display: none; }
   .menu-bottom .icon-btn { width: 44px; height: 44px; padding: 0; flex: none; }
@@ -1063,7 +1127,6 @@ button:focus-visible { outline: 2px solid var(--ember-hi); outline-offset: 2px; 
   .feed div:nth-child(n + 3) { display: none; }
   .controls { gap: 4px; padding: 4px; border-radius: 13px; }
   .controls .btn { min-width: 40px; min-height: 36px; padding: 5px 9px; font-size: 13px; }
-  .speed-seg { gap: 4px; }
   .controls .zoom .lbl { display: none; }
   .ult-call { font-size: 19px; padding-block: 5px; top: 30%; }
   .banner { font-size: clamp(44px, 10vw, 90px); }
@@ -1109,16 +1172,13 @@ button:focus-visible { outline: 2px solid var(--ember-hi); outline-offset: 2px; 
 }
 @media (orientation: landscape) and (max-height: 560px) and (max-width: 700px) {
   .cr-tab .glyph { display: none; }
-  /* Corners this narrow can't fit item names: the icons carry them, the picker names them. */
-  .slot .slot-item { display: none; }
-  .slot .ico { width: 34px; height: 34px; }
-  .gear-slots .slot { padding: 5px 2px; }
 }
 
 /* Comfortable touch targets wherever the pointer is a finger. */
 @media (pointer: coarse) {
   .btn, .chip-btn { min-height: 40px; }
   .class-btn { min-height: 44px; }
+  .version .notes-btn { width: 34px; height: 34px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
