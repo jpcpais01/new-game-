@@ -435,6 +435,19 @@ button {
 
 .fps { position: absolute; right: calc(8px + var(--safe-r)); bottom: calc(60px + var(--safe-b)); max-width: calc(100% - 16px); font: 600 11px ui-monospace, monospace; color: #9f9; background: rgba(0,0,0,0.5); padding: 3px 6px; border-radius: 4px; pointer-events: none !important; }
 
+/* Build label: faint, tucked into the bottom-left edge, never takes a tap. */
+#ui > .version {
+  position: absolute; left: calc(6px + var(--safe-l)); bottom: calc(2px + var(--safe-b));
+  font: 600 9.5px/1 ui-monospace, 'SF Mono', Consolas, monospace; letter-spacing: 0.02em;
+  color: rgba(255, 255, 255, 0.4); text-shadow: 0 1px 1px rgba(0, 0, 0, 0.6);
+  white-space: nowrap; pointer-events: none;
+}
+/* Portrait: the menu's bottom row and the creator sheet fill the bottom edge, so
+   outside battles the label moves to the top-left, clear of the centred title. */
+@media (orientation: portrait) {
+  #ui:not(:has(> .hud:not([hidden]))) > .version { top: calc(4px + var(--safe-t)); bottom: auto; }
+}
+
 /* ---------------------------------------------------------------- character creator */
 /* #ui > * turns pointer events on; the full-screen layer must let drags reach the canvas. */
 #ui > .creator { position: absolute; inset: 0; pointer-events: none; }

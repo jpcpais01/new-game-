@@ -1,8 +1,25 @@
+import { execSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vite';
 import { VitePWA } from 'vite-plugin-pwa';
 
+// Shown small in a screen corner (.version in src/ui/styles.css): package version plus the
+// short commit, so a glance tells which build a device is running. Vercel
+// builds have no .git, but they provide the commit in VERCEL_GIT_COMMIT_SHA.
+function buildVersion(): string {
+  const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')) as { version: string };
+  let sha = process.env.VERCEL_GIT_COMMIT_SHA ?? '';
+  if (!sha) {
+    try { sha = execSync('git rev-parse HEAD', { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim(); } catch { /* no git */ }
+  }
+  return sha ? `v${pkg.version} · ${sha.slice(0, 7)}` : `v${pkg.version}`;
+}
+
 export default defineConfig({
+  define: {
+    __APP_VERSION__: JSON.stringify(buildVersion()),
+  },
   build: {
     target: 'es2022',
     // three.js is the bulk of the bundle; keep it in its own long-cached chunk.
