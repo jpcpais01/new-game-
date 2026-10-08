@@ -8,6 +8,8 @@ import { h } from './dom';
 import { fmtHp } from './format';
 import { wornIcon } from './skinIcons';
 
+const SPEEDS = [1, 2, 4];
+
 const STATUS_ICON: Record<StatusId, string> = {
   burn: '🔥', poison: '☠️', chill: '❄️', frozen: '🧊', stun: '💫', rage: '😡', haste: '💨', mark: '🔯', ironskin: '🪨', vulnerable: '💔',
 };
@@ -44,10 +46,12 @@ export class Hud {
   private banner!: HTMLElement;
   private ultCalls: HTMLElement[] = [];
   private speedBtns: HTMLButtonElement[] = [];
+  private speedCycle!: HTMLButtonElement;
   private pauseBtn!: HTMLButtonElement;
   private zoomBtn!: HTMLButtonElement;
   private zoomLabel = 'Normal';
   private lastClock = -1;
+  private speed = 1;
   private battle: Battle | null = null;
 
   constructor(private readonly cb: HudCallbacks) {
@@ -66,15 +70,16 @@ export class Hud {
       const plan = h('span.chip.plan', null, PLAN_LABELS[b.brains[side].plan]);
       const ult = h('span.chip.ult', { hidden: true }, 'Ult ready');
       const statuses = h('div.ico-row');
-      const items = h('div.ico-row', null, ...f.gearIds.map((id) => {
+      const items = h('div.ico-row.gear-row', null, ...f.gearIds.map((id) => {
         const g = gearOf(id);
         return h(`span.mini.gear.r-${g.rarity}`, { title: `${g.name}: ${g.desc}` }, wornIcon(id, f.skins, { frame: false }));
       }));
       const bar = h(`div.fbar.side-${side}`, null,
-        h('div.who', null, f.name, h('small', null, `${FORMS[f.form].name} · ${side === 0 ? 'Blue' : 'Red'}`)),
+        h('div.who', null, h('span.nm', null, f.name), h('small', null, `${FORMS[f.form].name} · ${side === 0 ? 'Blue' : 'Red'}`)),
         h('div.hp', null, ghost, fill, shield, num),
         enWrap,
-        h('div.meta', null, plan, ult, items, statuses),
+        h('div.meta', null, plan, ult, statuses),
+        items,
       );
       this.sides.push({ fill, ghost, shield, num, en, enWrap, plan, ult, statuses, last: { hp: -1, shield: -1, en: -1, full: false, st: '' } });
       if (side === 0) top.append(bar);
@@ -85,11 +90,18 @@ export class Hud {
     }
 
     this.feed = h('div.feed');
-    this.speedBtns = [1, 2, 4].map((s) => h<HTMLButtonElement>('button.btn' + (s === speed ? '.on' : ''), { onclick: () => this.cb.onSpeed(s) }, `${s}×`));
-    this.pauseBtn = h<HTMLButtonElement>('button.btn', { onclick: () => this.cb.onPause(), title: 'Pause' }, '❚❚');
-    this.zoomBtn = h<HTMLButtonElement>('button.btn', { onclick: () => this.cb.onZoom(), title: 'Camera zoom (Z)' }, `🔍 ${this.zoomLabel}`);
-    const controls = h('div.controls', null, this.zoomBtn, ...this.speedBtns, this.pauseBtn,
-      h('button.btn', { onclick: () => this.cb.onExit(), title: 'Back to loadout' }, '✕'));
+    this.speedBtns = SPEEDS.map((s) => h<HTMLButtonElement>('button.btn' + (s === speed ? '.on' : ''), { onclick: () => this.cb.onSpeed(s), 'aria-label': `Speed ${s}×` }, `${s}×`));
+    // Phones get one button that cycles the speed instead of three.
+    this.speedCycle = h<HTMLButtonElement>('button.btn.speed-cycle', {
+      title: 'Speed', 'aria-label': 'Change speed',
+      onclick: () => this.cb.onSpeed(SPEEDS[(SPEEDS.indexOf(this.speed) + 1) % SPEEDS.length]),
+    }, `${speed}×`);
+    this.speed = speed;
+    this.pauseBtn = h<HTMLButtonElement>('button.btn', { onclick: () => this.cb.onPause(), title: 'Pause', 'aria-label': 'Pause' }, '❚❚');
+    this.zoomBtn = h<HTMLButtonElement>('button.btn.zoom', { onclick: () => this.cb.onZoom(), title: 'Camera zoom (Z)', 'aria-label': 'Camera zoom' });
+    this.setZoom(this.zoomLabel);
+    const controls = h('div.controls', null, this.zoomBtn, h('div.speed-seg', null, ...this.speedBtns), this.speedCycle, this.pauseBtn,
+      h('button.btn', { onclick: () => this.cb.onExit(), title: 'Back to loadout', 'aria-label': 'Back to loadout' }, '✕'));
     const bottom = h('div.hud-bottom', null, this.feed, controls);
     this.banner = h('div.banner');
     this.ultCalls = [0, 1].map((s) => h(`div.ult-call.side-${s}`));
@@ -99,11 +111,13 @@ export class Hud {
 
   setZoom(label: string): void {
     this.zoomLabel = label;
-    if (this.zoomBtn) this.zoomBtn.textContent = `🔍 ${label}`;
+    this.zoomBtn?.replaceChildren(h('span.glyph', null, '🔍'), h('span.lbl', null, label));
   }
 
   setSpeed(s: number): void {
-    this.speedBtns.forEach((b, i) => b.classList.toggle('on', [1, 2, 4][i] === s));
+    this.speed = s;
+    this.speedBtns.forEach((b, i) => b.classList.toggle('on', SPEEDS[i] === s));
+    if (this.speedCycle) this.speedCycle.textContent = `${s}×`;
   }
 
   setPaused(p: boolean): void {
