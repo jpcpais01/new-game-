@@ -69,7 +69,27 @@ export class Battle {
   }
 
   emit(e: BattleEvent): void {
-    this.events.push(e);
+    if (!this.sandbox) this.events.push(e);
+  }
+
+  /** True for look-ahead copies made by `fork`: their events are dropped. */
+  sandbox = false;
+
+  /**
+   * Independent copy of the whole battle for AI look-ahead. The copy draws
+   * from its own RNG (`seed`) so it can't peek at the real battle's future
+   * rolls, drops its events, and is driven by the brains `brains` returns.
+   */
+  fork(seed: number, brains: (copy: Battle) => [FighterBrain, FighterBrain]): Battle {
+    const c = Object.create(Battle.prototype) as Battle;
+    const w = c as unknown as Record<string, unknown>;
+    for (const k of Object.keys(this)) w[k] = cloneValue((this as unknown as Record<string, unknown>)[k]);
+    w.rng = new Rng(seed);
+    w.fighters = [cloneFighter(this.fighters[0]), cloneFighter(this.fighters[1])];
+    w.events = [];
+    c.sandbox = true;
+    w.brains = brains(c);
+    return c;
   }
 
   /** Remove and return all pending events. */
@@ -845,4 +865,27 @@ export class Battle {
       this.emit({ type: 'end', winner: this.winner, reason: 'time' });
     }
   }
+}
+
+// -----------------------------------------------------------------------------
+// Forking helpers
+// -----------------------------------------------------------------------------
+
+const isPlain = (v: unknown): v is Record<string, unknown> =>
+  !!v && typeof v === 'object' && Object.getPrototypeOf(v) === Object.prototype;
+
+/** One level deeper than a shallow copy: arrays of records and plain records are copied. */
+function cloneValue(v: unknown): unknown {
+  if (Array.isArray(v)) return v.map((x) => (isPlain(x) ? { ...x } : x));
+  if (isPlain(v)) return { ...v };
+  return v;
+}
+
+/** Fighter fields that never change during a battle and can be shared by forks. */
+const SHARED_FIGHTER_KEYS = new Set(['abilities', 'has', 'base', 'gear', 'gearIds', 'look', 'profile']);
+
+function cloneFighter(f: Fighter): Fighter {
+  const c = { ...f } as unknown as Record<string, unknown>;
+  for (const k of Object.keys(c)) if (!SHARED_FIGHTER_KEYS.has(k)) c[k] = cloneValue(c[k]);
+  return c as unknown as Fighter;
 }

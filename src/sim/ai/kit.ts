@@ -75,8 +75,9 @@ const OFFENSIVE_BUFFS: StatusId[] = ['rage', 'haste'];
 export function reachOf(f: Fighter, ab: AbilityDef): [number, number] {
   const r = abilityReach(f, ab);
   switch (ab.kind) {
-    case 'melee': return [0, r + (ab.lunge ?? 0)];
-    case 'aoe': return [0, r + (ab.lunge ?? 0) * 0.8];
+    // Only ~30% of a lunge happens before the first hit lands (more for flurries).
+    case 'melee': return [0, r + (ab.lunge ?? 0) * ((ab.hits ?? 1) > 1 ? 0.6 : 0.3)];
+    case 'aoe': return [0, r + (ab.lunge ?? 0) * (ab.airborne ? 0.8 : 0.3)];
     case 'dash': return ab.dash?.strike ? [0.6, (ab.dash.distance ?? 0) - 0.6] : [0, 0];
     case 'projectile': return [0, r];
     case 'meteor': return [0, r];
@@ -235,7 +236,8 @@ export function analyzeMatchup(f: Fighter, fk: Kit, e: Fighter, ek: Kit, caution
   const kiteEff = clamp(f.stats.moveSpeed / Math.max(0.1, e.stats.moveSpeed), 0.55, 1.2)
     * (ek.info.some((a) => a.closer && a.offensive) ? 0.85 : 1);
   for (let d = 1.1; d <= 8.6; d += 0.25) {
-    const mine = dpsAt(f, fk, e, d);
+    // Keep a margin so a small step back by them doesn't turn hits into whiffs.
+    const mine = dpsAt(f, fk, e, d <= 3.2 ? d + 0.25 : d);
     const theirs = dpsAt(e, ek, f, d);
     if (d <= 3.2) {
       myClose = Math.max(myClose, mine);

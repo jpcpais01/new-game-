@@ -54,6 +54,72 @@ interface PendingOutcome {
   eParries: number;
 }
 
+type Choice = { kind: 'ability'; idx: number } | { kind: 'move'; dir: number };
+
+interface Option {
+  choice: Choice;
+  /** Instinctive (utility) value, used as a tie-breaker and to keep personality. */
+  prior: number;
+  why: string;
+  score?: number;
+}
+
+interface Snapshot {
+  myHp: number;
+  enHp: number;
+  myEnergy: number;
+  enEnergy: number;
+}
+
+/** Seconds imagined ahead for each option. */
+const HORIZON_TICKS = 54;
+/** Minimum seconds between look-aheads (sooner when the enemy starts something new). */
+const LOOK_INTERVAL = 0.1;
+const MAX_ABILITY_OPTIONS = 4;
+const PRIOR_WEIGHT = 0.25;
+/** Value of each second the enemy can't act (fraction of HP). */
+const LOCK_VALUE = 0.05;
+
+/** HP plus shield plus a pending revive, minus damage-over-time still to come. */
+function effectiveHp(f: Fighter): number {
+  if (!f.alive) return -0.2;
+  let hp = f.hp + f.shield * 0.8;
+  for (const s of f.statuses) {
+    if (s.id === 'burn' || s.id === 'poison') {
+      const per = s.id === 'burn' ? 0.2 : 0.09;
+      hp -= s.sourcePower * per * s.stacks * Math.max(0, s.remaining) * 0.7;
+    }
+  }
+  let v = hp / f.stats.maxHp;
+  if (f.has.has('phoenix_feather') && !f.phoenixUsed) v += 0.3;
+  return v;
+}
+
+function snapshot(f: Fighter, e: Fighter): Snapshot {
+  return { myHp: effectiveHp(f), enHp: effectiveHp(e), myEnergy: f.energy, enEnergy: e.energy };
+}
+
+/** Seconds before the fighter can act freely again. */
+function lockedFor(f: Fighter): number {
+  if (!f.alive) return 0;
+  let t = Math.max(0, f.stagger);
+  for (const s of f.statuses) if (s.id === 'stun' || s.id === 'frozen') t = Math.max(t, s.remaining);
+  const a = f.action;
+  if (a) {
+    if (a.phase === 'recovery') t = Math.max(t, a.recovery - a.t);
+    else if (a.phase === 'active') t = Math.max(t, a.active - a.t + a.recovery);
+  }
+  if (getStatus(f, 'vulnerable')) t += 0.15;
+  return Math.min(t, 1.5);
+}
+
+/** Cost of defensive cooldowns currently recharging. */
+function defenseSpent(f: Fighter, k: Kit): number {
+  let v = 0;
+  for (const d of k.defenses) v += Math.min(f.cooldowns[d.idx], 4) * 0.004;
+  return v;
+}
+
 interface Ctx {
   e: Fighter;
   dist: number;
@@ -84,10 +150,6 @@ interface Ctx {
  * whiff or punish) and a per-ability hit rate reshape the scores as the fight
  * goes on, so the same two builds play differently minute to minute.
  */
-// TEMP experiment flags
-const FLAGS: Set<string> = new Set(((globalThis as any).process?.env?.AI_FLAGS ?? '').split(',').filter(Boolean));
-const off = (k: string) => FLAGS.has(k);
-
 export class Brain implements FighterBrain {
   readonly f: Fighter;
   readonly p: Personality;
@@ -116,6 +178,18 @@ export class Brain implements FighterBrain {
   /** Time until which the enemy is known to be committed to a defense I baited. */
   private baitedUntil = -1;
 
+  // Look-ahead
+  /** Imagined copy used inside another brain's look-ahead (never plans itself). */
+  private imagined = false;
+  /** First move forced on an imagined brain, then it plays its normal policy. */
+  private script: Choice | null = null;
+  private scriptUntil = 0;
+  private nextLookAt = 0;
+  private lookedAtKey = -2;
+  private lookedAtShots = -1;
+  /** Movement chosen by the last look-ahead, kept until the next one. */
+  private heldMove = 0;
+
   constructor(f: Fighter, variance: number) {
     this.f = f;
     this.kit = analyzeKit(f);
@@ -133,6 +207,38 @@ export class Brain implements FighterBrain {
     void b;
   }
 
+  /**
+   * A copy of `src` that drives fighter `f` inside a forked battle. It shares
+   * the (read-only) kit analysis, keeps the same plan, temperament and what it
+   * has learned, and skips learning and planning so look-ahead stays cheap.
+   */
+  private static imagine(src: Brain, f: Fighter, script: Choice | null, now: number): Brain {
+    const c = Object.create(Brain.prototype) as Brain;
+    Object.assign(c, src);
+    const w = c as unknown as { f: Fighter };
+    w.f = f;
+    c.imagined = true;
+    c.script = script;
+    c.scriptUntil = now + (script?.kind === 'move' ? 0.12 : 0);
+    c.pending = [];
+    c.thoughtCd = 99;
+    c.planTimer = 99;
+    c.decideTimer = 0;
+    return c;
+  }
+
+  /** How I imagine the enemy plays: my own policy, from their side of the fight. */
+  private enemyModel(e: Fighter, b: Battle): Brain {
+    if (!this.mirror) {
+      const m = new Brain(e, 0.5);
+      m.init(b, this.f);
+      this.mirror = m;
+    }
+    this.mirror.plan = (b.brains[e.id] as Partial<Brain>).plan ?? 'pressure';
+    return this.mirror;
+  }
+  private mirror: Brain | null = null;
+
   private thought(b: Battle, text: string, force = false): void {
     if (this.thoughtCd > 0 && !force) return;
     this.thoughtCd = 1.6;
@@ -147,11 +253,22 @@ export class Brain implements FighterBrain {
     if (!f.alive || b.over) { f.move = 0; return; }
 
     this.perceive(b, e);
-    this.opp.observe(b, f, e, this.ek, actionKey(f), actionKey(e));
-    this.learn(b, e);
-
-    this.planTimer -= DT;
-    if (this.planTimer <= 0) this.choosePlan(b, e);
+    if (!this.imagined) {
+      this.opp.observe(b, f, e, this.ek, actionKey(f), actionKey(e));
+      this.learn(b, e);
+      this.planTimer -= DT;
+      if (this.planTimer <= 0) this.choosePlan(b, e);
+    } else if (this.script) {
+      // Imagined: play the forced first move, then the normal policy.
+      const s = this.script;
+      if (s.kind === 'ability') {
+        this.script = null;
+        if (b.startAction(f, s.idx)) return;
+      } else if (b.time < this.scriptUntil) {
+        f.move = s.dir;
+        if (!f.action) return;
+      } else this.script = null;
+    }
 
     if (f.action) {
       this.midAction(b, e);
@@ -397,6 +514,7 @@ export class Brain implements FighterBrain {
     let bestVal = 0.012 + (plan === 'turtle' ? 0.02 : 0) + (plan === 'bait' && c.open <= 0 ? 0.015 : 0);
     let bestWhy = '';
     let waiting = false;
+    const options: Option[] = [];
 
     for (const info of this.kit.info) {
       if (!b.canUse(f, info.idx)) continue;
@@ -407,11 +525,36 @@ export class Brain implements FighterBrain {
       else r = null;
       if (!r) continue;
       if (r.wait) waiting = true;
+      if (r.val > 0) options.push({ choice: { kind: 'ability', idx: info.idx }, prior: r.val, why: r.why });
       if (r.val > bestVal) { bestVal = r.val; bestIdx = info.idx; bestWhy = r.why; }
     }
 
+    // Look ahead: imagine the next second for the most promising options and
+    // keep the one that actually plays out best.
+    if (!this.imagined && this.shouldLookAhead(b, c)) {
+      const pick = this.lookAhead(b, c, options, bestIdx, waiting);
+      if (pick) {
+        if (pick.choice.kind === 'ability') {
+          if (b.startAction(f, pick.choice.idx)) {
+            this.heldMove = 0;
+            this.track(b, pick.choice.idx);
+            if (pick.why) this.thought(b, pick.why, pick.why.includes('!') && b.rng.next() < 0.3);
+            return;
+          }
+        } else {
+          this.heldMove = pick.choice.dir;
+          f.move = pick.choice.dir;
+          if (pick.why) this.thought(b, pick.why);
+          return;
+        }
+      }
+    } else if (!this.imagined && b.time < this.nextLookAt && c.threat === null && c.open <= 0) {
+      // Between look-aheads, keep to the chosen footwork unless something urgent comes up.
+      if (this.heldMove !== 0 || bestIdx < 0) { f.move = this.heldMove; return; }
+    }
+
     // Stepping out of reach costs no cooldown and sets up a whiff punish.
-    const step = off('nostep') ? 0 : this.spacingDodge(c);
+    const step = this.spacingDodge(c);
     if (step > bestVal) {
       this.thought(b, c.threat!.recovery > 0.35 ? 'Steps out of reach to punish the whiff.' : 'Steps back out of reach.');
       f.move = -(Math.sign(c.e.x - f.x) || f.facing);
@@ -424,6 +567,97 @@ export class Brain implements FighterBrain {
       return;
     }
     this.moveDecision(b, c, waiting);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Look-ahead
+  // ---------------------------------------------------------------------------
+
+  /** Look ahead when the fight is close enough for the next second to matter. */
+  private shouldLookAhead(b: Battle, c: Ctx): boolean {
+    const e = c.e;
+    const near = c.dist < Math.max(this.kit.meleeReach, this.ek.meleeReach, 2) + 2.2;
+    const shots = b.projectiles.length;
+    const key = actionKey(e);
+    if (!near && shots === 0 && !(e.action && this.perceived(b))) return false;
+    const changed = (key !== this.lookedAtKey && this.perceived(b)) || shots !== this.lookedAtShots;
+    if (!changed && b.time < this.nextLookAt) return false;
+    this.lookedAtKey = this.perceived(b) ? key : this.lookedAtKey;
+    this.lookedAtShots = shots;
+    this.nextLookAt = b.time + LOOK_INTERVAL;
+    return true;
+  }
+
+  private lookAhead(b: Battle, c: Ctx, options: Option[], heuristicIdx: number, waiting: boolean): Option | null {
+    const f = this.f;
+    const e = c.e;
+    const toward = Math.sign(e.x - f.x) || f.facing;
+    options.sort((x, y) => y.prior - x.prior);
+    const cands: Option[] = options.slice(0, MAX_ABILITY_OPTIONS);
+    // Defensive answers always get a look when something is coming.
+    if (c.threat) for (const o of options) if (!cands.includes(o) && this.kit.info[(o.choice as { idx: number }).idx].defense) cands.push(o);
+    cands.push(
+      { choice: { kind: 'move', dir: toward }, prior: 0, why: '' },
+      { choice: { kind: 'move', dir: -toward }, prior: 0, why: '' },
+      { choice: { kind: 'move', dir: 0 }, prior: waiting ? 0.01 : 0, why: '' },
+    );
+
+    // Common random numbers: every option is imagined against the same luck.
+    const seed = (b.seed * 31 + b.tick * 7919 + f.id * 104729) >>> 0;
+    const enemy = this.enemyModel(e, b);
+    const start = snapshot(f, e);
+    let best: Option | null = null;
+    let bestScore = -Infinity;
+    for (const o of cands) {
+      const sim = b.fork(seed, (copy) => {
+        const me = Brain.imagine(this, copy.fighters[f.id], o.choice, copy.time);
+        const them = Brain.imagine(enemy, copy.fighters[e.id], null, copy.time);
+        // The enemy's current action was already seen by the real me.
+        me.seenKey = this.seenKey; me.seenAt = this.seenAt;
+        return f.id === 0 ? [me, them] : [them, me];
+      });
+      for (let t = 0; t < HORIZON_TICKS && !sim.over; t++) sim.step();
+      const score = this.evaluate(sim, start) + o.prior * PRIOR_WEIGHT;
+      o.score = score;
+      if (score > bestScore) { bestScore = score; best = o; }
+    }
+    if (!best) return null;
+    // Explain choices the instinctive answer would not have made.
+    if (best.choice.kind === 'move') {
+      const ab = heuristicIdx >= 0 ? this.kit.info[heuristicIdx] : null;
+      if (ab && ab.offensive && best.choice.dir === -toward) best.why = 'Holds back — that trade loses.';
+      else if (best.choice.dir === -toward && c.threat?.melee) best.why = 'Steps out of reach.';
+    } else if (best.choice.idx !== heuristicIdx && !best.why) {
+      best.why = this.kit.info[best.choice.idx].defense ? 'Sees it coming.' : 'Spots an opening.';
+    }
+    return best;
+  }
+
+  /** How much better the imagined future is for me than the present. */
+  private evaluate(sim: Battle, start: Snapshot): number {
+    const f = sim.fighters[this.f.id];
+    const e = sim.fighters[this.f.id === 0 ? 1 : 0];
+    const p = this.p;
+    const myLoss = start.myHp - effectiveHp(f);
+    const enLoss = start.enHp - effectiveHp(e);
+    let v = enLoss * (0.9 + p.aggression * 0.2) - myLoss * (0.8 + p.caution * 0.4);
+    if (!e.alive && !(e.has.has('phoenix_feather') && !e.phoenixUsed)) v += 0.5;
+    if (!f.alive) v -= 0.5;
+    // Who is free to act next.
+    v += (lockedFor(e) - lockedFor(f)) * LOCK_VALUE;
+    // Resources: energy and defensive cooldowns spent.
+    v += (f.energy - start.myEnergy - (e.energy - start.enEnergy)) * 0.0004;
+    v -= defenseSpent(f, this.kit) - defenseSpent(e, this.ek);
+    // Position: nobody wants their back to the wall.
+    const dist = Math.abs(e.x - f.x);
+    if (dist < 3.5) {
+      if (Math.abs(f.x) > ARENA_HALF_WIDTH - 1.2 && Math.sign(f.x) !== Math.sign(e.x - f.x)) v -= 0.012;
+      if (Math.abs(e.x) > ARENA_HALF_WIDTH - 1.2 && Math.sign(e.x) !== Math.sign(f.x - e.x)) v += 0.012;
+    }
+    // Spacing preference for the current plan.
+    const want = this.plan === 'kite' && this.m.zone > 0 ? this.m.zone : this.plan === 'recover' ? 6 : this.m.engage;
+    v -= Math.min(1, Math.abs(dist - want) / 4) * 0.01;
+    return v;
   }
 
   private spacingDodge(c: Ctx): number {
@@ -779,7 +1013,7 @@ export class Brain implements FighterBrain {
     const k = this.ek.info[ea.ability];
 
     // 1. They took the bait: cancel and let their defense whiff.
-    if (!off('nofeint') && k.defense && !ab.unblockable && ab.windup >= 0.28) {
+    if (k.defense && !ab.unblockable && ab.windup >= 0.28) {
       const chance = this.p.cunning * (this.plan === 'bait' ? 0.95 : 0.75);
       if (b.rng.next() < chance && b.feint(f)) {
         this.baitedUntil = b.time + 0.6;
@@ -788,7 +1022,7 @@ export class Brain implements FighterBrain {
       return;
     }
     // 2. They are about to land first: cancel to free up for a defense.
-    if (!off('nocancel') && k.offensive && !ab.hyperArmor) {
+    if (k.offensive && !ab.hyperArmor) {
       const t = this.readThreat(b, e);
       const mine = a.windup - a.t;
       if (t && t.melee && t.tti < mine - 0.02 && t.danger > 0.05) {
