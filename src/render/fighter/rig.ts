@@ -228,9 +228,11 @@ export function buildRig(look: FighterLook): Rig {
   };
 
   buildBody(api, joints);
-  buildFace(api);
+  if (!look.head) buildFace(api);
   for (const d of look.decorators) d(api);
-  if (!hidden.has('hair')) buildHair(api);
+  // A custom head goes last so it sees what the gear hides (helmets hide hair).
+  if (look.head) look.head(api);
+  else if (!hidden.has('hair')) buildHair(api);
 
   const { meshes, materials, enchantMaterial } = bake(root, bones, u);
   return {

@@ -3,6 +3,7 @@ import { GEAR } from '../../sim/gear';
 import { gearIds, type Appearance as SimAppearance } from '../../sim/loadout';
 import type { FormId, GearSet } from '../../sim/types';
 import type { PartSpec } from '../meshBuilder';
+import { headLook, lookPalette } from './appearance';
 import type { BodyForm } from './forms';
 import { GEAR_MODELS } from './gearModels';
 
@@ -40,6 +41,8 @@ export interface FighterLook {
   offhand: OffhandStyle;
   /** Gear, costume and accessory builders, run in order before baking. */
   decorators: RigDecorator[];
+  /** A character's custom head (face, hair) built after the gear; replaces the face/hair presets. */
+  head?: RigDecorator;
   /** Colour of team rim light / trail accents when no enchant overrides it. */
   accent: number;
 }
@@ -165,12 +168,6 @@ export interface LookSource {
   look?: SimAppearance;
 }
 
-const extra = (o: object, k: string): number | undefined => {
-  const v = (o as Record<string, unknown>)[k];
-  return typeof v === 'number' ? v : undefined;
-};
-const darken = (c: number, k: number) => ((((c >> 16) & 255) * k) << 16) | ((((c >> 8) & 255) * k) << 8) | ((c & 255) * k);
-
 export function gripOf(gear: GearSet): GripStyle {
   return (GEAR.main[gear.main]?.weapon?.grip ?? 'oneHand') as GripStyle;
 }
@@ -186,18 +183,10 @@ export function offhandOf(gear: GearSet, grip: GripStyle): OffhandStyle {
 export function lookFor(src: LookSource): FighterLook {
   const base = FORM_LOOKS[src.form] ?? FORM_LOOKS.balanced;
   const sim = src.look;
-  const appearance: Appearance = sim
-    ? {
-      ...base,
-      skin: sim.skin ?? base.skin,
-      hair: sim.hairColor ?? base.hair,
-      primary: sim.primary ?? base.primary,
-      secondary: sim.secondary ?? base.secondary,
-      // The creator may extend the sim's Appearance with these; read them if present.
-      accent: extra(sim, 'accent') ?? base.accent,
-      eyes: extra(sim, 'eyes') ?? extra(sim, 'eyeColor') ?? base.eyes,
-      leather: extra(sim, 'leather') ?? darken(sim.secondary ?? base.secondary, 0.6),
-    }
+  // A creator look sets the skin, eye and hair colours and derives the outfit from its two colours.
+  const pal = sim ? lookPalette(sim) : null;
+  const appearance: Appearance = sim && pal
+    ? { skin: sim.skin, hair: sim.hairColor, eyes: sim.eyeColor, primary: pal.main, secondary: pal.pants, accent: pal.trim, leather: pal.boots }
     : base;
   const grip = gripOf(src.gear);
   const decorators: RigDecorator[] = [];
@@ -208,8 +197,9 @@ export function lookFor(src: LookSource): FighterLook {
   return {
     form: src.form,
     appearance,
-    face: sim?.face ?? FORM_FACE[src.form],
-    hair: sim?.hair ?? FORM_HAIR[src.form],
+    face: FORM_FACE[src.form],
+    hair: FORM_HAIR[src.form],
+    head: sim ? headLook(sim) : undefined,
     grip,
     offhand: offhandOf(src.gear, grip),
     decorators,
