@@ -1,5 +1,6 @@
-import { Group, Mesh, Object3D, type Scene } from 'three';
+import { Group, Mesh, Object3D, Vector3, type Scene } from 'three';
 import { sfx } from '../audio/sfx';
+import { smoothstep } from '../core/math';
 import { Battle } from '../sim/battle';
 import type { BattleEvent, Projectile, ProjectileStyle } from '../sim/types';
 import type { FloatingText } from '../ui/floatingText';
@@ -26,7 +27,14 @@ interface ProjectileView {
   /** Accent colour of the item that fired it. */
   tint: number;
   seen: boolean;
+  /** Render-only offset from the simulated spawn point to the weapon that fired it, faded out over the first metres. */
+  off: Vector3 | null;
+  x0: number;
 }
+
+/** Distance over which a projectile slides from its weapon onto its simulated path. */
+const LAUNCH_BLEND = 1.6;
+const _launch = new Vector3();
 
 const STYLE_COLOR: Record<ProjectileStyle, number> = {
   arcane: 0x7fe8ff, hex: 0xc04dff, wave: 0xfff0f0, groundwave: 0xffa040, meteor: 0xff6a1a,
@@ -144,13 +152,18 @@ export class BattleView {
       let pv = this.projectiles.get(p.id);
       if (!pv) {
         const tint = this.projectileTint(p);
-        pv = { obj: this.makeProjectile(p, tint), style: p.style, tint, seen: true };
+        pv = { obj: this.makeProjectile(p, tint), style: p.style, tint, seen: true, off: this.launchOffset(b, p), x0: p.px };
         this.projectiles.set(p.id, pv);
         this.projGroup.add(pv.obj);
       }
       pv.seen = true;
-      const x = p.px + (p.x - p.px) * alpha, y = p.py + (p.y - p.py) * alpha;
-      pv.obj.position.set(x, y, 0);
+      let x = p.px + (p.x - p.px) * alpha, y = p.py + (p.y - p.py) * alpha, z = 0;
+      if (pv.off) {
+        const k = 1 - smoothstep(0, LAUNCH_BLEND, Math.abs(x - pv.x0));
+        x += pv.off.x * k; y += pv.off.y * k; z = pv.off.z * k;
+        if (k <= 0) pv.off = null;
+      }
+      pv.obj.position.set(x, y, z);
       pv.obj.scale.x = Math.sign(p.vx) || 1;
       this.projectileTrail(p, x, y, pv.tint);
       pv.obj.rotation.z += p.style === 'meteor' ? 0.05 : 0;
@@ -165,6 +178,15 @@ export class BattleView {
     for (const [id, pv] of this.projectiles) {
       if (!pv.seen) { pv.obj.removeFromParent(); this.projectiles.delete(id); }
     }
+  }
+
+  /** Offset from a fresh projectile's simulated spawn point to the weapon that fired it. */
+  private launchOffset(b: Battle, p: Projectile): Vector3 | null {
+    if (p.style === 'meteor' || p.reflected || p.life < 2.1) return null;
+    const v = this.fighters[p.owner];
+    const ab = b.fighters[p.owner].abilities[p.ability];
+    if (!v || !ab || !v.anim.launchPoint(ab, _launch)) return null;
+    return new Vector3(_launch.x - p.px, _launch.y - p.py, _launch.z);
   }
 
   /** Tint of the gear piece whose ability fired this projectile. */

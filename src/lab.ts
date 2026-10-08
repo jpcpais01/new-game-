@@ -48,6 +48,7 @@ const LEFTS: Partial<GearSet>[] = [
   {}, { defense: 'tower_shield' }, { defense: 'mirror_aegis' }, { defense: 'parrying_blade' }, { offhand: 'hand_crossbow' },
   { offhand: 'throwing_knives' }, { offhand: 'wind_chakram' }, { offhand: 'frost_orb' }, { offhand: 'iron_gauntlet' },
   { defense: 'tower_shield', offhand: 'hand_crossbow' }, { defense: 'parrying_blade', offhand: 'throwing_knives' },
+  { defense: 'parrying_blade', offhand: 'hand_crossbow' },
 ];
 const FORMS_CYCLE: FormId[] = ['balanced', 'robust', 'mighty', 'slender', 'agile', 'ethereal', 'balanced'];
 
@@ -77,8 +78,8 @@ export function installLab(o: { scene: Scene; fx: FxContext; cam: FightCamera; h
     return o as unknown as Appearance;
   };
   const page = Number(q.get('page')) || 0;
-  // &skin=<theme>: wear that theme's skin on every piece that has one.
-  const theme = q.get('skin');
+  // &skins=<theme>: wear that theme's item skin on every piece that has one.
+  const theme = q.get('skins');
   const skinsOf = (g: GearSet) => Object.fromEntries(SKINS.filter((k) => k.theme === theme && Object.values(g).includes(k.gear)).map((k) => [k.gear, k.id]));
   const roster = o.mode === 'ranged' ? RANGED
     : o.mode === 'combos' ? MAINS.map((main, i) => ({ form: FORMS_CYCLE[i], gear: { main, ...LEFTS[page % LEFTS.length] } as GearSet }))
@@ -88,7 +89,7 @@ export function installLab(o: { scene: Scene; fx: FxContext; cam: FightCamera; h
     const f = createFighter((i % 2) as 0 | 1, { name: r.form, form: r.form, gear, skins: skinsOf(gear), look: lookFor(i) });
     const home = (i - (roster.length - 1) / 2) * 2.3;
     f.x = f.px = home;
-    f.facing = 1;
+    f.facing = q.has('flip') ? -1 : 1;
     // Portrait shots review the close-up detail tier.
     const v = withBodyDetail(q.has('shot') ? 2 : bodyDetail(), () => new FighterView(f, (i % 2) as 0 | 1));
     o.scene.add(v.group);
@@ -123,11 +124,13 @@ export function installLab(o: { scene: Scene; fx: FxContext; cam: FightCamera; h
   };
 
   // `&slow=0.25` plays everything at a quarter speed, to study fast moves.
-  const slow = Number(new URLSearchParams(location.search).get('slow')) || 1;
+  const slow = Number(q.get('slow')) || 1;
+  // `&freeze=2.4` stops the script at that second and lets the poses settle, for stills.
+  const freeze = Number(q.get('freeze')) || 0;
   return (realDt: number) => {
-    const dt = realDt * slow;
     for (const ac of actors) {
       const f = ac.f;
+      const dt = freeze ? Math.max(0, Math.min(realDt * slow, freeze - ac.clock)) : realDt * slow;
       ac.clock = (ac.clock + dt) % total;
       let t = ac.clock, beat: Beat = 'idle', bt = 0;
       for (const [d, b] of script) { if (t < d) { beat = b; bt = t; break; } t -= d; }
@@ -179,8 +182,14 @@ export function installLab(o: { scene: Scene; fx: FxContext; cam: FightCamera; h
       } else f.y = Math.max(0, f.y - dt * 6);
       f.x += f.vx * dt;
       f.x = Math.max(ac.home - 1.0, Math.min(ac.home + 1.0, f.x));
+      if (freeze && ac.clock >= freeze - 1e-6) {
+        // Frozen: tell screenshot scripts, with what each actor is doing.
+        const a = f.action;
+        document.body.dataset.frozen = '1';
+        document.body.dataset[`actor${actors.indexOf(ac)}`] = `${beat}@${ac.clock.toFixed(2)} ${a ? `${f.abilities[a.ability].id}:${a.phase}:${a.t.toFixed(2)}` : '-'}`;
+      }
       ac.v.setLookAt(null);
-      ac.v.update(f, 1, dt, o.fx, false, false, 1);
+      ac.v.update(f, 1, realDt * slow, o.fx, false, false, 1);
     }
     o.cam.showcase = 0;
     const shot = q.get('shot');
@@ -193,7 +202,7 @@ export function installLab(o: { scene: Scene; fx: FxContext; cam: FightCamera; h
       const [h, d] = shot === 'face' ? [head.y - 0.14, Number(q.get('dist')) || 1.25] : shot === 'bust' ? [head.y - 0.45, 2.4] : [head.y * 0.55, 5.2];
       const c = o.cam.camera;
       const x = shot === 'body' ? ac.f.x : head.x;
-      o.cam.update(dt, x - 1, x + 1, 0, 0);
+      o.cam.update(realDt, x - 1, x + 1, 0, 0);
       c.position.set(x + Math.sin(yaw) * d, h + (shot === 'face' ? 0.02 : 0.15), Math.cos(yaw) * d);
       c.lookAt(x, h, 0);
       return;

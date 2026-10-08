@@ -102,16 +102,10 @@ function repeater(g: Object3D, s: GearSockets): void {
   s.tag('xbowBolt', bolt);
 }
 
-const crossbow: SkinModel['offhand'] = (s, _m, inHand) => {
+const crossbow: SkinModel['offhand'] = (s) => {
   const xb = s.bone(s.offGrip, 0, 0, 0);
   repeater(xb, s);
   s.tag('xbow', xb);
-  if (!inHand) {
-    // Holster on the left hip, muzzle down (the animator moves it there).
-    const holster = s.bone(s.hips, 0.02, -0.04, -0.29);
-    holster.rotation.set(0.25, 0, -Math.PI / 2 - 0.3);
-    s.tag('xbowHolster', holster);
-  }
 };
 
 // --- Hyperdisc (wind chakram) -------------------------------------------------------------------
@@ -135,9 +129,8 @@ function disc(g: Object3D, s: GearSockets): void {
   for (let k = 0; k < 3; k++) part(h, rbox(0.12, 0.02, 0.012, 0.004), PANEL, { pos: [0, 0, 0], rot: [0, (k / 3) * Math.PI, 0], scale: [1.4, 1, 1] });
 }
 
-const chakram: SkinModel['offhand'] = (s, _m, inHand) => {
-  if (inHand) { disc(s.offGrip, s); return; }
-  disc(group(s.chest, [-0.24, 0.28, 0], [0, 0, 0.3]), s);
+const chakram: SkinModel['offhand'] = (s) => {
+  disc(s.offGrip, s);
 };
 
 // --- Cyber Visor (iron helm) ------------------------------------------------------------------------

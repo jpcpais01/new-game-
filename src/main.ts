@@ -394,10 +394,12 @@ void boot().then(async () => {
   }
   if (params.has('demo')) {
     loadouts = [generateRival(), generateRival()];
-    // `&main=longbow,spear` forces the main weapons (for checking animations).
-    params.get('main')?.split(',').forEach((id, i) => {
-      if (loadouts[i] && id) loadouts[i] = sanitizeBuild({ ...loadouts[i], gear: { ...loadouts[i].gear, main: id } }, loadouts[i]);
-    });
+    // `&main=longbow,spear` (and `&offhand=`, `&defense=`) force gear slots (for checking animations).
+    for (const slot of ['main', 'offhand', 'defense'] as const) {
+      params.get(slot)?.split(',').forEach((id, i) => {
+        if (loadouts[i] && id) loadouts[i] = sanitizeBuild({ ...loadouts[i], gear: { ...loadouts[i].gear, [slot]: id } }, loadouts[i]);
+      });
+    }
     startFight(randomSeed());
   } else if (!lab && (!player || params.has('create'))) {
     // First launch: meet your fighter before anything else.
