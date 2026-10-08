@@ -976,6 +976,10 @@ button:focus-visible { outline: 2px solid var(--ember-hi); outline-offset: 2px; 
   .cr-hint { left: 50%; bottom: calc(56% + 18px + var(--safe-b)); }
 }
 
+@media (orientation: portrait) and (max-width: 430px) {
+  .corner .edit { width: 44px; height: 44px; padding: 0; }
+  .corner .edit .lbl { display: none; }
+}
 @media (orientation: portrait) and (max-width: 370px) {
   .cr-tab .glyph { display: none; }
   .cr-tab { min-height: 36px; }
