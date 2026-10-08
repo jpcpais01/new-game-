@@ -326,6 +326,7 @@ function onResize(): void {
 renderer.onResize = () => cam.resize(renderer.aspect);
 window.addEventListener('resize', onResize);
 screen.orientation?.addEventListener?.('change', onResize);
+document.addEventListener('fullscreenchange', onResize);
 
 window.addEventListener('keydown', (e) => {
   if (e.repeat || state === 'create') return;
