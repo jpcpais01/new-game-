@@ -1,26 +1,12 @@
+import { sanitizeAppearance, type Appearance } from '../character/appearance';
 import type { Rng } from '../core/rng';
 import { EVADE } from './abilities';
 import { FORMS, FORM_IDS, type Personality } from './forms';
 import { GEAR, GEAR_SLOTS, gearIdsFor, gearOf, type GearDef } from './gear';
 import type { AbilityDef, FormId, GearId, GearSet, GearSlot, Stats } from './types';
 
-/**
- * Cosmetic look of a character. The sim ignores it; the renderer and the
- * character creator own its meaning (the creator may extend this freely).
- */
-export interface Appearance {
-  /** Skin tone (hex). */
-  skin: number;
-  /** Face preset id. */
-  face: string;
-  /** Hair style preset id. */
-  hair: string;
-  hairColor: number;
-  /** Main outfit colour. */
-  primary: number;
-  /** Trim / accent colour. */
-  secondary: number;
-}
+/** Cosmetic look of a character: the sim carries it, the renderer draws it. */
+export type { Appearance } from '../character/appearance';
 
 /**
  * One persistent character: who the player is. There are no classes: the form
@@ -140,7 +126,7 @@ export function sanitizeBuild(raw: unknown, fallback: CharacterBuild): Character
   }
   if (!gear.main) return fallback;
   const name = typeof o.name === 'string' && o.name.trim() ? o.name.trim().slice(0, 16) : fallback.name;
-  const look = o.look && typeof o.look === 'object' ? (o.look as Appearance) : fallback.look;
+  const look = o.look && typeof o.look === 'object' ? sanitizeAppearance(o.look) : fallback.look;
   return { name, form, gear, look };
 }
 
