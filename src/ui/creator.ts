@@ -5,16 +5,20 @@ import {
 } from '../character/appearance';
 import { cleanName, NAME_MAX, randomName, type PlayerCharacter } from '../character/profile';
 import { FORM_IDS, FORMS } from '../sim/forms';
+import { GEAR_SLOTS, gearOf, SLOT_NAMES } from '../sim/gear';
+import { SKIN_THEME_IDS, SKIN_THEMES, skinOf, skinsFor, withSkin, type SkinTheme } from '../gear/skins';
+import { skinStrip } from './skinIcons';
 import type { FormId, Stats } from '../sim/types';
 import { FORM_GLYPH } from './menu';
 import { h, hex } from './dom';
 
-type Tab = 'form' | 'face' | 'hair' | 'colors';
+type Tab = 'form' | 'face' | 'hair' | 'colors' | 'skins';
 const TABS: { id: Tab; label: string; glyph: string }[] = [
   { id: 'form', label: 'Form', glyph: '🧍' },
   { id: 'face', label: 'Face', glyph: '🙂' },
   { id: 'hair', label: 'Hair', glyph: '💇' },
   { id: 'colors', label: 'Colours', glyph: '🎨' },
+  { id: 'skins', label: 'Skins', glyph: '✨' },
 ];
 
 const LABELS: Record<string, string> = {
@@ -60,7 +64,7 @@ export class Creator {
   open(p: PlayerCharacter, firstTime: boolean): void {
     this.original = firstTime ? null : p;
     // A new fighter starts nameless: naming them is the first thing you do.
-    this.draft = { ...p, name: firstTime ? '' : p.name, gear: { ...p.gear }, look: { ...p.look } };
+    this.draft = { ...p, name: firstTime ? '' : p.name, gear: { ...p.gear }, skins: { ...p.skins }, look: { ...p.look } };
     this.tab = 'form';
     this.build();
     this.el.hidden = false;
@@ -167,6 +171,9 @@ export class Creator {
           h('p.cr-note', null, 'Outfit colours tint your clothes. Weapons and gear keep their own materials.'),
         ];
         break;
+      case 'skins':
+        content = this.skinRows();
+        break;
     }
     const scroll = this.body.scrollTop;
     this.body.replaceChildren(...content.filter(Boolean) as HTMLElement[]);
@@ -229,6 +236,46 @@ export class Creator {
     );
   }
 
+  /** Skins tab: whole themed sets first, then a strip per equipped piece. */
+  private skinRows(): (HTMLElement | null)[] {
+    const gear = GEAR_SLOTS.map((slot) => this.draft.gear[slot]).filter((g) => g !== undefined);
+    const skinnable = gear.filter((g) => skinsFor(g).length);
+    if (!skinnable.length) return [h('p.cr-note', null, 'None of your gear has skins yet.')];
+    const wearing = (t: SkinTheme | null) => skinnable.every((g) => {
+      const s = skinOf(g, this.draft.skins);
+      return t ? s?.theme === t || !skinsFor(g).some((k) => k.theme === t) : !s;
+    });
+    const wear = (t: SkinTheme | null) => {
+      sfx.play('ui');
+      let next = this.draft.skins;
+      for (const g of skinnable) next = withSkin(next, g, t ? skinsFor(g).find((k) => k.theme === t)?.id ?? skinOf(g, next)?.id ?? null : null);
+      this.draft.skins = next;
+      this.changed(true);
+    };
+    const sets = SKIN_THEME_IDS.filter((t) => skinnable.some((g) => skinsFor(g).some((k) => k.theme === t)));
+    return [
+      h('section.cr-row', null,
+        h('h4', null, 'Sets'),
+        h('div.chips', null,
+          h('button.chip-btn' + (wearing(null) ? '.on' : ''), { onclick: () => wear(null) }, 'Default'),
+          ...sets.map((t) => h('button.chip-btn.theme-chip' + (wearing(t) ? '.on' : ''), {
+            style: { '--sc': hex(SKIN_THEMES[t].color) }, title: SKIN_THEMES[t].blurb, onclick: () => wear(t),
+          }, SKIN_THEMES[t].name)),
+        ),
+      ),
+      ...GEAR_SLOTS.map((slot) => {
+        const g = this.draft.gear[slot];
+        const strip = g ? skinStrip(g, this.draft.skins, (id) => {
+          sfx.play('ui');
+          this.draft.skins = withSkin(this.draft.skins, g, id);
+          this.changed();
+        }) : null;
+        return strip && g ? h('section.cr-row', null, h('h4', null, `${SLOT_NAMES[slot]} · ${gearOf(g).name}`), strip) : null;
+      }),
+      h('p.cr-note', null, 'Skins only change how gear looks. Stats and abilities stay the same.'),
+    ];
+  }
+
   private changed(cheer = false): void {
     this.cb.onPreview(this.draft, cheer);
     this.renderBody();
@@ -252,7 +299,7 @@ export class Creator {
     }
     this.draft.name = name;
     sfx.play('start');
-    this.cb.onSave({ ...this.draft, look: { ...this.draft.look } });
+    this.cb.onSave({ ...this.draft, skins: { ...this.draft.skins }, look: { ...this.draft.look } });
   }
 }
 

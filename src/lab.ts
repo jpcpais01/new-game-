@@ -1,6 +1,7 @@
 import type { Scene } from 'three';
 import { createFighter, type Fighter } from './sim/fighter';
 import type { FormId, GearSet } from './sim/types';
+import { SKINS } from './gear/skins';
 import type { FightCamera } from './render/camera';
 import { FighterView, type FxContext } from './render/fighter/fighterView';
 
@@ -54,12 +55,16 @@ const SCRIPT: [number, Beat][] = [
 
 export function installLab(o: { scene: Scene; fx: FxContext; cam: FightCamera; hide: () => void; mode: string; focus?: number }): (dt: number) => void {
   o.hide();
-  const page = Number(new URLSearchParams(location.search).get('page')) || 0;
+  const q = new URLSearchParams(location.search);
+  const page = Number(q.get('page')) || 0;
+  // &skin=<theme>: wear that theme's skin on every piece that has one.
+  const theme = q.get('skin');
+  const skinsOf = (g: GearSet) => Object.fromEntries(SKINS.filter((k) => k.theme === theme && Object.values(g).includes(k.gear)).map((k) => [k.gear, k.id]));
   const roster = o.mode === 'ranged' ? RANGED
     : o.mode === 'combos' ? MAINS.map((main, i) => ({ form: FORMS_CYCLE[i], gear: { main, ...LEFTS[page % LEFTS.length] } as GearSet }))
       : ROSTER;
   const actors: Actor[] = roster.map((r, i) => {
-    const f = createFighter((i % 2) as 0 | 1, { name: r.form, form: r.form, gear: r.gear });
+    const f = createFighter((i % 2) as 0 | 1, { name: r.form, form: r.form, gear: r.gear, skins: skinsOf(r.gear) });
     const home = (i - (roster.length - 1) / 2) * 2.3;
     f.x = f.px = home;
     f.facing = 1;
