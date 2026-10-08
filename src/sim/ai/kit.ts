@@ -136,8 +136,8 @@ function mitigation(dst: Fighter, dtype: AbilityDef['damageType']): number {
 function onHitBonus(src: Fighter, dst: Fighter, raw: number): number {
   let extra = 0;
   const p = src.stats.power;
-  if (src.has.has('ember_core') && stacksOf(dst, 'burn') < 3) extra += p * 0.2 * 3 * mitigation(dst, 'magic');
-  if (src.has.has('storm_crown')) extra += (p * 0.9 * mitigation(dst, 'magic')) / (src.stormCounter === 2 ? 1 : 3);
+  if (src.has.has('ember_core') && stacksOf(dst, 'burn') < 3) extra += p * 0.2 * 2 * mitigation(dst, 'magic');
+  if (src.has.has('storm_crown')) extra += (p * 0.75 * mitigation(dst, 'magic')) / (src.stormCounter === 3 ? 1 : 4);
   if (src.has.has('echo_stone')) extra += raw * 0.35 * 0.6;
   return extra;
 }

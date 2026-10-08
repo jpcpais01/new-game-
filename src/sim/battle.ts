@@ -193,7 +193,7 @@ export class Battle {
       if (!s) continue;
       s.remaining -= DT;
       if (dots && (s.id === 'burn' || s.id === 'poison') && f.alive) {
-        const dps = s.id === 'burn' ? s.sourcePower * 0.2 * s.stacks : s.sourcePower * 0.09 * s.stacks;
+        const dps = s.id === 'burn' ? s.sourcePower * 0.17 * s.stacks : s.sourcePower * 0.065 * s.stacks;
         s.acc += dps * DT;
         s.tickT += DT;
         if (s.tickT >= 0.5 || s.remaining <= 0) {
@@ -228,7 +228,7 @@ export class Battle {
       }
       if (target.action && !target.action.feint) target.action = null;
     }
-    const maxStacks: Partial<Record<StatusId, number>> = { burn: 3, poison: 5, chill: 5 };
+    const maxStacks: Partial<Record<StatusId, number>> = { burn: 3, poison: 4, chill: 5 };
     const existing = getStatus(target, apply.status);
     const add = apply.stacks ?? 1;
     if (existing) {
@@ -505,7 +505,7 @@ export class Battle {
           if (target.invuln > 0) {
             // Phases through; keep flying.
           } else if (target.has.has('mirror_aegis') && target.mirrorCd <= 0 && !p.ground) {
-            target.mirrorCd = 4;
+            target.mirrorCd = 6;
             this.reflectProjectile(p, target);
             continue;
           } else {
@@ -688,14 +688,14 @@ export class Battle {
 
     // On-hit items (only for real ability hits, not DoTs/echoes).
     if (ab.slot !== 'evade' && !blocked) {
-      if (att.has.has('frost_core')) this.applyStatus(tgt, att, { status: 'chill', duration: 2.5 });
-      if (att.has.has('ember_core')) this.applyStatus(tgt, att, { status: 'burn', duration: 3 });
+      if (att.has.has('frost_core') && this.rng.chance(0.5)) this.applyStatus(tgt, att, { status: 'chill', duration: 2.5 });
+      if (att.has.has('ember_core')) this.applyStatus(tgt, att, { status: 'burn', duration: 2 });
       if (att.has.has('storm_crown')) {
         att.stormCounter++;
-        if (att.stormCounter >= 3) {
+        if (att.stormCounter >= 4) {
           att.stormCounter = 0;
           this.emit({ type: 'lightning', f: att.id, x: tgt.x });
-          const zap = this.applyDamage(att, tgt, att.stats.power * 0.9, 'magic');
+          const zap = this.applyDamage(att, tgt, att.stats.power * 0.75, 'magic');
           this.emit({ type: 'hit', attacker: att.id, target: tgt.id, amount: zap, crit: false, dtype: 'magic',
             blocked: false, heavy: true, ability: 'lightning', x: tgt.x, y: tgt.y + 2, killing: !tgt.alive });
           if (tgt.alive) this.applyStatus(tgt, att, { status: 'stun', duration: 0.35 });
@@ -737,7 +737,7 @@ export class Battle {
     if (tgt.hp <= 0) {
       if (tgt.has.has('phoenix_feather') && !tgt.phoenixUsed) {
         tgt.phoenixUsed = true;
-        tgt.hp = Math.round(tgt.stats.maxHp * 0.3);
+        tgt.hp = Math.round(tgt.stats.maxHp * 0.25);
         tgt.invuln = 1.3;
         tgt.action = null;
         tgt.stagger = 0;

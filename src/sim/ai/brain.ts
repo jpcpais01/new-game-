@@ -934,7 +934,7 @@ export class Brain implements FighterBrain {
       why = why || `${ab.name} drives them into the wall!`;
     }
     if (c.cornered && ab.knockback && ab.knockback >= 4) { val += 0.03; why = why || 'Shoves out of the corner!'; }
-    if (f.has.has('storm_crown') && f.stormCounter === 2) val += 0.02 * pHit;
+    if (f.has.has('storm_crown') && f.stormCounter === 3) val += 0.02 * pHit;
     if (f.has.has('frost_core') && stacksOf(e, 'chill') === 4) { val += 0.04 * pHit; why = why || 'Going for the freeze.'; }
     // Repel attacks are an answer to being rushed when you want range.
     if (ab.knockback && ab.knockback >= 5 && dist < 2.4 && (plan === 'kite' || this.kit.ranged)) val += 0.04;
