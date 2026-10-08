@@ -217,6 +217,7 @@ function onResize(): void {
   renderer.resize();
   cam.resize(renderer.aspect);
 }
+renderer.onResize = () => cam.resize(renderer.aspect);
 window.addEventListener('resize', onResize);
 screen.orientation?.addEventListener?.('change', onResize);
 

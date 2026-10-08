@@ -56,7 +56,11 @@ export class GameRenderer {
   private fastTime = 0;
   private width = 1;
   private height = 1;
-  private pixelRatio = 0;
+  private bufW = 0;
+  private bufH = 0;
+  private devicePixels: [number, number] | null = null;
+  /** Called after the canvas size changed (camera aspect lives elsewhere). */
+  onResize: (() => void) | null = null;
   private clock = 0;
   private lastChange = 0;
   private lastRaise = -99;
@@ -79,6 +83,7 @@ export class GameRenderer {
     this.renderer.info.autoReset = false;
     this.renderer.shadowMap.type = PCFShadowMap;
     this.applySettings();
+    this.observeSize();
   }
 
   setQuality(q: Quality): void {
@@ -132,20 +137,61 @@ export class GameRenderer {
     this.chromaAmt = Math.min(1, this.chromaAmt + amount);
   }
 
+  /**
+   * Sizes the drawing buffer in whole device pixels. Chrome on Windows hands a
+   * fullscreen canvas straight to the display (hardware overlay) only while
+   * its buffer matches its on-screen pixel size exactly; with fractional
+   * display scaling (125%, 150%) a CSS size × devicePixelRatio buffer is off
+   * by a pixel, and the compositor can swap paths mid-frame, which shows as a
+   * black screen with stray stretched slices. So we read the exact device
+   * pixel size from a ResizeObserver where available.
+   */
   resize(): void {
     const w = this.canvas.clientWidth || window.innerWidth;
     const h = this.canvas.clientHeight || window.innerHeight;
-    const pr = Math.min(window.devicePixelRatio || 1, this.settings.maxPixelRatio) * this.scale;
+    const dpr = window.devicePixelRatio || 1;
+    let pw = Math.round(w * dpr);
+    let ph = Math.round(h * dpr);
+    // Trust the observer only when it agrees with CSS size × DPR to within a
+    // couple of pixels (device emulation reports CSS pixels here).
+    const dp = this.devicePixels;
+    if (dp && Math.abs(dp[0] - pw) <= 2 && Math.abs(dp[1] - ph) <= 2) {
+      pw = dp[0];
+      ph = dp[1];
+    }
+    // Cap the density, then apply dynamic resolution.
+    const cap = Math.min(1, (w * this.settings.maxPixelRatio) / Math.max(1, pw));
+    const k = cap * this.scale;
+    pw = Math.max(1, Math.round(pw * k));
+    ph = Math.max(1, Math.round(ph * k));
     // Mobile browsers fire resize for toolbar changes; reallocating render
     // targets for an unchanged size would cost a frame for nothing.
-    if (w === this.width && h === this.height && pr === this.pixelRatio && this.composerSized) return;
-    this.pixelRatio = pr;
+    if (w === this.width && h === this.height && pw === this.bufW && ph === this.bufH && this.composerSized) return;
     this.composerSized = true;
-    this.renderer.setPixelRatio(pr);
     this.width = w;
     this.height = h;
-    this.renderer.setSize(w, h, false);
-    this.composer?.setSize(w, h, false);
+    this.bufW = pw;
+    this.bufH = ph;
+    // Pixel ratio 1 with a device-pixel size: three won't round anything.
+    this.renderer.setPixelRatio(1);
+    this.renderer.setSize(pw, ph, false);
+    this.composer?.setSize(pw, ph, false);
+  }
+
+  private observeSize(): void {
+    if (typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver((entries) => {
+      const e = entries[entries.length - 1];
+      const box = e.devicePixelContentBoxSize?.[0];
+      this.devicePixels = box ? [box.inlineSize, box.blockSize] : null;
+      this.resize();
+      this.onResize?.();
+    });
+    try {
+      ro.observe(this.canvas, { box: 'device-pixel-content-box' });
+    } catch {
+      ro.observe(this.canvas); // Safari: no device-pixel box, fall back to rounding.
+    }
   }
 
   get aspect(): number {
