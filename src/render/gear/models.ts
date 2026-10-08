@@ -87,9 +87,10 @@ function unproxied(parent: Object3D, x: number, y: number, z: number): [Object3D
 
 function socketsFrom(api: RigBuildApi, id: GearId): GearSockets {
   const k = api.sockets, m = api.metrics, sh = m.form.shape;
-  const chestScale: [number, number, number] = [m.chestD / REF.chestD, sh.neckLen / REF.chestH, m.chestW / REF.chestW];
+  // The new torso carries muscle and cloth volume, so worn pieces sit a little proud of it.
+  const chestScale: [number, number, number] = [1.1 * m.chestD / REF.chestD, sh.neckLen / REF.chestH, 1.1 * m.chestW / REF.chestW];
   const arm = (fa: Object3D) => proxy(api, fa, [m.foreR / 0.064, m.forearm / REF.forearm, m.foreR / 0.064]);
-  const shoulder = (so: Object3D) => proxy(api, so, [m.armR / REF.armR, m.armR / REF.armR, m.armR / REF.armR], [0, -0.0, 0]);
+  const shoulder = (so: Object3D) => proxy(api, so, [m.armR / REF.armR, m.armR / REF.armR, m.armR / REF.armR]);
   const leg = (shin: Object3D, foot: Object3D): Leg => {
     const r = m.calfR / REF.calfR;
     // Reference ground (y=-0.5) lands on this body's ground at rest.
@@ -403,6 +404,8 @@ const DEFENSE: Partial<Record<ArtKey, DefenseFn>> = {
     part(s.chest, rbox(0.03, 0.3, 0.04, 0.012), m.trim, { pos: [0.225 * k, 0.2, 0] });
     part(s.chest, octa(0.05), m.gem, { pos: [0.24 * k, 0.26, 0], scale: [0.6, 1, 1] });
     pauldrons(s, m.main, m.trim);
+    // Plackart over the belly, between the breastplate and the faulds.
+    part(s.hips, lathe('plackart', [[0.001, 0.05], [0.19, 0.06], [0.225, 0.16], [0.215, 0.3], [0.001, 0.31]], 16), m.main, { scale: [0.95 * k, 1, 1.0 * k] });
     // Faulds: a ring of plates over the hips.
     part(s.hips, torus(0.2 * k, 0.04, Math.PI * 2, 5, 18), m.trim, { pos: [0, 0.07, 0], rot: [Math.PI / 2, 0, 0], scale: [0.9, 1.18, 1] });
     for (let i = 0; i < 6; i++) {
