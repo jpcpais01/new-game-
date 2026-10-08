@@ -16,6 +16,7 @@ import { Hud } from './ui/hud';
 import { DEFAULT_BUILDS, sanitizeBuild } from './sim/loadout';
 import { Menu, ZOOM_LABEL, ZOOM_ORDER, type Loadout, type MenuSettings } from './ui/menu';
 import { Results } from './ui/results';
+import { setupPhoneFullscreen } from './ui/fullscreen';
 import { Creator } from './ui/creator';
 import { CharacterStage } from './render/characterStage';
 import {
@@ -344,6 +345,7 @@ canvas.addEventListener('pointermove', (e) => {
 const endDrag = (e: PointerEvent) => { if (e.pointerId === dragId) { dragId = -1; stage.release(); } };
 canvas.addEventListener('pointerup', endDrag);
 canvas.addEventListener('pointercancel', endDrag);
+setupPhoneFullscreen();
 // Audio needs a user gesture; unlock on the first one.
 window.addEventListener('pointerdown', () => sfx.unlock(), { once: true });
 document.addEventListener('visibilitychange', () => {
