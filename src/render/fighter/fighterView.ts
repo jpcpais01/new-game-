@@ -368,7 +368,7 @@ export class FighterView {
       o.mesh.rotation.y += dt * 3;
       let on = 1;
       if (o.item === 'mirror_aegis') on = f.mirrorCd <= 0 ? 1 : 0.35;
-      if (o.item === 'storm_crown') on = 0.5 + f.stormCounter * 0.35;
+      if (o.item === 'storm_crown') on = 0.5 + f.stormCounter * 0.25;
       o.mesh.scale.setScalar(Math.max(0.01, (f.alive ? 1 : 0) * on * (1 + Math.sin(this.time * 6) * 0.05 * on)));
     }
     // Collapse the spent feather into the head (never scale to exactly zero: NaN normals).
