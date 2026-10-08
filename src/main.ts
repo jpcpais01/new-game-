@@ -262,6 +262,11 @@ function frame(now: number): void {
   last = now;
   renderer.trackFrame(realDt);
 
+  // Safety net: re-fit when the canvas's shown shape or the camera's aspect drifts
+  // from the drawing buffer (a phone rotating into fullscreen can settle after
+  // the last resize event). Cheap: the canvas is fixed-position.
+  const cw = canvas.clientWidth, ch = canvas.clientHeight;
+  if (cw && ch && (Math.abs(cw / ch - renderer.aspect) > 0.002 || Math.abs(cam.camera.aspect - renderer.aspect) > 0.002)) onResize();
   if (state === 'create') layoutStage();
   // On phones in portrait the loadout sheet covers the lower half: lift the duel above it.
   else cam.setLift(state === 'menu' ? Math.max(0, menu.bottomCover - 0.34) : 0);
@@ -386,7 +391,7 @@ if (params.has('speed')) speed = Math.min(8, Math.max(1, Number(params.get('spee
 void boot().then(async () => {
   if (params.has('debug')) {
     const { installDebug } = await import('./debug');
-    debugHooks = installDebug({ renderer, scene, getState: () => (paused ? `${state} (paused)` : state) });
+    debugHooks = installDebug({ renderer, scene, camera: cam.camera, getState: () => (paused ? `${state} (paused)` : state) });
   }
   if (params.has('lab')) {
     const { installLab } = await import('./lab');
