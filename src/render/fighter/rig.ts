@@ -10,7 +10,6 @@ import type { PartSpec } from '../meshBuilder';
 import { buildBody } from './body';
 import { bodyForm } from './forms';
 import { gearGeo } from './geo';
-import { buildFace, buildHair } from './head';
 import type { BodyMetrics, FighterLook, PartOpts, RigBuildApi, Sockets } from './look';
 import { J, JOINT_COUNT, JOINT_PARENT } from './poses';
 
@@ -22,6 +21,13 @@ export interface RigPartSpec extends PartSpec {
   smooth?: boolean;
   /** Per-vertex colour from the vertex position in the part's own geometry space. */
   paint?: (p: Vector3) => number;
+  /**
+   * Skin each vertex to the nearest bone of this joint chain (then blend
+   * across joints like `smooth`): one sculpted mesh spanning several bones.
+   */
+  chain?: readonly number[];
+  /** Use the geometry's own `color` and `gloss` attributes (painted sculpts). */
+  vertexColors?: boolean;
 }
 
 export interface Rig {
@@ -228,11 +234,9 @@ export function buildRig(look: FighterLook): Rig {
   };
 
   buildBody(api, joints);
-  if (!look.head) buildFace(api);
   for (const d of look.decorators) d(api);
-  // A custom head goes last so it sees what the gear hides (helmets hide hair).
-  if (look.head) look.head(api);
-  else if (!hidden.has('hair')) buildHair(api);
+  // The head goes last so it sees what the gear hides (helmets hide hair).
+  look.head?.(api);
 
   const { meshes, materials, enchantMaterial } = bake(root, bones, u);
   return {
@@ -318,6 +322,27 @@ function bake(root: Group, bones: Bone[], u: FighterUniforms): { meshes: Skinned
     else if (JOINT_PARENT[j] >= 0 && j !== J.HEAD) frames[j].axis.subVectors(frames[j].pos, frames[JOINT_PARENT[j]].pos).normalize();
   }
   const scale = bones[J.HIPS].parent!.getWorldScale(new Vector3()).x;
+  // Bone segments for chain skinning: joint to child (leaf bones get a short stub).
+  const segEnd: Vector3[] = frames.map((f, j) => {
+    const c = JOINT_CHILD[j];
+    if (c >= 0) return frames[c].pos.clone();
+    if (j === J.FOOT_L || j === J.FOOT_R) return f.pos.clone().add(new Vector3(0.14, -0.05, 0).multiplyScalar(scale));
+    if (j === J.HEAD) return f.pos.clone().add(new Vector3(0, 0.3, 0).multiplyScalar(scale));
+    return f.pos.clone().addScaledVector(f.axis, 0.08 * scale);
+  });
+  const nearestBone = (chain: readonly number[], p: Vector3): number => {
+    let best = chain[0], bd = Infinity;
+    for (const b of chain) {
+      const a = frames[b].pos, e = segEnd[b];
+      _d.subVectors(e, a);
+      const l2 = _d.lengthSq();
+      const t = l2 > 0 ? Math.max(0, Math.min(1, _n.subVectors(p, a).dot(_d) / l2)) : 0;
+      const dx = a.x + _d.x * t - p.x, dy = a.y + _d.y * t - p.y, dz = a.z + _d.z * t - p.z;
+      const dist = dx * dx + dy * dy + dz * dz;
+      if (dist < bd) { bd = dist; best = b; }
+    }
+    return best;
+  };
 
   const lit = new SkinBuilder();
   const line = new SkinBuilder();
@@ -366,13 +391,17 @@ function bake(root: Group, bones: Bone[], u: FighterUniforms): { meshes: Skinned
     const g = m.geometry;
     const p = g.getAttribute('position');
     const nAttr = g.getAttribute('normal');
+    const cAttr = s.vertexColors ? g.getAttribute('color') : undefined;
+    const gAttr = s.vertexColors ? g.getAttribute('gloss') : undefined;
     const base = sb.count;
     _m3.getNormalMatrix(m.matrixWorld);
     _c.setHex(s.color);
     let cr = _c.r * colorScale, cg = _c.g * colorScale, cb = _c.b * colorScale;
     for (let i = 0; i < p.count; i++) {
       _v.fromBufferAttribute(p, i);
-      if (s.paint) {
+      if (cAttr) {
+        cr = cAttr.getX(i) * colorScale; cg = cAttr.getY(i) * colorScale; cb = cAttr.getZ(i) * colorScale;
+      } else if (s.paint) {
         _c.setHex(s.paint(_v));
         cr = _c.r * colorScale; cg = _c.g * colorScale; cb = _c.b * colorScale;
       }
@@ -381,8 +410,9 @@ function bake(root: Group, bones: Bone[], u: FighterUniforms): { meshes: Skinned
       if (nAttr) { _n.fromBufferAttribute(nAttr, i).applyMatrix3(_m3).normalize(); sb.nor.push(_n.x, _n.y, _n.z); }
       else sb.nor.push(0, 1, 0);
       sb.col.push(cr, cg, cb);
-      sb.gloss.push(gloss);
-      const n = s.smooth ? weigh(bone, _v) : (wi[0] = bone, w[0] = 1, 1);
+      sb.gloss.push(gAttr ? gAttr.getX(i) : gloss);
+      const vb = s.chain ? nearestBone(s.chain, _v) : bone;
+      const n = s.smooth || s.chain ? weigh(vb, _v) : (wi[0] = bone, w[0] = 1, 1);
       for (let k = 0; k < 4; k++) {
         sb.si.push(k < n ? wi[k] : 0);
         sb.sw.push(k < n ? w[k] : 0);
