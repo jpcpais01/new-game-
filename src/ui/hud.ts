@@ -1,8 +1,8 @@
 import { PLAN_LABELS, type Plan } from '../sim/ai/brain';
 import type { Battle } from '../sim/battle';
-import { CLASSES } from '../sim/classes';
 import { ROUND_TIME } from '../sim/constants';
-import { ITEMS } from '../sim/items';
+import { FORMS } from '../sim/forms';
+import { gearOf } from '../sim/gear';
 import type { BattleEvent, StatusId } from '../sim/types';
 import { h } from './dom';
 
@@ -64,10 +64,12 @@ export class Hud {
       const plan = h('span.chip.plan', null, PLAN_LABELS[b.brains[side].plan]);
       const ult = h('span.chip.ult', { hidden: true }, 'Ult ready');
       const statuses = h('div.ico-row');
-      const items = h('div.ico-row', null, ...f.items.map((id) =>
-        h(`span.mini.r-${ITEMS[id].rarity}`, { title: `${ITEMS[id].name}: ${ITEMS[id].desc}` }, ITEMS[id].icon)));
+      const items = h('div.ico-row', null, ...f.gearIds.map((id) => {
+        const g = gearOf(id);
+        return h(`span.mini.r-${g.rarity}`, { title: `${g.name}: ${g.desc}` }, g.icon);
+      }));
       const bar = h(`div.fbar.side-${side}`, null,
-        h('div.who', null, CLASSES[f.classId].name, h('small', null, side === 0 ? 'Blue' : 'Red')),
+        h('div.who', null, f.name, h('small', null, `${FORMS[f.form].name} · ${side === 0 ? 'Blue' : 'Red'}`)),
         h('div.hp', null, ghost, fill, shield, num),
         enWrap,
         h('div.meta', null, plan, ult, items, statuses),
@@ -136,7 +138,7 @@ export class Hud {
 
   private pushFeed(side: number, text: string): void {
     const b = this.battle!;
-    const name = CLASSES[b.fighters[side].classId].name;
+    const name = b.fighters[side].name;
     const line = h(`div.side-${side}`, null, h('b', null, name), text);
     this.feed.prepend(line);
     while (this.feed.childElementCount > 4) this.feed.lastElementChild!.remove();

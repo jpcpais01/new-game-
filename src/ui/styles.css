@@ -205,6 +205,11 @@ button {
 .slot .ico { font-size: 24px; line-height: 1; }
 .slot.filled { border-style: solid; border-color: var(--r); background: radial-gradient(circle at 50% 35%, color-mix(in srgb, var(--r) 30%, transparent), rgba(255,255,255,0.03) 70%); }
 .slot:active { transform: scale(0.95); }
+.forms { grid-template-columns: repeat(3, 1fr); }
+.gear-slots .slot { aspect-ratio: auto; min-height: 74px; }
+.slot .slot-name { font-size: 8.5px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.item.sel { background: color-mix(in srgb, var(--r) 18%, transparent); }
+.item .grants { display: block; margin-top: 3px; font-style: normal; font-weight: 700; color: var(--gold); font-size: 10.5px; }
 .row { display: flex; gap: 8px; }
 .row .btn { flex: 1; }
 
@@ -233,7 +238,7 @@ button {
 .item .ds { font-size: 11.5px; color: #b8bddc; line-height: 1.35; }
 .item:hover { background: rgba(255,255,255,0.09); }
 .item[disabled] { opacity: 0.35; pointer-events: none; }
-.r-rare { --r: var(--rare); } .r-epic { --r: var(--epic); } .r-legendary { --r: var(--legendary); }
+.r-common { --r: #9aa3b8; } .r-rare { --r: var(--rare); } .r-epic { --r: var(--epic); } .r-legendary { --r: var(--legendary); }
 
 /* ---------------------------------------------------------------- HUD */
 .hud { position: absolute; inset: 0; pointer-events: none; }
@@ -375,6 +380,8 @@ button {
   .blurb, .stats, .abilities { display: none; }
   .slot .ico { font-size: 18px; }
   .slot { font-size: 9px; }
+  .gear-slots .slot { min-height: 54px; }
+  .slot .slot-name { display: none; }
   .menu-bottom { grid-row: 4; gap: 6px; }
   .arena-pick .btn { padding: 6px 8px; font-size: 11px; }
   .btn-fight { padding: 12px 36px; font-size: 20px; }

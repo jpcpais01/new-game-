@@ -1,12 +1,43 @@
 export type FighterId = 0 | 1;
 export type DamageType = 'physical' | 'magic' | 'true';
-export type ClassId = 'vanguard' | 'ronin' | 'arcanist' | 'brute';
 
-export type ItemId =
-  | 'vampiric_fang' | 'thornmail' | 'phoenix_feather' | 'frost_core'
-  | 'ember_brand' | 'storm_sigil' | 'berserker_mask' | 'aegis_charm'
-  | 'hourglass' | 'venom_vial' | 'giants_belt' | 'swift_boots'
-  | 'executioner' | 'mirror_ward' | 'echo_stone' | 'iron_will';
+/**
+ * Body forms. A form is only a body: size, build and base attributes. What a
+ * fighter can *do* comes entirely from the gear it carries.
+ */
+export type FormId = 'robust' | 'agile' | 'balanced' | 'slender' | 'mighty' | 'ethereal';
+
+/** The six equipment slots every character has. */
+export type GearSlot = 'main' | 'offhand' | 'defense' | 'head' | 'boots' | 'special';
+
+export type MainWeaponId =
+  | 'longsword' | 'katana' | 'warhammer' | 'spear' | 'twin_daggers' | 'arcane_staff' | 'longbow';
+export type OffhandId =
+  | 'throwing_knives' | 'hand_crossbow' | 'wind_chakram' | 'frost_orb' | 'iron_gauntlet' | 'war_horn';
+export type DefenseId =
+  | 'tower_shield' | 'parrying_blade' | 'plate_armor' | 'phase_cloak' | 'thornmail' | 'mirror_aegis';
+export type HeadId =
+  | 'berserker_mask' | 'iron_helm' | 'chrono_circlet' | 'executioner_hood' | 'storm_crown' | 'duelist_band';
+export type BootsId =
+  | 'leather_boots' | 'zephyr_boots' | 'iron_greaves' | 'shadow_treads' | 'colossus_boots' | 'leaping_boots';
+export type SpecialId =
+  | 'phoenix_feather' | 'echo_stone' | 'vampiric_fang' | 'ember_core' | 'frost_core'
+  | 'meteor_sigil' | 'judgment_relic' | 'phantom_blade' | 'earth_heart';
+
+export type GearId = MainWeaponId | OffhandId | DefenseId | HeadId | BootsId | SpecialId;
+
+/** Gear id type allowed in each slot. */
+export interface GearSlotIds {
+  main: MainWeaponId;
+  offhand: OffhandId;
+  defense: DefenseId;
+  head: HeadId;
+  boots: BootsId;
+  special: SpecialId;
+}
+
+/** What a character has equipped. `main` is required; every other slot may be empty. */
+export type GearSet = { main: MainWeaponId } & { [S in Exclude<GearSlot, 'main'>]?: GearSlotIds[S] };
 
 export type StatusId =
   | 'burn' | 'poison' | 'chill' | 'frozen' | 'stun'
@@ -15,9 +46,9 @@ export type StatusId =
 export type AnimKey =
   | 'slash' | 'thrust' | 'overhead' | 'bash' | 'spin' | 'cast' | 'castBig'
   | 'guard' | 'counter' | 'dash' | 'evade' | 'blink' | 'leap' | 'roar'
-  | 'flurry' | 'slam';
+  | 'flurry' | 'slam' | 'throw' | 'shoot';
 
-export type ProjectileStyle = 'arcane' | 'hex' | 'wave' | 'groundwave' | 'meteor';
+export type ProjectileStyle = 'arcane' | 'hex' | 'wave' | 'groundwave' | 'meteor' | 'arrow' | 'knife' | 'bolt';
 
 export interface Stats {
   maxHp: number;
@@ -42,6 +73,14 @@ export interface Stats {
   damageMult: number;
   /** Multiplier on incoming damage (mark, iron skin...). */
   damageTakenMult: number;
+  /** Light hits with less stagger than this don't interrupt windups. */
+  poise: number;
+  /** Multiplier on melee and AoE reach (long limbs). */
+  reach: number;
+  /** Multiplier on knockback dealt and on stagger when checked against poise. */
+  force: number;
+  /** Multiplier on knockback received. */
+  knockbackTaken: number;
 }
 
 export interface StatusApply {
@@ -83,12 +122,18 @@ export interface AbilityDef {
   hyperArmor?: boolean;
   projectile?: { speed: number; radius: number; style: ProjectileStyle; ground?: boolean; pierce?: boolean };
   guard?: { reduction: number; parryWindow: number; counterPower?: number; reflectProjectiles?: boolean };
+  /**
+   * `through`: attacks pass through the enemy. On an evade it means "roll through
+   * the enemy when they are within reach" instead of backstepping.
+   */
   dash?: { distance: number; through?: boolean; iframes: number; strike?: boolean };
   buff?: StatusApply[];
   heal?: number;
+  /** Shield granted on activation, as a fraction of max HP. */
+  shieldGain?: number;
   /** Seconds of invulnerability starting with the active phase. */
   iframes?: number;
-  /** Airborne during windup/active (leaps). */
+  /** Airborne during the windup (leaping attacks) or the dash itself (leaping evades). */
   airborne?: boolean;
   anim: AnimKey;
   /** Short description for the UI. */

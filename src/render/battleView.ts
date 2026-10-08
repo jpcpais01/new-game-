@@ -1,13 +1,13 @@
 import { Group, Mesh, Object3D, type Scene } from 'three';
 import { sfx } from '../audio/sfx';
 import { Battle } from '../sim/battle';
-import { CLASSES } from '../sim/classes';
 import type { BattleEvent, Projectile, ProjectileStyle } from '../sim/types';
 import type { FloatingText } from '../ui/floatingText';
 import type { FightCamera } from './camera';
 import { Lightning, Pulses, WeaponTrail } from './fx/effects';
 import type { Particles } from './fx/particles';
-import { FighterView, type FxContext } from './fighter/fighterView';
+import { accentOf } from './fighter/archetype';
+import { ENCHANTS, FighterView, type FxContext } from './fighter/fighterView';
 import { gearGeo } from './fighter/rig';
 import { glow, sceneToon } from './materials';
 import type { GameRenderer } from './renderer';
@@ -21,6 +21,7 @@ interface ProjectileView {
 
 const STYLE_COLOR: Record<ProjectileStyle, number> = {
   arcane: 0x7fe8ff, hex: 0xc04dff, wave: 0xfff0f0, groundwave: 0xffa040, meteor: 0xff6a1a,
+  arrow: 0xfff2c8, knife: 0xe8eef8, bolt: 0xffd0a0,
 };
 
 export interface ViewListener {
@@ -68,11 +69,11 @@ export class BattleView {
       const f = b.fighters[i];
       const old = this.fighters[i];
       if (old) old.dispose();
-      const v = new FighterView(f.classId, f.items, f.facing, f.id);
+      const v = new FighterView(f, f.id);
       this.scene.add(v.group);
       this.fighters[i] = v;
-      const enchant = f.items.find((it) => ['ember_brand', 'frost_core', 'venom_vial', 'vampiric_fang', 'storm_sigil', 'executioner'].includes(it));
-      this.trails[i].setColor(enchant ? ({ ember_brand: 0xff7a2a, frost_core: 0x9fe8ff, venom_vial: 0x9cff5a, vampiric_fang: 0xff3355, storm_sigil: 0xaedcff, executioner: 0xffffff } as Record<string, number>)[enchant] : CLASSES[f.classId].accent);
+      const enchant = f.gearIds.find((it) => ENCHANTS.includes(it));
+      this.trails[i].setColor(enchant ? ({ ember_core: 0xff7a2a, frost_core: 0x9fe8ff, twin_daggers: 0x9cff5a, vampiric_fang: 0xff3355, storm_crown: 0xaedcff, executioner_hood: 0xffffff } as Record<string, number>)[enchant] : accentOf(f));
     }
     for (const p of this.projectiles.values()) p.obj.removeFromParent();
     this.projectiles.clear();
@@ -194,6 +195,22 @@ export class BattleView {
         }
         break;
       }
+      case 'arrow': case 'bolt': case 'knife': {
+        // Simple shaft + head; the gear-visuals pass can replace these.
+        const len = p.style === 'arrow' ? 0.9 : p.style === 'bolt' ? 0.55 : 0.32;
+        const shaft = new Mesh(gearGeo.box(len, 0.035, 0.035), sceneToon(p.style === 'knife' ? 0x9aa4b4 : 0x8a5a2b));
+        g.add(shaft);
+        const head = new Mesh(gearGeo.cone(0.06, 0.18, 4), glow(c, 2.2));
+        head.rotation.z = -Math.PI / 2;
+        head.position.x = len * 0.5 + 0.06;
+        g.add(head);
+        if (p.style === 'arrow') {
+          const fl = new Mesh(gearGeo.box(0.16, 0.1, 0.012), sceneToon(0xf0e6d0));
+          fl.position.x = -len * 0.45;
+          g.add(fl);
+        }
+        break;
+      }
       case 'meteor': {
         g.add(new Mesh(gearGeo.ico(0.75), sceneToon(0x3a2620, 0xff4a10, 0.35)));
         const core = new Mesh(gearGeo.ico(0.68, 1), glow(0xff7a20, 2.6));
@@ -263,12 +280,12 @@ export class BattleView {
         const f = b.fighters[e.f];
         const ab = f.abilities[e.ability];
         if (ab.slot === 'ultimate') {
-          this.renderer.impact(0.9, CLASSES[f.classId].accent);
+          this.renderer.impact(0.9, accentOf(f));
           this.cam.kick(0.5);
           this.arena.excite(0.5);
           sfx.play('castBig', this.pan(f.x));
-          add.burst({ x: f.x, y: 1.2, count: 40, jitter: 1.2, speed: [-3, -1], life: [0.4, 0.7], size: [0.08, 0.16], color: CLASSES[f.classId].accent, intensity: 3, drag: 1 });
-          this.pulses.spawn('ring', f.x, 0.05, 2.2, CLASSES[f.classId].accent, 0.5, 3);
+          add.burst({ x: f.x, y: 1.2, count: 40, jitter: 1.2, speed: [-3, -1], life: [0.4, 0.7], size: [0.08, 0.16], color: accentOf(f), intensity: 3, drag: 1 });
+          this.pulses.spawn('ring', f.x, 0.05, 2.2, accentOf(f), 0.5, 3);
         } else if (ab.kind === 'projectile' || ab.kind === 'meteor') {
           sfx.play('cast', this.pan(f.x), 0.8);
         } else if (ab.id === 'war_cry' || ab.id === 'iron_skin') {

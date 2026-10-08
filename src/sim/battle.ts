@@ -1,13 +1,12 @@
 import { Rng } from '../core/rng';
 import { clamp } from '../core/math';
 import { Brain } from './ai/brain';
-import { CLASSES } from './classes';
 import {
   ARENA_HALF_WIDTH, BASE_ENERGY_REGEN, BODY_GAP, DT, ENERGY_ON_DEAL, ENERGY_ON_TAKE, MAX_ENERGY,
   ROUND_TIME, START_GAP, WALL_SPLAT_SPEED,
 } from './constants';
 import {
-  createFighter, getStatus, isDisabled, refreshStats, type Fighter, type FighterConfig,
+  createFighter, getStatus, isDisabled, reachOf, refreshStats, type Fighter, type FighterConfig,
 } from './fighter';
 import type {
   AbilityDef, BattleEvent, DamageType, FighterId, Projectile, StatusApply, StatusId,
@@ -145,16 +144,6 @@ export class Battle {
 
     f.energy = Math.min(MAX_ENERGY, f.energy + BASE_ENERGY_REGEN * f.stats.energyRegen * DT);
 
-    if (f.has.has('aegis_charm')) {
-      f.aegisIdle += DT;
-      const target = f.stats.maxHp * 0.15;
-      if (f.aegisIdle >= 4 && f.shield < target) {
-        f.shield = target;
-        f.aegisIdle = 0;
-        this.emit({ type: 'shield', f: f.id, amount: target });
-      }
-    }
-
     for (let i = f.echoQueue.length - 1; i >= 0; i--) {
       const e = f.echoQueue[i];
       e.delay -= DT;
@@ -207,7 +196,7 @@ export class Battle {
       || apply.status === 'mark' || apply.status === 'vulnerable';
     if (debuff && target.id !== source.id) dur *= 1 - target.stats.tenacity;
     if (cc) {
-      if (target.has.has('iron_will') && target.ironWillCd <= 0) {
+      if (target.has.has('iron_helm') && target.ironWillCd <= 0) {
         target.ironWillCd = 10;
         this.emit({ type: 'thought', f: target.id, text: 'Iron Will shrugs off the stun!' });
         return;
@@ -249,9 +238,7 @@ export class Battle {
 
   /** Effective cooldown after reductions. */
   cooldownOf(f: Fighter, ab: AbilityDef): number {
-    let cd = ab.cooldown * (1 - f.stats.cdr);
-    if (ab.slot === 'evade' && f.has.has('swift_boots')) cd *= 0.6;
-    return cd;
+    return ab.cooldown * (1 - f.stats.cdr);
   }
 
   startAction(f: Fighter, idx: number): boolean {
@@ -265,9 +252,13 @@ export class Battle {
     let dir: number = f.facing;
     let through = !!ab.dash?.through;
     if (ab.slot === 'evade') {
+      // Backstep by default; roll through when cornered, or whenever the enemy
+      // is in reach if the boots allow it (Shadow Treads).
       dir = -f.facing;
+      through = false;
       const dest = f.x + dir * ab.dash!.distance;
-      if (Math.abs(dest) > ARENA_HALF_WIDTH - 0.6) {
+      const rollThrough = ab.dash!.through && Math.abs(e.x - f.x) < ab.dash!.distance - 0.6;
+      if (rollThrough || Math.abs(dest) > ARENA_HALF_WIDTH - 0.6) {
         dir = f.facing;
         through = true;
       }
@@ -323,14 +314,15 @@ export class Battle {
 
     if (a.phase === 'windup') {
       if (ab.lunge && !a.feint) f.x += a.dir * (ab.lunge * 0.25) / a.windup * DT;
-      if (ab.airborne) {
+      const leapAttack = ab.airborne && ab.kind !== 'dash';
+      if (leapAttack) {
         const p = a.t / a.windup;
         f.y = Math.sin(Math.min(1, p) * Math.PI) * 2.2;
       }
       if (a.t >= a.windup) {
         a.phase = 'active';
         a.t = 0;
-        if (ab.airborne) f.y = 0;
+        if (leapAttack) f.y = 0;
         this.emit({ type: 'actionActive', f: f.id, ability: a.ability });
         this.enterActive(f, e, ab);
       }
@@ -346,7 +338,7 @@ export class Battle {
         const due = hits === 1 ? 1 : Math.min(hits, 1 + Math.floor((a.t / a.active) * hits));
         while (a.hitsDone < due) {
           a.hitsDone++;
-          if (this.inMeleeReach(f, e, ab.range)) {
+          if (this.inMeleeReach(f, e, reachOf(f, ab))) {
             const last = a.hitsDone === hits;
             this.abilityHit(f, e, ab, { heavyOverride: hits > 1 && !last ? false : undefined });
           }
@@ -355,6 +347,8 @@ export class Battle {
         const speed = ab.dash!.distance / a.active;
         const before = Math.sign(e.x - f.x);
         f.x += a.dir * speed * DT;
+        // Leaping evades arc over the ground.
+        if (ab.airborne) f.y = Math.sin(Math.min(1, a.t / a.active) * Math.PI) * 1.3;
         if (a.through && ab.dash!.strike && !a.connected) {
           const after = Math.sign(e.x - f.x);
           if (before !== after && before !== 0 && Math.abs(e.y - f.y) < 1.5) {
@@ -389,13 +383,19 @@ export class Battle {
         break;
       case 'aoe': {
         const style = ab.id === 'frost_nova' ? 'nova' : ab.id === 'judgment' ? 'judgment' : 'slam';
-        this.emit({ type: 'shockwave', x: f.x, radius: ab.range, f: f.id, style });
-        if (Math.abs(e.x - f.x) <= ab.range && e.y < 1.6) this.abilityHit(f, e, ab, { aoe: true });
+        const radius = reachOf(f, ab);
+        this.emit({ type: 'shockwave', x: f.x, radius, f: f.id, style });
+        if (Math.abs(e.x - f.x) <= radius && e.y < 1.6) this.abilityHit(f, e, ab, { aoe: true });
         break;
       }
       case 'buff':
         if (ab.buff) for (const b of ab.buff) this.applyStatus(f, f, b);
         if (ab.heal) this.heal(f, f.stats.maxHp * ab.heal);
+        if (ab.shieldGain) {
+          const amount = f.stats.maxHp * ab.shieldGain;
+          f.shield = Math.max(f.shield, amount);
+          this.emit({ type: 'shield', f: f.id, amount });
+        }
         break;
       case 'blink': {
         const from = f.x;
@@ -479,7 +479,7 @@ export class Battle {
         if (dx < p.radius + 0.45 && vertical) {
           if (target.invuln > 0) {
             // Phases through; keep flying.
-          } else if (target.has.has('mirror_ward') && target.mirrorCd <= 0 && !p.ground) {
+          } else if (target.has.has('mirror_aegis') && target.mirrorCd <= 0 && !p.ground) {
             target.mirrorCd = 4;
             this.reflectProjectile(p, target);
             continue;
@@ -540,14 +540,15 @@ export class Battle {
     const fromFront = Math.sign(srcX - defender.x) === defender.facing || Math.abs(srcX - defender.x) < 0.3;
     if (!fromFront && !aoe) return null;
     const guardTime = a.phase === 'windup' ? 0 : a.t;
-    const isParry = guardTime <= g.guard!.parryWindow;
+    const duelist = defender.has.has('duelist_band');
+    const isParry = guardTime <= g.guard!.parryWindow * (duelist ? 1.4 : 1);
     if (isParry) {
       defender.totals.parries++;
       // A parry ends the guard quickly so the defender can punish.
       a.phase = 'recovery';
       a.t = 0;
       a.recovery = 0.1;
-      defender.energy = Math.min(MAX_ENERGY, defender.energy + 12);
+      defender.energy = Math.min(MAX_ENERGY, defender.energy + (duelist ? 22 : 12));
       this.hitstop = Math.max(this.hitstop, 0.1);
       this.emit({ type: 'parry', defender: defender.id, attacker: attacker.id, x: defender.x + defender.facing * 0.6, y: 1.3 });
       if (p) {
@@ -562,7 +563,7 @@ export class Battle {
         // Instant riposte.
         const counter: AbilityDef = {
           ...g, id: 'riposte', kind: 'melee', power: g.guard!.counterPower, stagger: 0.4, knockback: 4,
-          heavy: true, range: 2.5,
+          heavy: true, range: 2.5 * defender.stats.reach,
         };
         defender.action = {
           ability: a.ability, phase: 'recovery', t: 0, total: a.total, windup: 0, active: 0,
@@ -599,7 +600,7 @@ export class Battle {
     if (ab.damageType !== 'true' && this.rng.chance(att.stats.critChance)) {
       crit = true;
       raw *= att.stats.critMult;
-      if (att.has.has('executioner') && tgt.hp / tgt.stats.maxHp < 0.3) raw *= 1.5;
+      if (att.has.has('executioner_hood') && tgt.hp / tgt.stats.maxHp < 0.3) raw *= 1.5;
     }
     if (blocked) {
       const g = tgt.abilities[tgt.action!.ability];
@@ -643,16 +644,15 @@ export class Battle {
       const ironskin = !!getStatus(tgt, 'ironskin');
       if (ab.stagger && !ironskin) {
         const ta = tgt.action;
-        const poise = CLASSES[tgt.classId].poise;
-        // Light hits only flinch fighters with low poise.
-        if (ab.stagger > poise || heavy || !ta) {
+        // Light hits only flinch fighters with low poise; strong bodies hit harder.
+        if (ab.stagger * att.stats.force > tgt.stats.poise || heavy || !ta) {
           if (ta && ta.phase !== 'active' && !tgt.abilities[ta.ability].hyperArmor) tgt.action = null;
           if (!tgt.action) tgt.stagger = Math.max(tgt.stagger, ab.stagger * (1 - tgt.stats.tenacity * 0.5));
         }
       }
       if (ab.knockback) {
         const dir = Math.sign(tgt.x - att.x) || att.facing;
-        const kb = ab.knockback * (ironskin ? 0.3 : 1);
+        const kb = ab.knockback * att.stats.force * tgt.stats.knockbackTaken * (ironskin ? 0.3 : 1);
         tgt.vx += dir * kb;
         if (heavy && kb > 5) tgt.vy = Math.max(tgt.vy, kb * 0.45);
       }
@@ -664,9 +664,8 @@ export class Battle {
     // On-hit items (only for real ability hits, not DoTs/echoes).
     if (ab.slot !== 'evade' && !blocked) {
       if (att.has.has('frost_core')) this.applyStatus(tgt, att, { status: 'chill', duration: 2.5 });
-      if (att.has.has('ember_brand')) this.applyStatus(tgt, att, { status: 'burn', duration: 3 });
-      if (att.has.has('venom_vial')) this.applyStatus(tgt, att, { status: 'poison', duration: 5 });
-      if (att.has.has('storm_sigil')) {
+      if (att.has.has('ember_core')) this.applyStatus(tgt, att, { status: 'burn', duration: 3 });
+      if (att.has.has('storm_crown')) {
         att.stormCounter++;
         if (att.stormCounter >= 3) {
           att.stormCounter = 0;
@@ -694,7 +693,6 @@ export class Battle {
     if (dmg <= 0) return 0;
 
     tgt.sinceHurt = 0;
-    tgt.aegisIdle = 0;
     att.sinceHit = 0;
     if (tgt.shield > 0) {
       const absorbed = Math.min(tgt.shield, dmg);
@@ -768,7 +766,8 @@ export class Battle {
     }
 
     // Airborne from knockback (leaps are driven by the action).
-    if (!(ab?.airborne && a!.phase === 'windup')) {
+    const leaping = !!ab?.airborne && (a!.phase === 'windup' || (ab.kind === 'dash' && a!.phase === 'active'));
+    if (!leaping) {
       if (f.y > 0 || f.vy > 0) {
         f.vy -= GRAVITY * DT;
         f.y += f.vy * DT;

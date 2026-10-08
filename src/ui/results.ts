@@ -1,5 +1,4 @@
 import type { Battle } from '../sim/battle';
-import { CLASSES } from '../sim/classes';
 import type { FighterTotals } from '../sim/types';
 import { h } from './dom';
 
@@ -24,7 +23,7 @@ export class Results {
 
   show(b: Battle, reason: 'ko' | 'time'): void {
     const w = b.winner;
-    const title = w === -1 ? 'DRAW' : `${w === 0 ? 'BLUE' : 'RED'} ${CLASSES[b.fighters[w].classId].name.toUpperCase()} WINS`;
+    const title = w === -1 ? 'DRAW' : `${w === 0 ? 'BLUE' : 'RED'} ${b.fighters[w].name.toUpperCase()} WINS`;
     const [a, c] = b.fighters;
     const row = ([k, label]: [keyof FighterTotals, string]) => {
       const va = Math.round(a.totals[k]), vc = Math.round(c.totals[k]);
@@ -37,7 +36,7 @@ export class Results {
         h('h2', null, title),
         h('div.reason', null, reason === 'ko' ? `K.O. at ${b.time.toFixed(1)}s` : 'Time — decided on remaining health'),
         h('table', null,
-          h('thead', null, h('tr', null, h('th'), h('th.side-0', null, CLASSES[a.classId].name), h('th.side-1', null, CLASSES[c.classId].name))),
+          h('thead', null, h('tr', null, h('th'), h('th.side-0', null, a.name), h('th.side-1', null, c.name))),
           h('tbody', null, ...ROWS.map(row)),
         ),
         h('div.row', null,

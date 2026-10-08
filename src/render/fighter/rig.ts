@@ -4,9 +4,9 @@ import {
   SkinnedMesh, SphereGeometry, TorusGeometry, Vector2, type Material,
 } from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
-import { CLASSES } from '../../sim/classes';
-import { ITEMS } from '../../sim/items';
-import type { ClassId, ItemId } from '../../sim/types';
+import { gearOf } from '../../sim/gear';
+import type { GearId } from '../../sim/types';
+import type { Archetype } from './archetype';
 import {
   createFighterUniforms, fighterMaterial, glowVertexMaterial, outlineMaterial, type FighterUniforms,
 } from '../materials';
@@ -159,7 +159,7 @@ export interface Rig {
   /** Swaying cloth bones (cape, scarf, hair) animated by the view. */
   cloth: Bone[];
   /** Bones of item relics that orbit the fighter. */
-  orbiters: { item: ItemId; bone: Bone }[];
+  orbiters: { item: GearId; bone: Bone }[];
   /** Bone of the phoenix feather (collapsed once the revive is spent). */
   phoenix: Bone | null;
   uniforms: FighterUniforms;
@@ -180,7 +180,7 @@ interface Palette {
   cloth: number;
 }
 
-const PALETTES: Record<ClassId, Palette> = {
+const PALETTES: Record<Archetype, Palette> = {
   vanguard: { skin: 0xf2c4a0, main: 0xc4cee2, trim: 0xf3c24f, dark: 0x1e2a5c, boots: 0x3b4466, pants: 0x2b3a7a, hair: 0x8a5a2b, cloth: 0x2f5be0 },
   ronin: { skin: 0xf0c49c, main: 0xf2ecdf, trim: 0xd6283c, dark: 0x1b1a26, boots: 0x2b2633, pants: 0x2c2d4c, hair: 0x15121c, cloth: 0xd6283c },
   arcanist: { skin: 0xe8c4b2, main: 0x6c3ad6, trim: 0x6ff3ff, dark: 0x22184f, boots: 0x2e2360, pants: 0x2e2360, hair: 0xe9ecff, cloth: 0x3d2596 },
@@ -226,14 +226,15 @@ function face(head: Object3D, cy: number, r: number, o: { eye?: number; glowEyes
  * share one skeleton: a fully geared fighter costs ~4 draw calls. Forward is
  * +X, up is +Y, the fighter's right side is +Z.
  */
-export function buildRig(classId: ClassId, items: ItemId[] = []): Rig {
-  const u = createFighterUniforms(CLASSES[classId].accent);
+const ACCENT: Record<Archetype, number> = { vanguard: 0xffd36b, ronin: 0xf5f0e6, arcanist: 0x6ff3ff, brute: 0x5a3a22 };
+
+export function buildRig(classId: Archetype, items: GearId[] = [], big = classId === 'brute'): Rig {
+  const u = createFighterUniforms(ACCENT[classId]);
   const pal = PALETTES[classId];
   const ctx: Ctx = { pal, bones: [] };
   const root = new Group();
   const body = new Group();
   root.add(body);
-  const big = classId === 'brute';
   if (big) body.scale.setScalar(1.12);
 
   // Skeleton (indices match the J table).
@@ -557,13 +558,13 @@ export function buildRig(classId: ClassId, items: ItemId[] = []): Rig {
   }
 
   // --- Item gear -------------------------------------------------------------
-  const orbiters: { item: ItemId; bone: Bone }[] = [];
+  const orbiters: { item: GearId; bone: Bone }[] = [];
   let phoenix: Bone | null = null;
   const beltZ = [-0.12, 0, 0.12];
   let beltSlot = 0;
   const belt = () => beltZ[beltSlot++ % 3];
   for (const id of items) {
-    const col = ITEMS[id].color;
+    const col = gearOf(id).color;
     switch (id) {
       case 'thornmail':
         for (const sh of [shoulderLA, shoulderRA]) {
@@ -575,7 +576,7 @@ export function buildRig(classId: ClassId, items: ItemId[] = []): Rig {
           part(fa, cone(0.022, 0.1, 5), 0x58c46b, { pos: [Math.cos(a) * 0.09, -0.12, Math.sin(a) * 0.09], rot: [Math.sin(a) * 1.4, 0, -Math.cos(a) * 1.4] });
         }
         break;
-      case 'swift_boots':
+      case 'zephyr_boots':
         for (const sh of [shinL, shinR]) for (const s of [-1, 1]) {
           const wing = group(sh, [-0.04, -0.3, s * 0.09], [s * -0.3, 0, 0.7]);
           for (let k = 0; k < 3; k++) part(wing, rbox(0.03, 0.15 - k * 0.03, 0.012, 0.006), glowS(0x5effc8, 1.6), { pos: [-k * 0.035, 0.05, 0], rot: [0, 0, 0.3 * k] });
@@ -589,12 +590,12 @@ export function buildRig(classId: ClassId, items: ItemId[] = []): Rig {
         }
         break;
       }
-      case 'iron_will':
+      case 'iron_helm':
         for (const fa of [farmL, farmR]) for (let k = 0; k < 4; k++) {
           part(fa, torus(0.035, 0.012, Math.PI * 2, 4, 10), metal(0xa0a8b8, 0.9), { pos: [0.0, -0.06 - k * 0.055, (k % 2 ? 0.07 : -0.07)], rot: [k % 2 ? 0 : Math.PI / 2, 0.6, 0] });
         }
         break;
-      case 'aegis_charm':
+      case 'mirror_aegis':
         part(chest, torus(0.12, 0.01, Math.PI * 2, 4, 16), metal(0xc9a24a), { pos: [0.12, 0.38, 0], rot: [0, 0, 1.1] });
         part(chest, octa(0.06), glowS(0xffe27a, 2.2), { pos: [0.24, 0.3, 0], scale: [0.6, 1, 1] });
         break;
@@ -605,11 +606,11 @@ export function buildRig(classId: ClassId, items: ItemId[] = []): Rig {
         }
         break;
       }
-      case 'giants_belt':
+      case 'colossus_boots':
         part(hips, torus(0.215, 0.075), 0x8a5a2a, { pos: [0, 0.03, 0], rot: [Math.PI / 2, 0, 0], scale: [0.98, 1.22, 1] });
         part(hips, rbox(0.06, 0.16, 0.2, 0.03), metal(0xd9b04a, 1), { pos: [0.24, 0.03, 0] });
         break;
-      case 'venom_vial':
+      case 'twin_daggers':
         part(hips, cyl(0.035, 0.045, 0.1, 10), glowS(0x8cff3a, 1.6), { pos: [0.08, -0.06, 0.22 + belt() * 0.2] });
         part(hips, cyl(0.02, 0.02, 0.04, 8), 0x5a3a22, { pos: [0.08, 0.01, 0.22] });
         break;
@@ -617,13 +618,13 @@ export function buildRig(classId: ClassId, items: ItemId[] = []): Rig {
         part(chest, cone(0.025, 0.1, 6), 0xf3ead6, { pos: [0.25, 0.32, 0.05], rot: [0, 0, Math.PI] });
         part(chest, sphere(0.02, 8, 6), glowS(0xff2e55, 2.4), { pos: [0.25, 0.38, 0.05] });
         break;
-      case 'executioner':
+      case 'executioner_hood':
         part(hips, sphere(0.05, 10, 8), 0xe8e2d6, { pos: [0.1, 0.02, -0.22] });
         part(hips, sphere(0.012, 6, 4), lineless(0x111111), { pos: [0.14, 0.03, -0.2] });
         break;
-      case 'ember_brand': case 'frost_core': case 'storm_sigil':
-      case 'mirror_ward': case 'echo_stone': case 'hourglass': {
-        if (id === 'ember_brand') {
+      case 'ember_core': case 'frost_core': case 'storm_crown':
+      case 'echo_stone': case 'chrono_circlet': {
+        if (id === 'ember_core') {
           part(hips, octa(0.04), glowS(col, 2.2), { pos: [0.2, 0.07, belt()] });
           break;
         }
@@ -635,12 +636,9 @@ export function buildRig(classId: ClassId, items: ItemId[] = []): Rig {
         const ob = new Bone();
         root.add(ob);
         ctx.bones.push(ob);
-        if (id === 'storm_sigil') {
+        if (id === 'storm_crown') {
           part(ob, octa(0.09), glowS(0xbfe6ff, 2.6), { scale: [0.8, 1.3, 0.8] });
           part(ob, torus(0.13, 0.012, Math.PI * 2, 4, 16), glowS(0x9fd8ff, 1.8), { rot: [Math.PI / 2, 0, 0] });
-        } else if (id === 'mirror_ward') {
-          part(ob, cyl(0.13, 0.13, 0.02, 6), metal(0xd8e8f0, 1), { rot: [Math.PI / 2, 0, 0] });
-          part(ob, cyl(0.1, 0.1, 0.025, 6), glowS(0xaff6ff, 1.8), { rot: [Math.PI / 2, 0, 0] });
         } else if (id === 'echo_stone') {
           part(ob, sphere(0.08, 12, 10), glowS(0x6b8cff, 2.4), {});
           part(ob, torus(0.12, 0.012, Math.PI * 2, 4, 16), glowS(0xb0c4ff, 1.6), { rot: [1.1, 0.4, 0] });
@@ -665,7 +663,7 @@ export function buildRig(classId: ClassId, items: ItemId[] = []): Rig {
   };
 }
 
-function bake(root: Group, bones: Bone[], u: FighterUniforms, classId: ClassId): { meshes: SkinnedMesh[]; materials: Material[]; enchantMaterial: MeshBasicMaterial | null } {
+function bake(root: Group, bones: Bone[], u: FighterUniforms, classId: Archetype): { meshes: SkinnedMesh[]; materials: Material[]; enchantMaterial: MeshBasicMaterial | null } {
   root.updateMatrixWorld(true);
   const index = new Map<Object3D, number>();
   bones.forEach((b, i) => index.set(b, i));
