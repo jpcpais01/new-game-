@@ -12,6 +12,15 @@ export interface PatchNote {
 
 export const PATCH_NOTES: PatchNote[] = [
   {
+    version: '0.6.1',
+    date: '2026-10-08',
+    title: 'Heads to match the body',
+    notes: [
+      'Head size now follows the body: Robust and Mighty get bigger heads, Agile and Ethereal lighter ones.',
+      'The face close-up in the character creator follows each body form, so hats stay in frame.',
+    ],
+  },
+  {
     version: '0.6.0',
     date: '2026-10-08',
     title: 'Patch notes',

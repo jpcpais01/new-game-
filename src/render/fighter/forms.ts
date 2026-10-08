@@ -135,7 +135,10 @@ function shapeFor(id: FormId): FormShape {
   s.chestW = BASE_SHAPE.chestW * Math.pow(k, 0.7) * Math.pow(b.shoulders, 0.5);
   s.shoulderW = BASE_SHAPE.shoulderW * b.shoulders * Math.pow(k, 0.35);
   s.hipW = (f.hipW ?? BASE_SHAPE.hipW) * Math.pow(k, 0.5);
-  s.headR = BASE_SHAPE.headR * b.head;
+  // The head follows the body's mass a little, so big builds don't end up
+  // pin-headed and small ones keep a lighter head; b.head keeps each form's
+  // own proportion on top of that.
+  s.headR = BASE_SHAPE.headR * b.head * Math.pow(k, 0.45) * Math.pow(b.shoulders, 0.15);
   s.handS = (f.handS ?? 1) * Math.pow(k, 0.3);
   s.footS = (f.footS ?? 1) * Math.pow(k, 0.25);
   s.muscle = f.muscle ?? BASE_SHAPE.muscle;

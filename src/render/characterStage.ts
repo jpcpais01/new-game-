@@ -26,6 +26,8 @@ export class CharacterStage {
   private spinVel = 0;
   /** Extra turn towards the camera while the face is framed. */
   private faceTurn = 0;
+  /** Smoothed height of the top of the head, so the face shot follows each form's head. */
+  private headTop = NaN;
   private dragging = false;
   focus: StageFocus = 'body';
   /** Where the character sits horizontally on screen (-1 left .. 1 right). */
@@ -73,6 +75,7 @@ export class CharacterStage {
     this.view?.dispose();
     this.view = view;
     this.fighter = f;
+    this.headTop = NaN;
     view.group.visible = this.shown;
     this.scene.add(view.group);
   }
@@ -108,7 +111,10 @@ export class CharacterStage {
     const tanHalf = Math.tan((cam.fov * Math.PI) / 360);
     const visibleH = ((face ? 1.35 : this.bottomInset > 0 ? 2.6 : 3.1) * height) / (1 - this.bottomInset);
     const dist = visibleH / (2 * tanHalf);
-    const lookY = (face ? 1.86 : 1.08) * height;
+    const top = Number.isFinite(view.headWorld.y) ? view.headWorld.y - view.group.position.y : 2.02 * height;
+    this.headTop = Number.isFinite(this.headTop) ? damp(this.headTop, top, 3, dt) : top;
+    // The face shot aims just under the head so hats and helmets stay in frame.
+    const lookY = face ? this.headTop - 0.22 * height : 1.08 * height;
     // Shift the shot sideways so the character sits at screenX, and down when
     // the panel covers the bottom of the screen.
     const lookX = -this.screenX * dist * tanHalf * cam.aspect;
