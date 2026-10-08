@@ -1,4 +1,11 @@
 import type { AnimKey } from '../../sim/types';
+
+/**
+ * Action keys: the simulation's anims plus render-only variants for an item
+ * drawn into the other hand (see HandPlan.draws): an overhand throw with the
+ * right hand (an archer's knives) and a sidearm left-hand throw (a chakram).
+ */
+export type PoseKey = AnimKey | 'throwR' | 'spinL';
 import type { BodyForm } from './forms';
 import type { GripStyle, OffhandStyle } from './look';
 
@@ -173,7 +180,7 @@ const deepLunge: PoseSpec = { THIGH_L: [6, 0, 62], SHIN_L: -30, FOOT_L: -12, THI
 const coil: PoseSpec = { THIGH_L: [8, 0, 18], SHIN_L: -34, THIGH_R: [-8, 0, -14], SHIN_R: -36, hipsY: -0.16, hipsX: -0.06 };
 
 /** Generic actions: used by any grip that has no bespoke version. */
-const GENERIC: Record<AnimKey, ActionSpec> = {
+const GENERIC: Record<PoseKey, ActionSpec> = {
   slash: {
     windup: { ...coil, HIPS: [0, -18, 4], CHEST: [0, -52, 8], HEAD: [0, 40, 0], UARM_R: [-30, 0, 150], FARM_R: [0, 0, 50], WEAPON: [0, 0, 70], UARM_L: [20, 0, 50] },
     strike: { ...lunge, HIPS: [0, 16, -10], CHEST: [0, 36, -18], HEAD: [0, -26, 6], UARM_R: [20, 0, 60], FARM_R: [0, 0, 5], WEAPON: [0, 0, -35], UARM_L: [-10, 0, -10], FARM_L: [0, 0, 60] },
@@ -250,6 +257,14 @@ const GENERIC: Record<AnimKey, ActionSpec> = {
     windup: { ...coil, HIPS: [0, 24, 0], CHEST: [0, 44, 10], HEAD: [0, -30, 4], UARM_L: [30, 0, 165], FARM_L: [0, 0, 70], OFFHAND: [0, 0, 40] },
     strike: { ...lunge, HIPS: [0, -20, -6], CHEST: [0, -36, -16], HEAD: [0, 20, 4], UARM_L: [-10, 0, 80], FARM_L: [0, 0, 0], OFFHAND: [0, 0, -40] },
   },
+  throwR: { // overhand throw with the right hand (the left holds a bow)
+    windup: { ...coil, HIPS: [0, -24, 0], CHEST: [0, -44, 10], HEAD: [0, 30, 4], UARM_R: [-30, 0, 165], FARM_R: [0, 0, 70], WEAPON: [0, 0, 40] },
+    strike: { ...lunge, HIPS: [0, 20, -6], CHEST: [0, 36, -16], HEAD: [0, -20, 4], UARM_R: [10, 0, 80], FARM_R: [0, 0, 0], WEAPON: [0, 0, -40] },
+  },
+  spinL: { // sidearm throw of a disc with the left hand
+    windup: { ...coil, CHEST: [0, 70, 5], HIPS: [0, 25, 0], HEAD: [0, -50, 0], UARM_L: [20, 0, -35], FARM_L: [0, 0, 30], OFFHAND: [0, 0, 20] },
+    strike: { ...lunge, CHEST: [0, -60, -12], HIPS: [0, -25, -5], HEAD: [0, 40, 0], UARM_L: [-20, 0, 105], FARM_L: [0, 0, 0], OFFHAND: [0, 0, -10], UARM_R: [30, 0, -20] },
+  },
   shoot: { // off-hand launcher aimed and fired
     windup: { HIPS: [0, -16, 0], CHEST: [0, -30, 0], HEAD: [0, 26, 2], UARM_L: [0, 0, 84], FARM_L: [0, 0, 6], OFFHAND: [0, 0, -6], hipsX: -0.03 },
     strike: { HIPS: [0, -14, 0], CHEST: [0, -26, 6], HEAD: [0, 24, 6], UARM_L: [0, 0, 90], FARM_L: [0, 0, 14], OFFHAND: [0, 0, 6], hipsX: -0.07 },
@@ -262,7 +277,7 @@ const GENERIC: Record<AnimKey, ActionSpec> = {
 };
 
 /** Per-grip overrides: the same ability reads differently with each weapon. */
-const BY_GRIP: Partial<Record<GripStyle, Partial<Record<AnimKey, ActionSpec>>>> = {
+const BY_GRIP: Partial<Record<GripStyle, Partial<Record<PoseKey, ActionSpec>>>> = {
   twoHand: {
     slash: {
       windup: { ...coil, HIPS: [0, -30, 4], SPINE: [0, -10, 0], CHEST: [0, -60, 10], HEAD: [0, 50, 0], CLAV_R: [0, 0, 10], UARM_R: [-40, 0, 160], FARM_R: [0, 0, 40], WEAPON: [0, 0, 80] },
@@ -354,7 +369,7 @@ const BY_GRIP: Partial<Record<GripStyle, Partial<Record<AnimKey, ActionSpec>>>> 
 };
 
 /** Guard and bash depend on what the off hand carries. */
-const BY_OFFHAND: Partial<Record<OffhandStyle, Partial<Record<AnimKey, ActionSpec>>>> = {
+const BY_OFFHAND: Partial<Record<OffhandStyle, Partial<Record<PoseKey, ActionSpec>>>> = {
   none: {
     guard: { // weapon held crosswise in front of the body
       windup: { CHEST: [0, 10, -6], UARM_R: [-20, 0, 50], FARM_R: [0, -40, 80], WEAPON: [0, 0, 20], UARM_L: [10, 0, 50], FARM_L: [0, 0, 90], hipsY: -0.16, hipsX: -0.04 },
@@ -390,9 +405,9 @@ const BY_OFFHAND: Partial<Record<OffhandStyle, Partial<Record<AnimKey, ActionSpe
 const cache = new Map<string, ActionPoses>();
 
 /** Moves performed with the left arm (a shield arm joins in rather than staying up). */
-const LEFT_ARM_ANIMS = new Set<AnimKey>(['guard', 'bash', 'throw', 'shoot', 'castBig', 'roar', 'blink', 'leap']);
+const LEFT_ARM_ANIMS = new Set<PoseKey>(['guard', 'bash', 'throw', 'spinL', 'shoot', 'castBig', 'roar', 'blink', 'leap']);
 
-export function actionPoses(grip: GripStyle, off: OffhandStyle, form: BodyForm, anim: AnimKey): ActionPoses {
+export function actionPoses(grip: GripStyle, off: OffhandStyle, form: BodyForm, anim: PoseKey): ActionPoses {
   const key = `${grip}|${off}|${form.id}|${anim}`;
   let p = cache.get(key);
   if (!p) {

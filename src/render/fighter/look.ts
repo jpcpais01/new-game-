@@ -19,39 +19,54 @@ export type GripStyle = 'oneHand' | 'twoHand' | 'polearm' | 'dual' | 'staff' | '
 /** What the off hand carries. */
 export type OffhandStyle = 'none' | 'shield' | 'weapon' | 'focus';
 
+/** Left-hand items that are put away when the hand is needed elsewhere and drawn to be used. */
+export type Holdable = 'dagger' | 'parry' | 'xbow' | 'knives' | 'chakram';
+
 /**
- * Who gets the left hand and arm, resolved once for any gear combination so
- * models and animation agree:
- * - `left`: what the left hand holds at rest. A bow, the second grip of a
- *   two-handed weapon, the second twin dagger or the parrying dagger, in that
- *   order; `free` lets a secondary (knives, crossbow, chakram) sit in it.
+ * Where every hand-held piece of a loadout lives, resolved once for any gear
+ * combination so models, animation and projectiles agree:
+ * - `left`: what the left hand holds at rest, by priority: a bow, a shield
+ *   strapped to the forearm, the second grip of a two-handed weapon, the
+ *   second twin dagger, a secondary (crossbow, chakram, knives), then the
+ *   parrying dagger. Everything else is carried: the second dagger in a hip
+ *   sheath, the parrying dagger at the back of the belt, the crossbow in a
+ *   hip holster, the chakram on the back, knives in the bandolier.
  * - `shield`: a shield straps to the left forearm, or is slung on the back
  *   when the left arm holds a bow.
  * - `twoHanded`: a two-hander or spear is gripped with both hands; with a
  *   shield on the arm it is wielded one-handed instead (spear and shield).
- * Items that lose the hand are carried instead: the parrying dagger and the
- * second twin dagger sheathed on the hip, the crossbow holstered (drawn to
- * shoot), throwing knives in the bandolier (one drawn to throw).
+ * - `draws`: abilities that bring a carried item to a hand while they play
+ *   (by ability id). An archer's left hand keeps the bow, so its right hand
+ *   lets go of the string to shoot the crossbow or throw.
  */
 export interface HandPlan {
-  left: 'bow' | 'grip' | 'dagger' | 'parry' | 'free';
+  left: 'bow' | 'shield' | 'grip' | Holdable | 'free';
   shield: 'none' | 'arm' | 'back';
   twoHanded: boolean;
+  draws: Record<string, { item: Holdable; hand: 'L' | 'R' }>;
 }
 
 const SHIELDS = new Set<string>(['tower_shield', 'mirror_aegis']);
+const SECONDARY: Partial<Record<string, Holdable>> = { hand_crossbow: 'xbow', wind_chakram: 'chakram', throwing_knives: 'knives' };
 
 export function handPlan(gear: GearSet): HandPlan {
   const grip = gripOf(gear);
   const hasShield = !!gear.defense && SHIELDS.has(gear.defense);
   const shield: HandPlan['shield'] = !hasShield ? 'none' : grip === 'bow' ? 'back' : 'arm';
   const twoHanded = (grip === 'twoHand' || grip === 'polearm') && shield !== 'arm';
-  let left: HandPlan['left'] = 'free';
-  if (grip === 'bow') left = 'bow';
-  else if (twoHanded) left = 'grip';
-  else if (grip === 'dual' && shield !== 'arm') left = 'dagger';
-  else if (gear.defense === 'parrying_blade' && shield !== 'arm') left = 'parry';
-  return { left, shield, twoHanded };
+  const secondary = gear.offhand ? SECONDARY[gear.offhand] : undefined;
+  const parry = gear.defense === 'parrying_blade';
+  const left: HandPlan['left'] = grip === 'bow' ? 'bow' : shield === 'arm' ? 'shield' : twoHanded ? 'grip'
+    : grip === 'dual' ? 'dagger' : secondary ?? (parry ? 'parry' : 'free');
+  const draws: HandPlan['draws'] = {};
+  if (secondary) {
+    for (const ab of GEAR.offhand[gear.offhand!]?.abilities ?? []) draws[ab.id] = { item: secondary, hand: left === 'bow' ? 'R' : 'L' };
+  }
+  // The parrying dagger comes out for its counter when the left hand can swap to it.
+  if (parry && left !== 'bow' && left !== 'shield' && left !== 'grip') {
+    for (const ab of GEAR.defense.parrying_blade?.abilities ?? []) draws[ab.id] = { item: 'parry', hand: 'L' };
+  }
+  return { left, shield, twoHanded, draws };
 }
 
 export interface Appearance {
@@ -212,7 +227,7 @@ export function gripOf(gear: GearSet): GripStyle {
 }
 
 export function offhandOf(gear: GearSet, hands: HandPlan = handPlan(gear)): OffhandStyle {
-  if (hands.shield === 'arm') return 'shield';
+  if (hands.left === 'shield') return 'shield';
   if (hands.left === 'dagger' || hands.left === 'parry') return 'weapon';
   if (gear.offhand === 'frost_orb' && hands.left === 'free') return 'focus';
   return 'none';

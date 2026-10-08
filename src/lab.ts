@@ -43,6 +43,7 @@ const LEFTS: Partial<GearSet>[] = [
   {}, { defense: 'tower_shield' }, { defense: 'mirror_aegis' }, { defense: 'parrying_blade' }, { offhand: 'hand_crossbow' },
   { offhand: 'throwing_knives' }, { offhand: 'wind_chakram' }, { offhand: 'frost_orb' }, { offhand: 'iron_gauntlet' },
   { defense: 'tower_shield', offhand: 'hand_crossbow' }, { defense: 'parrying_blade', offhand: 'throwing_knives' },
+  { defense: 'parrying_blade', offhand: 'hand_crossbow' },
 ];
 const FORMS_CYCLE: FormId[] = ['balanced', 'robust', 'mighty', 'slender', 'agile', 'ethereal', 'balanced'];
 
@@ -67,7 +68,7 @@ export function installLab(o: { scene: Scene; fx: FxContext; cam: FightCamera; h
     const f = createFighter((i % 2) as 0 | 1, { name: r.form, form: r.form, gear: r.gear, skins: skinsOf(r.gear) });
     const home = (i - (roster.length - 1) / 2) * 2.3;
     f.x = f.px = home;
-    f.facing = 1;
+    f.facing = new URLSearchParams(location.search).has('flip') ? -1 : 1;
     const v = new FighterView(f, (i % 2) as 0 | 1);
     o.scene.add(v.group);
     return { f, v, home, clock: o.mode === 'combos' ? 0 : i * 0.37 };
@@ -102,10 +103,12 @@ export function installLab(o: { scene: Scene; fx: FxContext; cam: FightCamera; h
 
   // `&slow=0.25` plays everything at a quarter speed, to study fast moves.
   const slow = Number(new URLSearchParams(location.search).get('slow')) || 1;
+  // `&freeze=2.4` stops the script at that second and lets the poses settle, for stills.
+  const freeze = Number(new URLSearchParams(location.search).get('freeze')) || 0;
   return (realDt: number) => {
-    const dt = realDt * slow;
     for (const ac of actors) {
       const f = ac.f;
+      const dt = freeze ? Math.max(0, Math.min(realDt * slow, freeze - ac.clock)) : realDt * slow;
       ac.clock = (ac.clock + dt) % total;
       let t = ac.clock, beat: Beat = 'idle', bt = 0;
       for (const [d, b] of script) { if (t < d) { beat = b; bt = t; break; } t -= d; }
@@ -157,8 +160,14 @@ export function installLab(o: { scene: Scene; fx: FxContext; cam: FightCamera; h
       } else f.y = Math.max(0, f.y - dt * 6);
       f.x += f.vx * dt;
       f.x = Math.max(ac.home - 1.0, Math.min(ac.home + 1.0, f.x));
+      if (freeze && ac.clock >= freeze - 1e-6) {
+        // Frozen: tell screenshot scripts, with what each actor is doing.
+        const a = f.action;
+        document.body.dataset.frozen = '1';
+        document.body.dataset[`actor${actors.indexOf(ac)}`] = `${beat}@${ac.clock.toFixed(2)} ${a ? `${f.abilities[a.ability].id}:${a.phase}:${a.t.toFixed(2)}` : '-'}`;
+      }
       ac.v.setLookAt(null);
-      ac.v.update(f, 1, dt, o.fx, false, false, 1);
+      ac.v.update(f, 1, realDt * slow, o.fx, false, false, 1);
     }
     o.cam.showcase = 0;
     if (o.focus !== undefined && actors[o.focus]) {

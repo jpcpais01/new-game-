@@ -5,12 +5,15 @@ import type { BodyForm } from './forms';
 import { BowRig, type BowWant } from './bow';
 import { CrossbowRig, type XbowWant } from './crossbow';
 import { Gait } from './gait';
+import { Holder } from './holder';
 import { setWorldQuaternion, solveTwoBone } from './ik';
 import {
   actionPoses, addPose, HIPS_X, HIPS_Y, HURT_ADD, J, JOINT_COUNT, KO_FALL, KO_POSE, lerpPose, POSE_SIZE, stance,
-  victoryPose, type Pose,
+  victoryPose, type Pose, type PoseKey,
 } from './poses';
+import type { HandPlan, Holdable } from './look';
 import type { Rig } from './rig';
+import type { AbilityDef, AnimKey } from '../../sim/types';
 
 const _a = new Vector3();
 const _b = new Vector3();
@@ -27,6 +30,15 @@ const ease = (t: number) => t * t * (3 - 2 * t);
 
 /** Anims whose motion needs the off hand free, so a two-handed grip lets go. */
 const FREE_OFFHAND = new Set(['roar', 'castBig', 'cast', 'bash', 'blink', 'throw', 'shoot']);
+const HOLDABLE = new Set<string>(['dagger', 'parry', 'xbow', 'knives', 'chakram']);
+type Draw = HandPlan['draws'][string];
+
+/** The move an ability plays, given the hand its item is drawn into. */
+function poseKey(anim: AnimKey, draw: Draw | undefined): PoseKey {
+  if (draw?.item === 'knives') return draw.hand === 'R' ? 'throwR' : 'throw';
+  if (draw?.item === 'chakram') return draw.hand === 'R' ? 'spin' : 'spinL';
+  return anim;
+}
 
 /**
  * Drives a rig from simulation state. Layers, in order:
@@ -64,22 +76,37 @@ export class Animator {
   /** Bow string, arrow and aiming arms, when the rig carries a bow. */
   private readonly bow: BowRig | null;
   private readonly bowWant: BowWant = { aim: 1, draw: 0, hand: 1, low: 1, loose: 0, arrow: true, tremble: 0 };
-  /** Throwing knives fanned in the left hand: kept there, or drawn only to throw. */
-  private readonly knives: Object3D | null;
-  private readonly knivesAlways: boolean;
-  /** Hand crossbow (secondary): drawn, aimed, fired and re-cocked. */
+  /** Left-hand items moved between the hands and where they are carried. */
+  private readonly holder: Holder | null;
+  /** Hand crossbow (secondary): aimed, fired and re-cocked. */
   private readonly xbow: CrossbowRig | null;
-  private readonly xbowWant: XbowWant = { hand: 1, aim: 1, low: 1, loaded: true };
+  private readonly xbowWant: XbowWant = { side: 'L', aim: 1, low: 1, loaded: true };
 
   constructor(private readonly rig: Rig, private readonly form: BodyForm) {
     this.pose.set(stance(rig.look.grip, rig.look.offhand, form));
     this.bow = BowRig.from(rig);
-    this.knives = rig.tags.get('knivesHeld') ?? rig.tags.get('knivesDrawn') ?? null;
-    this.knivesAlways = rig.tags.has('knivesHeld');
+    this.holder = Holder.from(rig);
     this.xbow = CrossbowRig.from(rig);
   }
 
   private get ready(): Pose { return stance(this.rig.look.grip, this.rig.look.offhand, this.form); }
+
+  /**
+   * Where a projectile of this ability visibly leaves the fighter (world):
+   * the crossbow's muzzle, the hand throwing knives or a chakram, the bow, a
+   * staff's tip. False when it should start where the simulation puts it.
+   */
+  launchPoint(ab: AbilityDef, out: Vector3): boolean {
+    const rig = this.rig;
+    const draw = rig.look.hands.draws[ab.id];
+    if (draw?.item === 'xbow' && this.xbow) { this.xbow.muzzle(out); return true; }
+    const held = draw && this.holder?.bone(draw.item);
+    if (held) { held.getWorldPosition(out); return true; }
+    if (ab.projectile?.ground) return false;
+    if (rig.look.grip === 'bow' && ab.anim === 'shoot') { rig.sockets.offHand.getWorldPosition(out); return true; }
+    if (ab.anim === 'cast') { rig.weaponTip.getWorldPosition(out); return true; }
+    return false;
+  }
 
   /** Physical flinch: kicks the spring velocities. `from` is +1 when hit from the front. */
   hit(heavy: boolean, from = 1, blocked = false): void {
@@ -138,10 +165,11 @@ export class Animator {
     // Bow at rest: lowered, an arrow nocked, the right hand on the string.
     const bw = this.bowWant;
     bw.aim = 1; bw.low = 1; bw.loose = 0; bw.draw = 0.04; bw.hand = 1; bw.arrow = true; bw.tremble = 0;
-    // Crossbow at rest: held low in a free left hand, otherwise on the hip.
+    // Everything held or carried where the HandPlan puts it; a crossbow that
+    // rests in the left hand is held low.
+    this.holder?.reset();
     const xw = this.xbowWant;
-    const xHeld = !!this.xbow?.inHand;
-    xw.hand = xHeld ? 1 : 0; xw.aim = xHeld ? 1 : 0; xw.low = 1; xw.loaded = true;
+    xw.side = 'L'; xw.aim = this.holder?.restOf('xbow') === 'L' ? 1 : 0; xw.low = 1; xw.loaded = true;
 
     if (!f.alive) {
       this.koT += dt;
@@ -238,13 +266,16 @@ export class Animator {
       this.lastAction = a;
       if (ab.slot === 'basic') this.swing++;
     }
-    const ap = actionPoses(look.grip, look.offhand, this.form, ab.anim);
+    // An ability that uses a carried item draws it into a hand (see HandPlan.draws).
+    const draw = look.hands.draws[ab.id];
+    const ap = actionPoses(look.grip, look.offhand, this.form, poseKey(ab.anim, draw));
     const useAlt = !!ap.alt && this.swing % 2 === 0 && ab.slot === 'basic';
     const W = useAlt ? ap.alt!.windup : ap.windup;
     const S = useAlt ? ap.alt!.strike : ap.strike;
-    if (FREE_OFFHAND.has(ab.anim)) gripWant = 0;
-    if (this.bow) this.bowAction(f);
-    if (this.xbow) this.xbowAction(f);
+    if (FREE_OFFHAND.has(ab.anim) || draw?.hand === 'L') gripWant = 0;
+    if (draw && this.holder) this.drawAction(f, draw);
+    if (this.bow) this.bowAction(f, draw);
+    if (this.xbow) this.xbowAction(f, draw);
     const evade = ab.slot === 'evade';
     const fwd = a.dir === f.facing;
 
@@ -324,10 +355,16 @@ export class Animator {
   }
 
   /** Bow timeline: raise and aim, draw to the anchor, loose, then nock the next arrow. */
-  private bowAction(f: Fighter): void {
+  private bowAction(f: Fighter, draw: Draw | undefined): void {
     const a = f.action!;
     const ab = f.abilities[a.ability];
     const bw = this.bowWant;
+    if (draw?.hand === 'R') {
+      // The drawing hand lets go of the string for a crossbow, knives or a
+      // chakram; the bow stays low in the left hand.
+      bw.hand = 0; bw.arrow = false;
+      return;
+    }
     if (ab.anim !== 'shoot') {
       // Bashing or dodging: the bow arm follows the move, the drawing hand lets go.
       bw.hand = 0; bw.aim = 0;
@@ -356,34 +393,54 @@ export class Animator {
     }
   }
 
-  /** Crossbow timeline: draw it (from the hip if needed), aim, shoot with a kick, re-cock, put it away. */
-  private xbowAction(f: Fighter): void {
+  /**
+   * Draw timeline for a carried item: in the hand from the windup, put back
+   * late in the recovery; thrown items (knives, chakram) leave the hand at
+   * release and are back by the end. While the left hand is lent, its own item
+   * (second dagger, parrying dagger...) goes to its sheath or holster.
+   */
+  private drawAction(f: Fighter, draw: Draw): void {
     const a = f.action!;
-    const ab = f.abilities[a.ability];
+    const want = this.holder!.want;
+    const thrown = draw.item === 'knives' || draw.item === 'chakram';
+    let out = false, gone = false;
+    if (a.feint) out = a.t / a.recovery < 0.7;
+    else if (a.phase === 'windup') out = true;
+    else if (a.phase === 'active') { out = !thrown; gone = thrown; }
+    else {
+      const r = clamp(a.t / a.recovery, 0, 1);
+      out = !thrown && r < 0.8;
+      gone = thrown && r < 0.6;
+    }
+    if (gone) want[draw.item] = 'gone';
+    else if (out) want[draw.item] = draw.hand;
+    const rest = this.rig.look.hands.left;
+    if (draw.hand === 'L' && (out || gone) && rest !== draw.item && HOLDABLE.has(rest)) want[rest as Holdable] = 'carry';
+  }
+
+  /** Crossbow timeline: aim with the hand holding it, shoot with a kick, re-cock, lower it. */
+  private xbowAction(f: Fighter, draw: Draw | undefined): void {
+    const a = f.action!;
     const xw = this.xbowWant;
-    // An archer's shots are the bow's; the crossbow stays holstered.
-    if (this.rig.look.grip === 'bow') return;
-    if (ab.anim !== 'shoot') {
+    if (draw?.item !== 'xbow') {
       // Any other move: a held crossbow follows the arm's animation.
       xw.aim = 0;
       return;
     }
-    if (a.feint) { xw.hand = 1; xw.aim = 1 - smoothstep(0.3, 1, a.t / a.recovery); return; }
+    xw.side = draw.hand;
+    if (a.feint) { xw.aim = 1 - smoothstep(0.3, 1, a.t / a.recovery); return; }
     if (a.phase === 'windup') {
       const k = clamp(a.t / a.windup, 0, 1);
-      xw.hand = 1;
       xw.aim = smoothstep(0, 0.35, k);
       xw.low = 1 - smoothstep(0.1, 0.55, k);
     } else if (a.phase === 'active') {
-      xw.hand = 1; xw.aim = 1; xw.low = 0; xw.loaded = false;
+      xw.aim = 1; xw.low = 0; xw.loaded = false;
     } else {
       const r = clamp(a.t / a.recovery, 0, 1);
       xw.loaded = r > 0.55;
       xw.low = smoothstep(0.4, 1, r);
-      if (!this.xbow!.inHand) {
-        xw.hand = r < 0.8 ? 1 : 0;
-        xw.aim = 1 - smoothstep(0.55, 0.85, r);
-      }
+      // A crossbow that goes back to the holster lowers the arm on the way.
+      if (draw.hand === 'R' || this.holder?.restOf('xbow') !== 'L') xw.aim = 1 - smoothstep(0.5, 0.8, r);
     }
   }
 
@@ -538,7 +595,9 @@ export class Animator {
     // side-view plane around the wrist (before the second hand grips it).
     if (rig.look.grip !== 'bow') this.flatten(j[J.HAND_R], rig.sockets.mainHand);
     const left = rig.look.hands.left;
-    if ((left === 'dagger' || left === 'parry') && !(f.action && FREE_OFFHAND.has(f.abilities[f.action.ability].anim))) this.flatten(j[J.HAND_L], rig.sockets.offHand);
+    const ab = f.action ? f.abilities[f.action.ability] : null;
+    const lent = !!ab && (FREE_OFFHAND.has(ab.anim) || rig.look.hands.draws[ab.id]?.hand === 'L');
+    if ((left === 'dagger' || left === 'parry') && !lent) this.flatten(j[J.HAND_L], rig.sockets.offHand);
 
     // Off hand onto the two-handed grip.
     if (rig.offGrip && this.gripW > 0.01) {
@@ -552,20 +611,11 @@ export class Animator {
       solveTwoBone(j[J.UARM_L], j[J.FARM_L], j[J.HAND_L], _a, _pole, this.gripW);
       setWorldQuaternion(j[J.HAND_L], _q, this.gripW);
     }
-    if (this.knives) {
-      // Thrown knives leave the hand at release and are back by the end of the recovery.
-      const a = f.action;
-      const ab = a ? f.abilities[a.ability] : null;
-      let show = this.knivesAlways && f.alive;
-      if (ab?.anim === 'throw' && a) {
-        if (a.phase === 'windup') show = this.rig.look.hands.left !== 'bow';
-        else if (a.phase === 'active') show = false;
-        else show = this.knivesAlways && a.t / a.recovery > 0.6;
-      }
-      this.knives.scale.setScalar(show ? 1 : 0.001);
-    }
+    // Arms first (bow, crossbow aim), then the held items follow the hands.
     this.bow?.apply(dt, this.bowWant, this.hasLookAt ? this.lookAt : null, ws);
-    this.xbow?.apply(dt, this.xbowWant, this.hasLookAt ? this.lookAt : null, ws);
+    this.xbow?.aimArm(dt, this.xbowWant, this.hasLookAt ? this.lookAt : null, ws);
+    this.holder?.apply(dt);
+    this.xbow?.apply(dt, this.xbowWant);
     this.landing = Math.max(0, this.landing - dt * 4);
   }
 }
