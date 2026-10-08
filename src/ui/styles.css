@@ -727,9 +727,11 @@ button {
   .corner .sub { font-size: 11px; }
   .corner .edit { width: 38px; height: 38px; padding: 0; }
   .corner .edit .lbl { display: none; }
+  /* Wide phones (over 900px) also land here: keep the same compact corner. */
+  .blurb, .stats, .abilities, .slot .slot-name { display: none; }
   .class-btn { padding: 4px 1px; font-size: 9.5px; gap: 1px; }
   .class-btn .glyph { width: 24px; height: 24px; font-size: 13px; }
-  .classes.forms { gap: 4px; }
+  .classes.forms { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; }
   .gear-slots { gap: 5px; }
   .gear-slots .slot { min-height: 0; padding: 4px 2px; gap: 2px; font-size: 9px; border-radius: 10px; }
   .slot .ico { width: 30px; height: 30px; }

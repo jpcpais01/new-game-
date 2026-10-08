@@ -3,6 +3,8 @@ import { clamp, damp } from '../core/math';
 import { STYLE } from './materials';
 
 export type Zoom = 'close' | 'normal' | 'distant';
+const MAX_HFOV = 51;
+const MAX_VFOV = 34;
 export const ZOOM_FACTOR: Record<Zoom, number> = { close: 0.7, normal: 1, distant: 1.42 };
 
 /**
@@ -33,8 +35,13 @@ export class FightCamera {
 
   resize(aspect: number): void {
     this.camera.aspect = aspect;
-    // Wider lens in portrait so the duel still fits.
-    this.camera.fov = aspect < 1 ? 46 : aspect < 1.4 ? 36 : 30;
+    // One lens for every screen shape: never wider than 16:9 at 30° (51° across)
+    // nor taller than 34°. Wide phones and portrait screens pull the camera back
+    // to fit the duel instead of widening the lens, which stretched everything
+    // near the edges of the screen.
+    const rad = Math.PI / 180;
+    const fitWidth = (2 * Math.atan(Math.tan((MAX_HFOV / 2) * rad) / Math.max(0.01, aspect))) / rad;
+    this.camera.fov = Math.min(MAX_VFOV, fitWidth);
     this.camera.updateProjectionMatrix();
     STYLE.uAspect.value = 1 / Math.max(0.01, aspect);
   }
@@ -79,7 +86,7 @@ export class FightCamera {
     const margin = (2.6 + this.showcase * 1.2) * (0.55 + 0.45 * tight);
     const needW = (sep / 2 + margin) / (tanHalf * cam.aspect);
     const needH = (2.7 + Math.max(ay, by) * 0.5) / tanHalf;
-    const target = clamp(Math.max(needW, needH * Math.min(1, zk)) * Math.max(1, zk), 6.5, 60) * (1 - this.punch * 0.09);
+    const target = clamp(Math.max(needW, needH * Math.min(1, zk)) * Math.max(1, zk), 6.5, 140) * (1 - this.punch * 0.09);
     const midX = (ax + bx) / 2;
 
     this.dist = damp(this.dist, target, 2.6, dt);
