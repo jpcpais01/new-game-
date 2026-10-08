@@ -18,6 +18,7 @@ import { gearOf } from '../sim/gear';
 import { glow, sceneToon } from './materials';
 import type { GameRenderer } from './renderer';
 import type { Arena } from './scene/arena';
+import { fmtInt } from '../ui/format';
 
 interface ProjectileView {
   obj: Object3D;
@@ -388,7 +389,7 @@ export class BattleView {
       case 'hit': {
         const tv = this.fighters[e.target];
         if (e.dot) {
-          if (e.amount > 0) this.text.spawn(String(e.amount), e.x, e.y, e.ability === 'poison' ? 'dot poison' : e.ability === 'thorns' ? 'dot thorns' : 'dot', 0.75, 0.7);
+          if (e.amount >= 0.5) this.text.spawn(fmtInt(e.amount), e.x, e.y, e.ability === 'poison' ? 'dot poison' : e.ability === 'thorns' ? 'dot thorns' : 'dot', 0.75, 0.7);
           break;
         }
         const att = b.fighters[e.attacker];
@@ -420,7 +421,7 @@ export class BattleView {
         if (heavy) { this.cam.kick(0.25); this.renderer.impact(0.6); this.arena.excite(0.25); }
 
         const cls = e.blocked ? 'blocked' : e.crit ? 'crit' : e.echo ? 'echo' : e.dtype === 'magic' ? 'magic' : heavy ? 'heavy' : '';
-        const label = e.blocked ? `${e.amount}` : e.crit ? `${e.amount}!` : String(e.amount);
+        const label = e.crit ? `${fmtInt(e.amount)}!` : fmtInt(e.amount);
         this.text.spawn(label, e.x, e.y + 0.4, `dmg ${cls}`, e.crit ? 1.35 : heavy ? 1.15 : 1);
         if (e.blocked && this.callout(`block${e.target}`, 0.8)) this.text.spawn('BLOCK', e.x, e.y + 1.0, 'callout blocked', 0.8);
         if (e.ability === 'wall') this.text.spawn('WALL SPLAT!', e.x, e.y + 1.2, 'callout heavy', 1.2, 1.1);
@@ -441,7 +442,7 @@ export class BattleView {
       case 'evade': break;
       case 'heal':
         add.burst({ x: b.fighters[e.f].x, y: 1.0, count: 6, jitter: 0.4, dir: [0, 1, 0], spread: 0.3, speed: [0.8, 1.6], life: [0.5, 0.8], size: [0.08, 0.14], color: 0x6dff8a, intensity: 2 });
-        if (e.amount >= 15) this.text.spawn(`+${e.amount}`, b.fighters[e.f].x, this.headY(e.f), 'heal', 0.85);
+        if (e.amount >= 15) this.text.spawn(`+${fmtInt(e.amount)}`, b.fighters[e.f].x, this.headY(e.f), 'heal', 0.85);
         break;
       case 'shield':
         this.pulses.spawn('ring', b.fighters[e.f].x, 1.0, 1.4, 0xffd76b, 0.4, 2);
