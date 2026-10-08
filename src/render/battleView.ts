@@ -7,8 +7,13 @@ import type { FightCamera } from './camera';
 import { Lightning, Pulses, WeaponTrail } from './fx/effects';
 import type { Particles } from './fx/particles';
 import { accentOf } from './fighter/archetype';
-import { ENCHANTS, FighterView, type FxContext } from './fighter/fighterView';
+import { FighterView, type FxContext } from './fighter/fighterView';
+import { elementImpact } from './gear/vfx';
 import { gearGeo } from './fighter/rig';
+import * as kit from './gear/kit';
+import { resolveArt } from '../gear/art';
+import { itemArt } from '../gear/itemArt';
+import { gearOf } from '../sim/gear';
 import { glow, sceneToon } from './materials';
 import type { GameRenderer } from './renderer';
 import type { Arena } from './scene/arena';
@@ -16,6 +21,8 @@ import type { Arena } from './scene/arena';
 interface ProjectileView {
   obj: Object3D;
   style: ProjectileStyle;
+  /** Accent colour of the item that fired it. */
+  tint: number;
   seen: boolean;
 }
 
@@ -72,8 +79,8 @@ export class BattleView {
       const v = new FighterView(f, f.id);
       this.scene.add(v.group);
       this.fighters[i] = v;
-      const enchant = f.gearIds.find((it) => ENCHANTS.includes(it));
-      this.trails[i].setColor(enchant ? ({ ember_core: 0xff7a2a, frost_core: 0x9fe8ff, twin_daggers: 0x9cff5a, vampiric_fang: 0xff3355, storm_crown: 0xaedcff, executioner_hood: 0xffffff } as Record<string, number>)[enchant] : accentOf(f));
+      this.trails[i].setColor(v.vfx.look ? v.vfx.trail : accentOf(f));
+      this.trails[i].setLife(v.vfx.trailLife);
     }
     for (const p of this.projectiles.values()) p.obj.removeFromParent();
     this.projectiles.clear();
@@ -128,7 +135,8 @@ export class BattleView {
     for (const p of b.projectiles) {
       let pv = this.projectiles.get(p.id);
       if (!pv) {
-        pv = { obj: this.makeProjectile(p), style: p.style, seen: true };
+        const tint = this.projectileTint(p);
+        pv = { obj: this.makeProjectile(p, tint), style: p.style, tint, seen: true };
         this.projectiles.set(p.id, pv);
         this.projGroup.add(pv.obj);
       }
@@ -136,16 +144,30 @@ export class BattleView {
       const x = p.px + (p.x - p.px) * alpha, y = p.py + (p.y - p.py) * alpha;
       pv.obj.position.set(x, y, 0);
       pv.obj.scale.x = Math.sign(p.vx) || 1;
-      this.projectileTrail(p, x, y);
+      this.projectileTrail(p, x, y, pv.tint);
       pv.obj.rotation.z += p.style === 'meteor' ? 0.05 : 0;
       if (p.style === 'hex') pv.obj.rotation.y += 0.1;
+      // Thrown blades tumble; the chakram spins in its own plane.
+      const spinner = pv.obj.children[0];
+      if (p.style === 'knife' && spinner) spinner.rotation.z -= 0.55;
+      if (p.style === 'wave' && spinner) spinner.rotation.z -= 0.45;
+      // Arrows and bolts follow their arc.
+      if ((p.style === 'arrow' || p.style === 'bolt') && p.vx) pv.obj.rotation.z = Math.atan2(p.vy, Math.abs(p.vx)) * (Math.sign(p.vx) || 1);
     }
     for (const [id, pv] of this.projectiles) {
       if (!pv.seen) { pv.obj.removeFromParent(); this.projectiles.delete(id); }
     }
   }
 
-  private makeProjectile(p: Projectile): Object3D {
+  /** Tint of the gear piece whose ability fired this projectile. */
+  private projectileTint(p: Projectile): number {
+    const f = this.battle!.fighters[p.owner];
+    const ab = f.abilities[p.ability];
+    const id = ab && f.gearIds.find((g) => gearOf(g).abilities?.some((a) => a.id === ab.id));
+    return id ? resolveArt(itemArt(id)).tint : STYLE_COLOR[p.style];
+  }
+
+  private makeProjectile(p: Projectile, tint: number): Object3D {
     const g = new Group();
     const c = STYLE_COLOR[p.style];
     switch (p.style) {
@@ -176,11 +198,26 @@ export class BattleView {
         break;
       }
       case 'wave': {
-        const arc = new Mesh(gearGeo.torus(0.7, 0.07, Math.PI * 0.9), glow(c, 3));
+        // Spinning chakram riding a crescent of wind.
+        const disc = new Group();
+        disc.add(new Mesh(kit.torus(0.26, 0.035, Math.PI * 2, 4, 24), sceneToon(0xdfe6f2, tint, 0.25)));
+        disc.add(new Mesh(kit.torus(0.17, 0.02, Math.PI * 2, 4, 18), glow(tint, 2.6)));
+        for (let i = 0; i < 6; i++) {
+          const a = (i / 6) * Math.PI * 2;
+          const b = new Mesh(kit.cone(0.05, 0.18, 3), sceneToon(0xeef2fa));
+          b.position.set(Math.cos(a) * 0.32, Math.sin(a) * 0.32, 0);
+          b.rotation.z = a - Math.PI / 2 - 0.5;
+          b.scale.z = 0.35;
+          disc.add(b);
+        }
+        g.add(disc);
+        const arc = new Mesh(gearGeo.torus(0.7, 0.06, Math.PI * 0.9), glow(tint, 2.6));
         arc.rotation.z = -Math.PI * 0.45;
+        arc.position.x = -0.25;
         g.add(arc);
-        const arc2 = new Mesh(gearGeo.torus(0.6, 0.12, Math.PI * 0.8), glow(0xff5060, 1.2));
+        const arc2 = new Mesh(gearGeo.torus(0.58, 0.1, Math.PI * 0.8), glow(0xffffff, 0.9));
         arc2.rotation.z = -Math.PI * 0.4;
+        arc2.position.x = -0.3;
         g.add(arc2);
         break;
       }
@@ -195,20 +232,48 @@ export class BattleView {
         }
         break;
       }
-      case 'arrow': case 'bolt': case 'knife': {
-        // Simple shaft + head; the gear-visuals pass can replace these.
-        const len = p.style === 'arrow' ? 0.9 : p.style === 'bolt' ? 0.55 : 0.32;
-        const shaft = new Mesh(gearGeo.box(len, 0.035, 0.035), sceneToon(p.style === 'knife' ? 0x9aa4b4 : 0x8a5a2b));
+      case 'arrow': case 'bolt': {
+        // Models point along +X; the group is mirrored for leftward shots.
+        const bolt = p.style === 'bolt';
+        const len = bolt ? 0.6 : 0.95;
+        const r = bolt ? 0.024 : 0.016;
+        const shaft = new Mesh(kit.cyl(r, r, len, 6), sceneToon(bolt ? 0x6a4428 : 0x9a6a3a));
+        shaft.rotation.z = Math.PI / 2;
         g.add(shaft);
-        const head = new Mesh(gearGeo.cone(0.06, 0.18, 4), glow(c, 2.2));
+        const head = new Mesh(kit.cone(bolt ? 0.06 : 0.055, bolt ? 0.16 : 0.2, 4), sceneToon(0xd6dde9, 0xffffff, 0.15));
         head.rotation.z = -Math.PI / 2;
-        head.position.x = len * 0.5 + 0.06;
+        head.scale.z = 0.35;
+        head.position.x = len / 2 + 0.08;
         g.add(head);
-        if (p.style === 'arrow') {
-          const fl = new Mesh(gearGeo.box(0.16, 0.1, 0.012), sceneToon(0xf0e6d0));
-          fl.position.x = -len * 0.45;
-          g.add(fl);
+        const edge = new Mesh(kit.cone(0.03, 0.12, 4), glow(tint, 2.4));
+        edge.rotation.z = -Math.PI / 2;
+        edge.position.x = len / 2 + 0.1;
+        g.add(edge);
+        for (let i = 0; i < 3; i++) {
+          // Fletching: three vanes around the tail in the item's colour.
+          const vane = new Mesh(kit.box(bolt ? 0.12 : 0.2, bolt ? 0.07 : 0.09, 0.01), bolt ? sceneToon(0xc8cfdc) : sceneToon(tint));
+          const a = (i / 3) * Math.PI * 2;
+          vane.position.set(-len / 2 + 0.1, Math.cos(a) * 0.05, Math.sin(a) * 0.05);
+          vane.rotation.x = a;
+          g.add(vane);
         }
+        break;
+      }
+      case 'knife': {
+        const k = new Group();
+        const bladeM = new Mesh(kit.blade(0.26, 0.07, 0.016, 0, 0.35, 0.2), sceneToon(0xe2e8f2, 0xffffff, 0.15));
+        bladeM.position.y = 0.02;
+        k.add(bladeM);
+        const guard = new Mesh(kit.box(0.1, 0.02, 0.03), sceneToon(0xc8a050));
+        k.add(guard);
+        const handle = new Mesh(kit.cyl(0.018, 0.018, 0.1, 6), sceneToon(0x3a2418));
+        handle.position.y = -0.06;
+        k.add(handle);
+        const ring = new Mesh(kit.torus(0.025, 0.008, Math.PI * 2, 4, 8), glow(tint, 2.2));
+        ring.position.y = -0.125;
+        k.add(ring);
+        k.scale.setScalar(1.3);
+        g.add(k);
         break;
       }
       case 'meteor': {
@@ -226,7 +291,7 @@ export class BattleView {
     return g;
   }
 
-  private projectileTrail(p: Projectile, x: number, y: number): void {
+  private projectileTrail(p: Projectile, x: number, y: number, tint: number): void {
     const add = this.fx.add;
     if (!p.ground) {
       // Soft additive halo, re-emitted every frame (cheaper and softer than a glow mesh).
@@ -243,7 +308,11 @@ export class BattleView {
         add.burst({ x, y, count: 2, jitter: 0.2, speed: [0.2, 0.6], life: [0.3, 0.6], size: [0.15, 0.3], color: 0xa040ff, intensity: 1.8 });
         break;
       case 'wave':
-        add.burst({ x, y, count: 2, jitter: 0.4, speed: [0.2, 0.6], life: [0.15, 0.3], size: [0.08, 0.16], color: 0xffd0d0, intensity: 2 });
+        add.burst({ x, y, count: 3, jitter: 0.4, dir: [-Math.sign(p.vx) || -1, 0, 0], spread: 0.3, speed: [2, 5], life: [0.15, 0.3], size: [0.04, 0.08], color: tint, intensity: 2.4, stretch: 0.08 });
+        break;
+      case 'arrow': case 'bolt': case 'knife':
+        // Thin streak behind fast shots.
+        add.burst({ x: x - Math.sign(p.vx) * 0.3, y, count: 1, speed: [0, 0.2], life: [0.12, 0.2], size: [0.04, 0.07], color: tint, intensity: 2.2, sizeEnd: 0.2 });
         break;
       case 'groundwave':
         add.burst({ x, y: 0.1, count: 3, jitter: 0.3, dir: [0, 1, 0], spread: 0.6, speed: [2, 5], life: [0.3, 0.6], size: [0.08, 0.16], color: 0xffa040, intensity: 2, gravity: 14, stretch: 0.06 });
@@ -319,7 +388,13 @@ export class BattleView {
         const att = b.fighters[e.attacker];
         const dir = Math.sign(e.x - att.x) || 1;
         const heavy = e.heavy || e.crit;
-        const color = e.blocked ? 0xbfd8ff : e.dtype === 'magic' ? 0xc58cff : e.ability === 'lightning' ? 0xaedcff : 0xffd27a;
+        // Weapon strikes carry the weapon's element: tinted sparks plus an element flourish.
+        const kind = att.abilities.find((a) => a.id === e.ability)?.kind;
+        const weaponHit = kind === 'melee' || kind === 'dash';
+        const vfx = this.fighters[e.attacker]?.vfx;
+        const elemental = weaponHit && !!vfx && vfx.lead !== 'none';
+        const color = e.blocked ? 0xbfd8ff : elemental ? vfx!.spark : e.dtype === 'magic' ? 0xc58cff : e.ability === 'lightning' ? 0xaedcff : 0xffd27a;
+        if (elemental && !e.blocked) elementImpact(add, smoke, vfx!.lead, e.x, e.y, dir, heavy);
         add.burst({
           x: e.x, y: e.y, count: e.blocked ? 10 : heavy ? 34 : 16, dir: [dir, 0.4, 0], spread: e.blocked ? 1.2 : 0.9,
           speed: heavy ? [6, 14] : [4, 9], life: [0.15, 0.4], size: [0.05, 0.11], color, intensity: 3, gravity: 9, drag: 2, stretch: 0.045,

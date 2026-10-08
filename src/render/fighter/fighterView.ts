@@ -5,7 +5,6 @@ import {
 import { clamp, damp, easeInCubic, easeOutCubic, smoothstep } from '../../core/math';
 import { getStatus, stacksOf, type Fighter } from '../../sim/fighter';
 import { FORMS } from '../../sim/forms';
-import { gearOf } from '../../sim/gear';
 import type { GearId } from '../../sim/types';
 import { archetypeOf, isBig, type Archetype } from './archetype';
 import { glow } from '../materials';
@@ -14,14 +13,13 @@ import {
   actionPoses, HIPS_Y, HURT_ADD, J, JOINT_COUNT, lerpPose, POSE_SIZE, READY, VICTORY, type Pose,
 } from './poses';
 import { buildRig, gearGeo, type Rig } from './rig';
+import { emitMote, weaponVfx, type WeaponVfx } from '../gear/vfx';
 
 export interface FxContext {
   add: Particles;
   smoke: Particles;
 }
 
-/** Gear that tints the weapon edge and sheds particles from it. */
-export const ENCHANTS: GearId[] = ['ember_core', 'frost_core', 'twin_daggers', 'vampiric_fang', 'executioner_hood', 'storm_crown'];
 const _v = new Vector3();
 const _v2 = new Vector3();
 
@@ -73,8 +71,8 @@ export class FighterView {
   private lean = 0;
   private emitAcc = 0;
   private time = 0;
-  private readonly enchantColor: Color | null;
-  private readonly enchants: GearId[];
+  /** Weapon trail, edge glow and element motes, derived from the gear art. */
+  readonly vfx: WeaponVfx;
   private readonly shield: Mesh;
   private readonly shieldMat: ShaderMaterial;
   private readonly ice: Mesh;
@@ -109,14 +107,13 @@ export class FighterView {
     this.pose.set(READY[classId]);
     this.yaw = this.yawFor(facing);
     this.group.rotation.y = this.yaw;
-    this.enchants = items.filter((i) => ENCHANTS.includes(i));
-    this.enchantColor = this.enchants.length ? new Color(gearOf(this.enchants[0]).color) : null;
+    this.vfx = weaponVfx(f.gear);
     this.scale = FORMS[f.form].body.height * (items.includes('colossus_boots') ? 1.05 : 1) / (isBig(f) ? 1.12 : 1);
     this.group.scale.setScalar(this.scale);
 
     if (this.rig.enchantMaterial) {
       // Weapon edge glow takes the enchant colour (white-hot steel otherwise).
-      if (this.enchantColor) this.rig.enchantMaterial.color.copy(this.enchantColor).multiplyScalar(2.2);
+      if (this.vfx.edge !== null) this.rig.enchantMaterial.color.setHex(this.vfx.edge).multiplyScalar(2.2);
       else this.rig.enchantMaterial.color.setRGB(1, 1, 1);
     }
     this.phoenix = this.rig.phoenix;
@@ -400,20 +397,12 @@ export class FighterView {
     if (getStatus(f, 'rage')) fx.add.burst({ x, y: y + 0.4, count: 3, jitter: 0.4, dir: [0, 1, 0], spread: 0.2, speed: [1.5, 3], life: [0.3, 0.6], size: [0.1, 0.2], color: 0xff2a10, intensity: 2, sizeEnd: 0.1 });
     if (getStatus(f, 'ironskin')) fx.add.burst({ x, y: y + 1.0, count: 1, jitter: 0.5, jitterY: 0.8, speed: [0.1, 0.3], life: [0.3, 0.5], size: [0.05, 0.1], color: 0xdfe8ff, intensity: 3, sizeEnd: 0.1 });
 
-    // Weapon enchant trails.
-    if (this.enchants.length) {
+    // Elemental weapons shed motes along the blade.
+    if (this.vfx.elements.length) {
       const tip = this.tipWorld, base = this.baseWorld;
-      for (const id of this.enchants) {
-        const t = Math.random();
-        _v.lerpVectors(base, tip, t);
-        const col = gearOf(id).color;
-        const cfg = id === 'ember_core' ? { g: -2.5, sp: 0.6, life: 0.5, size: 0.11, i: 2.4 }
-          : id === 'frost_core' ? { g: 0.8, sp: 0.2, life: 0.8, size: 0.06, i: 2.6 }
-            : id === 'twin_daggers' ? { g: 3, sp: 0.1, life: 0.6, size: 0.06, i: 1.8 }
-              : { g: 0, sp: 0.3, life: 0.4, size: 0.07, i: 2 };
-        fx.add.emit(_v.x, _v.y, _v.z, (Math.random() - 0.5) * cfg.sp, cfg.sp * 0.5, 0, cfg.life,
-          ((col >> 16) & 255) / 255 * cfg.i, ((col >> 8) & 255) / 255 * cfg.i, (col & 255) / 255 * cfg.i,
-          cfg.size * (step * 30), cfg.g, 1, 0.2, 0);
+      for (const e of this.vfx.elements) {
+        _v.lerpVectors(base, tip, Math.random());
+        emitMote(fx.add, e, _v.x, _v.y, _v.z, step * 30);
       }
     }
 

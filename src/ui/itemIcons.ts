@@ -1,4 +1,7 @@
 import { RARITY_COLOR, resolveArt, type ArtKey, type ItemArt, type Metal, type Rarity, type ResolvedArt } from '../gear/art';
+import { itemArt } from '../gear/itemArt';
+import { gearOf } from '../sim/gear';
+import type { GearId, GearSlot } from '../sim/types';
 
 // -----------------------------------------------------------------------------
 // Procedural item icons. Every art key is a small hand-authored SVG drawing in
@@ -938,4 +941,19 @@ export function itemIconImg(art: ItemArt, o: IconOptions & { size?: number; clas
   img.className = o.className ?? 'item-icon';
   if (o.size) { img.width = o.size; img.height = o.size; }
   return img;
+}
+
+const SLOT_ART: Record<GearSlot, ArtKey> = {
+  main: 'sword', offhand: 'throwing_knives', defense: 'round_shield', head: 'knight_helm', boots: 'leather_boots', special: 'amulet',
+};
+
+/** Icon for a catalog gear piece (framed in its rarity unless `frame: false`). */
+export function gearIcon(id: GearId, o: { frame?: boolean; size?: number } = {}): HTMLImageElement {
+  const g = gearOf(id);
+  return itemIconImg(itemArt(id), { rarity: g.rarity, frame: o.frame, size: o.size, alt: g.name });
+}
+
+/** Faded silhouette shown in an empty gear slot. */
+export function emptySlotIcon(slot: GearSlot): HTMLImageElement {
+  return itemIconImg({ art: SLOT_ART[slot], tint: 0xffffff, metal: 'steel' }, { frame: false, className: 'item-icon ghost' });
 }

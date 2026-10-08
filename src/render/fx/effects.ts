@@ -66,7 +66,11 @@ export class WeaponTrail {
     }
   }
 
+  private life = TRAIL_LIFE;
+
   setColor(c: number): void { this.mat.uniforms.uColor.value.setHex(c).multiplyScalar(2.2); }
+  /** How long a slash lingers (heavy weapons sweep wide, daggers flick). */
+  setLife(s: number): void { this.life = s; }
 
   update(dt: number, base: Vector3, tip: Vector3, emitting: boolean): void {
     for (let i = 0; i < TRAIL_N; i++) this.ages[i] += dt;
@@ -83,7 +87,7 @@ export class WeaponTrail {
       const o = i * 6;
       this.pos[o] = b.x; this.pos[o + 1] = b.y; this.pos[o + 2] = b.z;
       this.pos[o + 3] = t.x; this.pos[o + 4] = t.y; this.pos[o + 5] = t.z;
-      const a = Math.max(0, 1 - this.ages[i] / TRAIL_LIFE) * (1 - i / TRAIL_N);
+      const a = Math.max(0, 1 - this.ages[i] / this.life) * (1 - i / TRAIL_N);
       this.alpha[i * 2] = a; this.alpha[i * 2 + 1] = a;
       if (a > 0) any = true;
     }
