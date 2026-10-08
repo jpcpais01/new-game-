@@ -214,9 +214,9 @@ const GENERIC: Record<PoseKey, ActionSpec> = {
     strike: { CHEST: [0, 0, -18], HEAD: -5, UARM_R: [-30, 0, 65], FARM_R: [0, 0, 0], UARM_L: [30, 0, 65], FARM_L: [0, 0, 0], hipsY: -0.28,
       THIGH_L: [10, 0, 40], SHIN_L: -40, THIGH_R: [-10, 0, -30], SHIN_R: -40 },
   },
-  guard: {
-    windup: { CHEST: [0, 20, -6], UARM_L: [0, 0, 72], FARM_L: [0, 0, 72], OFFHAND: [0, -30, 0], UARM_R: [0, 0, 10], FARM_R: [0, 0, 70], hipsY: -0.18, hipsX: -0.04 },
-    strike: { CHEST: [0, 25, -8], UARM_L: [0, 0, 75], FARM_L: [0, 0, 70], OFFHAND: [0, -30, 0], UARM_R: [0, 0, 10], FARM_R: [0, 0, 70], hipsY: -0.2, hipsX: -0.06 },
+  guard: { // left arm up (shield, orb): the left shoulder turns in to meet the blow
+    windup: { HIPS: [0, -8, 0], CHEST: [0, -22, -6], HEAD: [0, 18, 0], UARM_L: [0, 0, 72], FARM_L: [0, 0, 72], OFFHAND: [0, -30, 0], UARM_R: [0, 0, 10], FARM_R: [0, 0, 70], hipsY: -0.18, hipsX: -0.04 },
+    strike: { HIPS: [0, -10, 0], CHEST: [0, -28, -8], HEAD: [0, 22, 0], UARM_L: [0, 0, 75], FARM_L: [0, 0, 70], OFFHAND: [0, -30, 0], UARM_R: [0, 0, 10], FARM_R: [0, 0, 70], hipsY: -0.2, hipsX: -0.06 },
   },
   counter: {
     windup: { HIPS: -10, CHEST: [0, -45, -8], HEAD: [0, 35, 0], UARM_R: [-20, 0, -15], FARM_R: [0, 0, 70], WEAPON: [0, 0, 165], UARM_L: [0, 0, 10], FARM_L: [0, 0, 80], hipsY: -0.3,
@@ -389,9 +389,9 @@ const BY_OFFHAND: Partial<Record<OffhandStyle, Partial<Record<PoseKey, ActionSpe
         strike: { ...lunge, CHEST: [0, -30, -16], UARM_L: [-20, 0, 60], FARM_L: [0, 0, 5], OFFHAND: [0, 0, -35], UARM_R: [20, 0, 40], FARM_R: [0, 0, 40] },
       },
     },
-    guard: {
-      windup: { CHEST: [0, 10, -6], UARM_R: [-20, 0, 50], FARM_R: [0, -30, 90], WEAPON: [0, 0, 40], UARM_L: [20, 0, 50], FARM_L: [0, 30, 90], OFFHAND: [0, 0, 40], hipsY: -0.16 },
-      strike: { CHEST: [0, 12, -8], UARM_R: [-20, 0, 52], FARM_R: [0, -30, 92], WEAPON: [0, 0, 40], UARM_L: [20, 0, 52], FARM_L: [0, 30, 92], OFFHAND: [0, 0, 40], hipsY: -0.18 },
+    guard: { // blades crossed, the off-hand blade in front
+      windup: { CHEST: [0, -10, -6], HEAD: [0, 8, 0], UARM_R: [-20, 0, 50], FARM_R: [0, -30, 90], WEAPON: [0, 0, 40], UARM_L: [20, 0, 50], FARM_L: [0, 30, 90], OFFHAND: [0, 0, 40], hipsY: -0.16 },
+      strike: { CHEST: [0, -12, -8], HEAD: [0, 10, 0], UARM_R: [-20, 0, 52], FARM_R: [0, -30, 92], WEAPON: [0, 0, 40], UARM_L: [20, 0, 52], FARM_L: [0, 30, 92], OFFHAND: [0, 0, 40], hipsY: -0.18 },
     },
   },
   focus: {
@@ -412,7 +412,9 @@ export function actionPoses(grip: GripStyle, off: OffhandStyle, form: BodyForm, 
   let p = cache.get(key);
   if (!p) {
     const ready = stance(grip, off, form);
-    const spec = BY_GRIP[grip]?.[anim] ?? BY_OFFHAND[off]?.[anim] ?? GENERIC[anim] ?? GENERIC.slash;
+    // A shield on the arm blocks with the shield whatever the weapon (fists, staff).
+    const shieldGuard = off === 'shield' && anim === 'guard' ? GENERIC.guard : undefined;
+    const spec = shieldGuard ?? BY_GRIP[grip]?.[anim] ?? BY_OFFHAND[off]?.[anim] ?? GENERIC[anim] ?? GENERIC.slash;
     // Shield users keep the shield up while the weapon arm works, even for
     // moves authored two-handed; only moves made with the left arm move it.
     const build = (s: PoseSpec) => {

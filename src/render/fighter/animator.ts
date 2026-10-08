@@ -84,6 +84,8 @@ export class Animator {
   private wasAir = false;
   private swing = 0;
   private lastAction: unknown = null;
+  /** Whether the current or last action parries with the left hand. */
+  private parryLeft = false;
   private flinch = 0;
   private runBlend = 0;
   /** How strongly the core leads the limbs this frame (1 = normal, more during strikes). */
@@ -152,11 +154,15 @@ export class Animator {
     this.flinch = Math.max(this.flinch, heavy ? 1 : 0.6);
   }
 
-  /** A successful parry: quick snap of the weapon arm. */
+  /**
+   * A successful parry: a quick snap of the arm that parried, the chest turning
+   * that shoulder into the blow (a shield or off-hand blade parries with the left).
+   */
   parry(): void {
-    this.vel[J.UARM_R * 3 + 2] += 14;
-    this.vel[J.FARM_R * 3 + 2] -= 10;
-    this.vel[J.CHEST * 3 + 1] += 6;
+    const left = this.parryLeft;
+    this.vel[(left ? J.UARM_L : J.UARM_R) * 3 + 2] += 14;
+    this.vel[(left ? J.FARM_L : J.FARM_R) * 3 + 2] -= 10;
+    this.vel[J.CHEST * 3 + 1] += left ? -6 : 6;
   }
 
   update(f: Fighter, dt: number, over: boolean, winner: boolean): void {
@@ -323,6 +329,7 @@ export class Animator {
     const W = useAlt ? ap.alt!.windup : ap.windup;
     const S = useAlt ? ap.alt!.strike : ap.strike;
     if (FREE_OFFHAND.has(ab.anim) || draw?.hand === 'L') gripWant = 0;
+    this.parryLeft = look.offhand === 'shield' || look.offhand === 'weapon' || (draw?.item === 'parry' && draw.hand === 'L');
     if (draw && this.holder) this.drawAction(f, draw);
     if (this.bow) this.bowAction(f, draw);
     if (this.xbow) this.xbowAction(f, draw);

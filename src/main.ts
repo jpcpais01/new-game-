@@ -12,6 +12,7 @@ import { ARENA_IDS, createArena, type Arena, type ArenaId } from './render/scene
 import { Battle } from './sim/battle';
 import { DT } from './sim/constants';
 import { h, save, store } from './ui/dom';
+import { icon } from './ui/icons';
 import { FloatingText } from './ui/floatingText';
 import { Hud } from './ui/hud';
 import { DEFAULT_BUILDS, sanitizeBuild } from './sim/loadout';
@@ -53,6 +54,8 @@ const scene = new Scene();
 const cam = new FightCamera(renderer.aspect);
 cam.resize(renderer.aspect);
 cam.zoom = settings.zoom;
+// ?orbit=yaw,pitch (degrees) starts with the view turned, for checking angles.
+if (params.has('orbit')) { const [y = 0, p = 0] = params.get('orbit')!.split(',').map(Number); cam.orbit((y || 0) * Math.PI / 180, (p || 0) * Math.PI / 180); }
 const arenaOpts = () => {
   const q = settingsFor(resolveQuality(settings.quality));
   return { shadows: q.shadows, shadowMapSize: q.shadowMapSize, crowd: q.crowd, detail: q.detail };
@@ -510,6 +513,8 @@ function frame(now: number): void {
   else view.update(dt, acc / DT, state !== 'menu');
   if (state !== 'menu' && state !== 'create') hud.update();
   else if (session && state === 'menu') menu.tick();
+  const showReset = cam.orbited && state !== 'create' && !lab;
+  if (camReset.hidden === showReset) camReset.hidden = !showReset;
   floating.update(dt, cam.camera, window.innerWidth, window.innerHeight);
   const t1 = performance.now();
   debugHooks?.beforeRender();
@@ -544,9 +549,10 @@ document.addEventListener('fullscreenchange', onResize);
 window.addEventListener('keydown', (e) => {
   if (e.repeat || state === 'create') return;
   if (session) {
-    // Online: only the view keys (speed, zoom); Escape asks before leaving.
+    // Online: only the view keys (speed, zoom, camera); Escape asks before leaving.
     if (e.key === '1' || e.key === '2' || e.key === '4') { speed = Number(e.key); hud.setSpeed(speed); }
     else if (e.key.toLowerCase() === 'z') cycleZoom();
+    else if (e.key.toLowerCase() === 'c') cam.resetOrbit();
     else if (e.key === 'Escape') askLeave();
     return;
   }
@@ -554,26 +560,43 @@ window.addEventListener('keydown', (e) => {
   else if (e.key === '1' || e.key === '2' || e.key === '4') { speed = Number(e.key); hud.setSpeed(speed); }
   else if (e.key === 'Escape' && state !== 'menu') toMenu();
   else if (e.key.toLowerCase() === 'z') cycleZoom();
+  else if (e.key.toLowerCase() === 'c') cam.resetOrbit();
   else if (e.key === 'Enter' && (state === 'menu' || state === 'results')) startFight(randomSeed());
   else if (e.key.toLowerCase() === 'r' && state === 'menu') { loadouts = [loadouts[0], generateRival(player?.name)]; menu.loadouts = loadouts; menu.render(); newBattle(randomSeed()); }
 });
-// Drag the character around on the creation turntable.
+// Drag the character around on the creation turntable; anywhere else a drag orbits the view.
 let dragId = -1;
 let dragX = 0;
+let dragY = 0;
 canvas.addEventListener('pointerdown', (e) => {
-  if (state !== 'create') return;
+  if (dragId !== -1 || lab || (e.pointerType === 'mouse' && e.button !== 0)) return;
   dragId = e.pointerId;
   dragX = e.clientX;
+  dragY = e.clientY;
   canvas.setPointerCapture(e.pointerId);
 });
 canvas.addEventListener('pointermove', (e) => {
   if (e.pointerId !== dragId) return;
-  stage.drag(e.clientX - dragX);
+  const dx = e.clientX - dragX, dy = e.clientY - dragY;
   dragX = e.clientX;
+  dragY = e.clientY;
+  if (state === 'create') { stage.drag(dx); return; }
+  const s = Math.PI / Math.max(320, Math.min(window.innerWidth, window.innerHeight * 1.6));
+  cam.orbit(-dx * s * 1.1, dy * s * 0.8);
 });
-const endDrag = (e: PointerEvent) => { if (e.pointerId === dragId) { dragId = -1; stage.release(); } };
+const endDrag = (e: PointerEvent) => {
+  if (e.pointerId !== dragId) return;
+  dragId = -1;
+  if (state === 'create') stage.release();
+};
 canvas.addEventListener('pointerup', endDrag);
 canvas.addEventListener('pointercancel', endDrag);
+// Brings the camera back to the default angle; only shown while the view is turned.
+const camReset = h<HTMLButtonElement>('button.btn.cam-reset', {
+  onclick: () => { cam.resetOrbit(); sfx.play('ui'); }, title: 'Reset camera (C)', 'aria-label': 'Reset camera',
+}, icon('recenter', 'glyph'), h('span.lbl', null, 'Reset view'));
+camReset.hidden = true;
+ui.append(camReset);
 setupPhoneFullscreen();
 // Audio needs a user gesture; unlock on the first one.
 window.addEventListener('pointerdown', () => sfx.unlock(), { once: true });

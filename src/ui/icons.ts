@@ -17,6 +17,7 @@ const PATHS = {
   pause: '<rect x="6.5" y="5" width="3.6" height="14" rx="1.3" fill="currentColor" stroke="none"/><rect x="13.9" y="5" width="3.6" height="14" rx="1.3" fill="currentColor" stroke="none"/>',
   play: '<path d="M8 5.6v12.8a.9.9 0 0 0 1.4.75l9.6-6.4a.9.9 0 0 0 0-1.5L9.4 4.85A.9.9 0 0 0 8 5.6z" fill="currentColor" stroke="none"/>',
   zoom: '<circle cx="10.5" cy="10.5" r="6"/>' + S('M15 15l5 5M8 10.5h5'),
+  recenter: S('M19.5 12a7.5 7.5 0 1 1-2.2-5.3') + S('M19.5 4.5v3.8h-3.8') + '<circle cx="12" cy="12" r="2.2" fill="currentColor" stroke="none"/>',
   replay: S('M4.5 12a7.5 7.5 0 1 0 2.2-5.3') + S('M4.5 4.5v3.8h3.8'),
   bag: S('M6 10a6 6 0 0 1 12 0v8.5a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2z') + S('M9.2 6.6V5a2.8 2.8 0 0 1 5.6 0v1.6M9 14.5h6'),
   soundOn: S('M4 9.5v5h3.5l5 4v-13l-5 4z') + S('M15.8 9.2a4 4 0 0 1 0 5.6M18.3 6.6a7.6 7.6 0 0 1 0 10.8'),

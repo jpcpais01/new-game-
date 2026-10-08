@@ -12,7 +12,7 @@ export interface PatchNote {
 
 export const PATCH_NOTES: PatchNote[] = [
   {
-    version: '0.9.0',
+    version: '0.10.0',
     date: '2026-10-08',
     title: 'Online duels',
     notes: [
@@ -25,6 +25,57 @@ export const PATCH_NOTES: PatchNote[] = [
       "Online fights can't be paused, but each of you can still change the speed.",
       'When the match ends, ask for a rematch or head back to the menu.',
       "Fixed the rival's form sheet opening empty on phones in landscape.",
+    ],
+  },
+  {
+    version: '0.9.0',
+    date: '2026-10-08',
+    title: 'Orbit camera',
+    notes: [
+      'Drag anywhere on the arena (mouse or touch) to orbit the camera around the duel, in battle and on the main menu. It keeps following the fight while you look around.',
+      'A Reset view button appears while the view is turned; tap it (or press C) to ease back to the normal angle.',
+      'The default camera, zoom levels and impact shake are unchanged, and the creator still turns your fighter when you drag.',
+    ],
+  },
+  {
+    version: '0.8.5',
+    date: '2026-10-08',
+    title: 'Cleaner special auras',
+    notes: [
+      'Special items no longer float a relic around your fighter or draw a sigil on the ground.',
+      'Their themed particles and the pillar of light when they activate stay, now gathered around your fighter.',
+    ],
+  },
+  {
+    version: '0.8.4',
+    date: '2026-10-08',
+    title: 'Cleaner battles',
+    notes: ['The version number no longer shows during battles, only in the menus.'],
+  },
+  {
+    version: '0.8.3',
+    date: '2026-10-08',
+    title: 'Side margins',
+    notes: [
+      'Panels and the battle HUD keep a small margin from the left and right edges of the screen, clear of rounded corners and camera cutouts. The arena still fills the whole screen.',
+    ],
+  },
+  {
+    version: '0.8.2',
+    date: '2026-10-08',
+    title: 'Edge to edge on phones',
+    notes: [
+      'Menus, panels and the battle HUD now use the whole screen, including the strip beside the status bar and camera cutout.',
+    ],
+  },
+  {
+    version: '0.8.1',
+    date: '2026-10-08',
+    title: 'Blocking turns the right way',
+    notes: [
+      'Raising a shield now turns the shield shoulder into the attack instead of away from it.',
+      'Shield users always block with the shield, even with fists or a staff.',
+      'Dual blades guard with the off-hand blade in front, and a successful parry snaps the arm that actually parried.',
     ],
   },
   {
