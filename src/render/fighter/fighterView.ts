@@ -2,18 +2,17 @@ import {
   AdditiveBlending, BackSide, Color, Group, Mesh, MeshBasicMaterial, Object3D, RingGeometry, ShaderMaterial, SphereGeometry,
   Vector3,
 } from 'three';
-import { clamp, damp, easeInCubic, easeOutCubic, smoothstep } from '../../core/math';
+import { clamp, damp } from '../../core/math';
 import { getStatus, stacksOf, type Fighter } from '../../sim/fighter';
-import { FORMS } from '../../sim/forms';
 import { gearOf } from '../../sim/gear';
 import type { GearId } from '../../sim/types';
-import { archetypeOf, isBig, type Archetype } from './archetype';
 import { glow } from '../materials';
 import type { Particles } from '../fx/particles';
-import {
-  actionPoses, HIPS_Y, HURT_ADD, J, JOINT_COUNT, lerpPose, POSE_SIZE, READY, VICTORY, type Pose,
-} from './poses';
-import { buildRig, gearGeo, type Rig } from './rig';
+import { Animator } from './animator';
+import { bodyForm } from './forms';
+import { gearGeo } from './geo';
+import { lookFor, type FighterLook } from './look';
+import { buildRig, type Rig } from './rig';
 
 export interface FxContext {
   add: Particles;
@@ -55,22 +54,17 @@ function shieldMaterial(color: number): ShaderMaterial {
 }
 
 /**
- * Visual representation of one fighter: procedural pose animation driven by
- * the simulation state, item gear, status effects and item-specific FX.
+ * Visual representation of one fighter: the rig built from its look (form,
+ * colours, gear), animated by an Animator from simulation state, plus status
+ * effects and item-specific FX.
  */
 export class FighterView {
   readonly rig: Rig;
-  readonly classId: Archetype;
+  readonly look: FighterLook;
   readonly group: Group;
-  private readonly pose: Pose = new Float32Array(POSE_SIZE);
-  private readonly target: Pose = new Float32Array(POSE_SIZE);
-  private readonly tmp: Pose = new Float32Array(POSE_SIZE);
-  private walkPhase = 0;
-  private hurt = 0;
+  readonly anim: Animator;
   private flash = 0;
   private yaw: number;
-  private koT = 0;
-  private lean = 0;
   private emitAcc = 0;
   private time = 0;
   private readonly enchantColor: Color | null;
@@ -80,10 +74,11 @@ export class FighterView {
   private readonly ice: Mesh;
   private readonly stars: Group;
   private readonly mark: Mesh;
-  private readonly orbiters: { item: GearId; mesh: Object3D; phase: number; radius: number }[] = [];
+  private readonly orbiters: { item: string; mesh: Object3D; phase: number; radius: number }[] = [];
   private readonly scale: number;
   private shieldShown = 0;
   private phoenix: Object3D | null = null;
+  private readonly clothVel = new Map<Object3D, number>();
   /** World-space positions kept for effects (weapon trail etc.). */
   readonly tipWorld = new Vector3();
   readonly baseWorld = new Vector3();
@@ -91,13 +86,12 @@ export class FighterView {
 
   private readonly teamRing: Mesh;
 
-  constructor(f: Fighter, team: 0 | 1) {
-    const classId = archetypeOf(f.gear);
+  constructor(f: Fighter, team: 0 | 1, look: FighterLook = lookFor(f)) {
     const items = f.gearIds;
-    const facing = f.facing;
-    this.classId = classId;
-    this.rig = buildRig(classId, items, isBig(f));
+    this.look = look;
+    this.rig = buildRig(look);
     this.group = this.rig.root;
+    this.anim = new Animator(this.rig, bodyForm(look.form));
     // Team identity: coloured rim light and a glowing ring at the feet, so
     // mirror matches stay readable.
     const teamColor = team === 0 ? 0x4d8bff : 0xff4d5e;
@@ -106,12 +100,12 @@ export class FighterView {
     this.teamRing = new Mesh(teamRingGeo, glow(teamColor, 1.1));
     this.teamRing.position.y = 0.03;
     this.group.add(this.teamRing);
-    this.pose.set(READY[classId]);
-    this.yaw = this.yawFor(facing);
+    this.yaw = this.yawFor(f.facing);
     this.group.rotation.y = this.yaw;
     this.enchants = items.filter((i) => ENCHANTS.includes(i));
     this.enchantColor = this.enchants.length ? new Color(gearOf(this.enchants[0]).color) : null;
-    this.scale = FORMS[f.form].body.height * (items.includes('colossus_boots') ? 1.05 : 1) / (isBig(f) ? 1.12 : 1);
+    // Form height lives in the rig body; gear can add a little on top.
+    this.scale = items.includes('colossus_boots') ? 1.05 : 1;
     this.group.scale.setScalar(this.scale);
 
     if (this.rig.enchantMaterial) {
@@ -164,9 +158,21 @@ export class FighterView {
     return facing === 1 ? -0.42 : -Math.PI + 0.42;
   }
 
-  onHit(heavy: boolean): void {
-    this.flash = 1;
-    this.hurt = heavy ? 1 : 0.6;
+  /** A hit landed on this fighter. `fromX` is the attacker's x (for direction). */
+  onHit(heavy: boolean, fromX?: number, blocked = false): void {
+    this.flash = blocked ? 0.4 : 1;
+    const dir = fromX === undefined ? 1 : Math.sign((fromX - this.group.position.x) * Math.cos(this.yaw)) || 1;
+    this.anim.hit(heavy, dir, blocked);
+  }
+
+  onParry(): void {
+    this.anim.parry();
+  }
+
+  /** Where the head should look (the opponent's head), in world space. */
+  setLookAt(p: Vector3 | null): void {
+    this.anim.hasLookAt = !!p;
+    if (p) this.anim.lookAt.copy(p);
   }
 
   update(f: Fighter, alpha: number, dt: number, fx: FxContext, battleOver: boolean, winner: boolean, xScale = 1): void {
@@ -177,31 +183,17 @@ export class FighterView {
 
     // Turn to face (through the camera side).
     const targetYaw = this.yawFor(f.facing);
-    this.yaw = damp(this.yaw, targetYaw, f.action && f.action.phase === 'active' ? 30 : 14, dt);
+    this.yaw = damp(this.yaw, targetYaw, f.action && f.action.phase === 'active' ? 30 : 12, dt);
     this.group.rotation.y = this.yaw;
 
-    this.computePose(f, battleOver, winner, dt);
-    this.applyPose();
+    this.anim.update(f, dt, battleOver, winner);
 
     // The ring stays on the ground while the fighter leaps.
-    this.teamRing.position.y = 0.03 - y;
+    this.teamRing.position.y = (0.03 - y) / this.scale;
     this.teamRing.visible = f.alive;
-
-    // KO fall.
-    if (!f.alive) {
-      this.koT = Math.min(1, this.koT + dt * 2.2);
-      const k = easeOutCubic(this.koT);
-      this.rig.body.rotation.z = k * 1.35;
-      this.rig.body.position.y = k * 0.12;
-    } else {
-      this.koT = 0;
-      this.rig.body.rotation.z = damp(this.rig.body.rotation.z, this.lean, 12, dt);
-      this.rig.body.position.y = 0;
-    }
 
     // Material uniforms: hit flash and status tint.
     this.flash = Math.max(0, this.flash - dt * 12);
-    this.hurt = Math.max(0, this.hurt - dt * 4);
     const u = this.rig.uniforms;
     u.uFlash.value = this.flash * 0.45;
     let tint = 0;
@@ -224,114 +216,6 @@ export class FighterView {
     this.emitParticles(f, dt, fx);
   }
 
-  private computePose(f: Fighter, over: boolean, winner: boolean, dt: number): void {
-    const ready = READY[this.classId];
-    const target = this.target;
-    target.set(ready);
-    let lambda = 16;
-    this.lean = 0;
-
-    const frozen = !!getStatus(f, 'frozen');
-    if (frozen) return; // hold the current pose — frozen solid
-
-    if (!f.alive) {
-      lerpPose(target, ready, HURT_ADD, 1);
-      lambda = 8;
-    } else if (over && winner) {
-      lerpPose(target, ready, VICTORY[this.classId], smoothstep(0, 1, 1));
-      lambda = 5;
-    } else if (f.action) {
-      const a = f.action;
-      const ab = f.abilities[a.ability];
-      const poses = actionPoses(this.classId, ab.anim);
-      if (a.feint) {
-        lerpPose(target, poses.windup, ready, easeOutCubic(clamp(a.t / a.recovery, 0, 1)));
-        lambda = 25;
-      } else if (a.phase === 'windup') {
-        lerpPose(target, ready, poses.windup, easeOutCubic(clamp(a.t / a.windup, 0, 1)));
-        lambda = 20;
-        if (ab.slot === 'evade') this.lean = a.dir === f.facing ? -0.4 : 0.25;
-      } else if (a.phase === 'active') {
-        if (ab.anim === 'flurry') {
-          const hits = ab.hits ?? 1;
-          const k = (a.t / a.active) * hits;
-          const ph = k - Math.floor(k);
-          const even = Math.floor(k) % 2 === 0;
-          lerpPose(target, even ? poses.windup : poses.strike, even ? poses.strike : poses.windup, easeOutCubic(clamp(ph * 2, 0, 1)));
-          lambda = 60;
-        } else {
-          const k = clamp(a.t / Math.min(0.09, a.active), 0, 1);
-          lerpPose(target, poses.windup, poses.strike, easeOutCubic(k));
-          lambda = 45;
-        }
-        if (ab.slot === 'evade') {
-          this.lean = a.dir === f.facing ? -0.6 : 0.35;
-          if (a.through) this.lean = -0.9; // roll
-        }
-        if (ab.kind === 'dash' && ab.slot !== 'evade') this.lean = -0.25;
-      } else {
-        const r = clamp(a.t / a.recovery, 0, 1);
-        lerpPose(target, poses.strike, ready, easeInCubic(clamp((r - 0.25) / 0.75, 0, 1)));
-        lambda = 14;
-      }
-    } else {
-      // Locomotion.
-      const speed = Math.abs(f.vx);
-      const moving = clamp(speed / 3.5, 0, 1);
-      const back = Math.sign(f.vx) !== f.facing ? -1 : 1;
-      this.walkPhase += speed * dt * 3.4 * back;
-      const s = Math.sin(this.walkPhase), c = Math.cos(this.walkPhase);
-      target[J.THIGH_L * 3 + 2] += s * 0.55 * moving;
-      target[J.THIGH_R * 3 + 2] -= s * 0.55 * moving;
-      target[J.SHIN_L * 3 + 2] -= Math.max(0, -c) * 0.7 * moving;
-      target[J.SHIN_R * 3 + 2] -= Math.max(0, c) * 0.7 * moving;
-      target[J.UARM_L * 3 + 2] -= s * 0.25 * moving;
-      target[J.HIPS * 3 + 2] -= 0.1 * moving * back;
-      target[HIPS_Y] += Math.abs(c) * 0.05 * moving - 0.03 * moving;
-      this.lean = -0.06 * moving * back;
-    }
-
-    // Breathing / idle life.
-    const breath = Math.sin(this.time * 2.4);
-    target[J.CHEST * 3 + 2] += breath * 0.03;
-    target[J.HEAD * 3 + 2] -= breath * 0.02;
-    target[HIPS_Y] += breath * 0.012;
-
-    // Stun wobble.
-    if (getStatus(f, 'stun')) {
-      target[J.HEAD * 3] += Math.sin(this.time * 7) * 0.3;
-      target[J.CHEST * 3] += Math.sin(this.time * 7 + 1) * 0.15;
-      target[J.UARM_R * 3 + 2] = 0.1; target[J.UARM_L * 3 + 2] = 0.1;
-      target[HIPS_Y] -= 0.08;
-    }
-
-    // Hurt flinch (additive).
-    if (this.hurt > 0 || f.stagger > 0) {
-      const h = Math.max(this.hurt, f.stagger > 0 ? 0.5 : 0);
-      for (let i = 0; i < POSE_SIZE; i++) target[i] += (HURT_ADD[i] - ready[i]) * h * 0.6;
-    }
-
-    // Airborne tuck from knockback.
-    if (f.y > 0.2 && !(f.action && f.abilities[f.action.ability].airborne)) {
-      target[J.THIGH_L * 3 + 2] += 0.6; target[J.SHIN_L * 3 + 2] -= 0.8;
-      target[J.THIGH_R * 3 + 2] += 0.3; target[J.SHIN_R * 3 + 2] -= 0.6;
-    }
-
-    const t = 1 - Math.exp(-lambda * dt);
-    const p = this.pose;
-    for (let i = 0; i < POSE_SIZE; i++) p[i] += (target[i] - p[i]) * t;
-    void this.tmp;
-  }
-
-  private applyPose(): void {
-    const j = this.rig.joints;
-    const p = this.pose;
-    for (let i = 0; i < JOINT_COUNT; i++) {
-      j[i].rotation.set(p[i * 3], p[i * 3 + 1], p[i * 3 + 2]);
-    }
-    j[J.HIPS].position.y = 0.98 + p[HIPS_Y];
-  }
-
   private updateStatusVisuals(f: Fighter, dt: number, frozen: boolean): void {
     // Shield bubble.
     const want = f.shield > 0 && f.alive ? 1 : 0;
@@ -350,13 +234,13 @@ export class FighterView {
     const stunned = !!getStatus(f, 'stun') && f.alive;
     this.stars.visible = stunned;
     if (stunned) {
-      this.stars.position.set(0, 2.15, 0);
+      this.stars.position.set(0, (this.headWorld.y - this.group.position.y) / this.scale + 0.12, 0);
       this.stars.rotation.y += dt * 5;
     }
     const marked = !!getStatus(f, 'mark') && f.alive;
     this.mark.visible = marked;
     if (marked) {
-      this.mark.position.set(0, 2.45 + Math.sin(this.time * 3) * 0.05, 0);
+      this.mark.position.set(0, (this.headWorld.y - this.group.position.y) / this.scale + 0.42 + Math.sin(this.time * 3) * 0.05, 0);
       this.mark.rotation.z += dt * 2;
     }
 
@@ -376,10 +260,17 @@ export class FighterView {
   }
 
   private updateCloth(f: Fighter, dt: number): void {
+    if (dt <= 0) return;
+    // Swing back against the motion, lift when airborne, settle with a soft spring.
     const v = f.vx * (this.yaw > -Math.PI / 2 ? 1 : -1);
     for (const c of this.rig.cloth) {
-      const target = clamp(-v * 0.08, -0.5, 0.6) + Math.sin(this.time * 3 + c.id) * 0.06 + (f.y > 0.3 ? 0.4 : 0);
-      c.rotation.z = damp(c.rotation.z, target, 6, dt);
+      const k = (c.userData.stiffness as number | undefined) ?? 1;
+      const target = clamp(-v * 0.09, -0.6, 0.7) + Math.sin(this.time * 2.6 + c.id) * 0.06 + (f.y > 0.3 ? 0.5 : 0) + (f.alive ? 0 : 0.3);
+      const w = 9 * k;
+      let vel = this.clothVel.get(c) ?? 0;
+      vel += (w * w * (target - c.rotation.z) - 2 * 0.35 * w * vel) * dt;
+      c.rotation.z = clamp(c.rotation.z + vel * dt, -1.4, 1.4);
+      this.clothVel.set(c, vel);
     }
   }
 
@@ -422,9 +313,15 @@ export class FighterView {
       _v2.copy(this.headWorld);
       fx.add.emit(_v2.x, _v2.y - 0.1, _v2.z, (Math.random() - 0.5) * 0.3, 0.6, 0, 0.6, 2.5, 1.0, 0.25, 0.07, -1, 0.5, 0.2, 0);
     }
-    // Footstep dust while running on the ground.
-    if (y < 0.05 && Math.abs(f.vx) > 2.6 && Math.random() < 0.35) {
-      fx.smoke.emit(x - Math.sign(f.vx) * 0.2, 0.08, (Math.random() - 0.5) * 0.3, -f.vx * 0.12, 0.35, 0, 0.55, 0.85, 0.8, 0.72, 0.22, 0, 2, 1.6, 0);
+    // Dust where feet land while running, and a puff when landing from the air.
+    const g = this.anim.gait;
+    for (let i = 0; i < 2; i++) {
+      if (!g.landed[i] || Math.abs(f.vx) < 2.2) continue;
+      const p = g.feet[i].pos;
+      fx.smoke.emit(p.x, 0.06, p.z, -f.vx * 0.1, 0.3, 0, 0.5, 0.85, 0.8, 0.72, 0.2, 0, 2, 1.6, 0);
+    }
+    if (this.anim.landing > 0.9 && y < 0.05) {
+      fx.smoke.burst({ x, y: 0.06, count: 8, jitter: 0.3, dir: [0, 1, 0], spread: 1.2, speed: [0.6, 1.6], life: [0.4, 0.8], size: [0.18, 0.3], color: 0xd8ccb8, intensity: 0.85, gravity: 0, sizeEnd: 2 });
     }
     // Zephyr boots afterimage dust.
     if (f.has.has('zephyr_boots') && Math.abs(f.vx) > 3) {
