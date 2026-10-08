@@ -176,7 +176,8 @@ const lobby = new Lobby({ onCancel: () => endOnline(true), onRetry: () => retryO
 const netBanner = new NetBanner();
 ui.append(hud.el, menu.el, results.el, creator.el, lobby.el, netBanner.el, fpsEl);
 // First in #ui so every panel paints over it instead of the other way round.
-ui.prepend(versionBadge(__APP_VERSION__));
+const versionEl = versionBadge(__APP_VERSION__);
+ui.prepend(versionEl);
 hud.show(false);
 
 function applySettings(s: MenuSettings): void {
@@ -515,6 +516,12 @@ function frame(now: number): void {
   else if (session && state === 'menu') menu.tick();
   const showReset = cam.orbited && state !== 'create' && !lab;
   if (camReset.hidden === showReset) camReset.hidden = !showReset;
+  // In battle it joins the HUD's control keys; elsewhere it sits by the patch notes button.
+  // (The HUD rebuilds its controls for every battle, so look them up again.)
+  if (showReset) {
+    const host = hud.el.hidden ? versionEl : hud.el.querySelector('.controls');
+    if (host && camReset.parentElement !== host) host.prepend(camReset);
+  }
   floating.update(dt, cam.camera, window.innerWidth, window.innerHeight);
   const t1 = performance.now();
   debugHooks?.beforeRender();
@@ -594,9 +601,8 @@ canvas.addEventListener('pointercancel', endDrag);
 // Brings the camera back to the default angle; only shown while the view is turned.
 const camReset = h<HTMLButtonElement>('button.btn.cam-reset', {
   onclick: () => { cam.resetOrbit(); sfx.play('ui'); }, title: 'Reset camera (C)', 'aria-label': 'Reset camera',
-}, icon('recenter', 'glyph'), h('span.lbl', null, 'Reset view'));
+}, icon('recenter'));
 camReset.hidden = true;
-ui.append(camReset);
 setupPhoneFullscreen();
 // Audio needs a user gesture; unlock on the first one.
 window.addEventListener('pointerdown', () => sfx.unlock(), { once: true });

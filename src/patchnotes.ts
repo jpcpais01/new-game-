@@ -12,6 +12,14 @@ export interface PatchNote {
 
 export const PATCH_NOTES: PatchNote[] = [
   {
+    version: '0.10.1',
+    date: '2026-10-08',
+    title: 'Reset view button moved',
+    notes: [
+      'The camera reset button no longer sits in the middle of the screen: in battle it joins the control keys in the corner, and on the menu it sits next to the patch notes button.',
+    ],
+  },
+  {
     version: '0.10.0',
     date: '2026-10-08',
     title: 'Online duels',
