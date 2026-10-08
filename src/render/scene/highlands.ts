@@ -413,10 +413,10 @@ function blossomTree(b: MeshBuilder, windy: MeshBuilder, rnd: () => number, x: n
 
 export class Highlands extends Arena {
   readonly grade: GradeSettings = {
-    sat: 1.12, contrast: 1.1, shadows: [-0.018, 0.0, 0.04], highlights: [0.04, 0.018, -0.018], bloom: 1.1, vignette: 0.5,
+    sat: 1.2, contrast: 1.06, shadows: [-0.02, 0.0, 0.05], highlights: [0.035, 0.02, -0.01], bloom: 1.05, vignette: 0.38,
   };
   readonly atmosphere: AtmosphereSettings = {
-    fog: 0xf4c9ae, sun: 0xffcf96, sunDir: [SUN.x, SUN.y, SUN.z], density: 0.0017, falloff: 0.03, baseY: SEA_Y, max: 0.7, glow: 0.65, ao: 0.4,
+    fog: 0xf4c9ae, sun: 0xffcf96, sunDir: [SUN.x, SUN.y, SUN.z], density: 0.0013, falloff: 0.03, baseY: SEA_Y, max: 0.55, glow: 0.55, ao: 0.25,
   };
   private readonly rays: ShaderMaterial | null;
   private readonly crystals: Mesh[] = [];
@@ -447,7 +447,6 @@ export class Highlands extends Arena {
     const near = new MeshBuilder();
     const far = new MeshBuilder();
     const windy = new MeshBuilder();
-    const lines = new MeshBuilder();
     const skyB = new MeshBuilder();
 
     // --- Dais ---------------------------------------------------------------------
@@ -459,7 +458,7 @@ export class Highlands extends Arena {
     this.group.add(floor);
     // Rim and two shallow steps down to the meadow.
     const rimGeo = new TorusGeometry(15.08, 0.3, 6, 80);
-    for (const b of [near, lines]) b.add(rimGeo, composeMatrix(0, -0.1, 0, Math.PI / 2, 0, 0, [1, 1, 0.7]), 0xcdb894);
+    near.add(rimGeo, composeMatrix(0, -0.1, 0, Math.PI / 2, 0, 0, [1, 1, 0.7]), 0xcdb894);
     near.add(new CylinderGeometry(15.9, 16.0, 0.3, 80, 1), composeMatrix(0, -0.4, 0), 0xb09c7e);
     near.add(new CylinderGeometry(16.8, 16.9, 0.3, 80, 1), composeMatrix(0, -0.62, 0), 0x9a876c);
 
@@ -475,7 +474,8 @@ export class Highlands extends Arena {
     for (const sx of [-1, 1]) {
       const x = sx * (ARENA_HALF_WIDTH + 1.7);
       for (const z of [-2.4, 2.4]) {
-        for (const b of [near, lines]) {
+        {
+          const b = near;
           b.put(new RoundedBoxGeometry(1.3, 0.5, 1.3, 1, 0.06), STONE_DK, x, 0, z);
           b.put(G.taper(4), STONE, x, 0.5, z, { s: [0.55, 4.2, 0.55], ry: Math.PI / 4 });
           b.put(G.cone(4), STONE_LT, x, 4.7, z, { s: [0.42, 0.7, 0.42], ry: Math.PI / 4 });
@@ -626,7 +626,7 @@ export class Highlands extends Arena {
       const broken = rnd() < 0.4;
       const h = broken ? 1.2 + rnd() * 2.6 : 6.2;
       const y = terrainY(x, z) - 0.15;
-      column([near, lines], x, y, z, h, broken, broken ? (rnd() - 0.5) * 0.12 : 0);
+      column([near], x, y, z, h, broken, broken ? (rnd() - 0.5) * 0.12 : 0);
       if (broken) {
         // Toppled drum and rubble.
         near.put(G.cyl(12), STONE, x + 1.6, y + 0.45, z + 0.8, { s: [0.5, 1.3, 0.5], rz: Math.PI / 2, ry: rnd() * 3 });
@@ -639,22 +639,23 @@ export class Highlands extends Arena {
     for (const [a0, a1] of [[Math.PI - 0.84, Math.PI - 0.63], [Math.PI + 0.63, Math.PI + 0.84]]) {
       const r = 21.5;
       const xm = Math.sin((a0 + a1) / 2) * r, zm = Math.cos((a0 + a1) / 2) * r;
-      for (const b of [near, lines]) b.put(new RoundedBoxGeometry(5.2, 0.7, 1.3, 1, 0.08), STONE_LT, xm, terrainY(xm, zm) + 7.6, zm, { ry: (a0 + a1) / 2 });
+      near.put(new RoundedBoxGeometry(5.2, 0.7, 1.3, 1, 0.08), STONE_LT, xm, terrainY(xm, zm) + 7.6, zm, { ry: (a0 + a1) / 2 });
     }
     // Great arch framing the vista.
     {
       const az = -35, span = 4.6, h = 5.2;
       const y = terrainY(0, az);
       for (const sx of [-1, 1]) {
-        for (const b of [near, lines]) {
+        {
+          const b = near;
           b.put(new RoundedBoxGeometry(2.4, 0.8, 2.4, 1, 0.08), STONE_DK, sx * span, y + 0.4, az);
           b.put(new RoundedBoxGeometry(1.7, h, 1.9, 1, 0.08), STONE, sx * span, y + 0.8 + h / 2, az);
           b.put(new RoundedBoxGeometry(2.1, 0.5, 2.2, 1, 0.06), STONE_LT, sx * span, y + 0.8 + h, az);
         }
       }
       const archGeo = new TorusGeometry(span, 0.85, 6, 20, Math.PI);
-      for (const b of [near, lines]) b.add(archGeo, composeMatrix(0, y + 1.05 + h, az, 0, 0, 0, [1, 0.9, 1.25]), STONE);
-      for (const b of [near, lines]) b.put(new RoundedBoxGeometry(1.3, 1.6, 2.3, 1, 0.08), STONE_LT, 0, y + 1.05 + h + span * 0.9, az);
+      near.add(archGeo, composeMatrix(0, y + 1.05 + h, az, 0, 0, 0, [1, 0.9, 1.25]), STONE);
+      near.put(new RoundedBoxGeometry(1.3, 1.6, 2.3, 1, 0.08), STONE_LT, 0, y + 1.05 + h + span * 0.9, az);
       near.put(G.ico(0), 0xd9b04a, 0, y + 1.05 + h + span * 0.9, az + 1.18, { s: [0.35, 0.35, 0.1], gloss: 1 });
       // Ivy hanging from the arch.
       for (let i = 0; i < 16; i++) {
@@ -811,7 +812,7 @@ export class Highlands extends Arena {
       tuft(windy, rnd, x, z, 1 + rnd() * 0.9, 0x4f8a3a, rnd() < 0.18 ? 0xe8d878 : 0xa8d860, terrainY(x, z));
     }
 
-    finish(this.group, near, far, lines, windy, skyB, opts.shadows);
+    finish(this.group, near, far, windy, skyB, opts.shadows);
 
     // Crystal light on the ground, birds, sun shafts.
     this.group.add(lightPools(this.braziers.map((b) => ({ x: b.x, z: b.z, r: 2.6, y: b.z < -20 ? terrainY(b.x, b.z) + 0.08 : 0.03 })), 0x5ff0e0, 0.5));

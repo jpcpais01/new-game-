@@ -81,7 +81,7 @@ export class GradeEffect extends Effect {
         ['uShadows', new Uniform(new Vector3(-0.01, 0.0, 0.03))],
         ['uHighlights', new Uniform(new Vector3(0.03, 0.015, -0.01))],
         ['uFlash', new Uniform(new Vector3())],
-        ['uGrain', new Uniform(0.03)],
+        ['uGrain', new Uniform(0.008)],
         ['uLines', new Uniform(new Vector4(0.5, 0.55, 0, 0))],
       ]),
     });

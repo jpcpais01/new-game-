@@ -12,6 +12,16 @@ export interface PatchNote {
 
 export const PATCH_NOTES: PatchNote[] = [
   {
+    version: '0.12.0',
+    date: '2026-10-08',
+    title: 'Arenas in the new art style',
+    notes: [
+      'The Highlands and the Colosseum have been repainted in the same cel-shaded style as the fighters: flat colours, soft two-tone shadows and coloured ink outlines around every rock, wall, column and tree.',
+      'The Colosseum crowd is now made of creatures: fox ears, horns, long ears and pointed ears cheer from the stands in the species colours.',
+      'Crisper, more saturated colours, lighter haze and less film grain, so the arena reads clearly behind the fighters on a small screen.',
+    ],
+  },
+  {
     version: '0.11.0',
     date: '2026-10-08',
     title: 'Fighters reborn: six species',

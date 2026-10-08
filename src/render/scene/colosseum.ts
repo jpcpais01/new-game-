@@ -1,5 +1,5 @@
 import {
-  BoxGeometry, BufferAttribute, CapsuleGeometry, Color, CylinderGeometry, InstancedBufferAttribute, InstancedMesh, Matrix4, Mesh,
+  BoxGeometry, BufferAttribute, CapsuleGeometry, Color, ConeGeometry, CylinderGeometry, InstancedBufferAttribute, InstancedMesh, Matrix4, Mesh,
   PlaneGeometry, Quaternion, RingGeometry, type Scene, SphereGeometry, TorusGeometry, Vector3,
 } from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
@@ -109,8 +109,11 @@ function sandTexture(size: number) {
 // -----------------------------------------------------------------------------
 
 /**
- * One spectator, facing +X. Vertex attribute aInfo = (part, armSide, flag):
- * part 0 clothes, 1 skin, 2 hair, 3 flag cloth, 4 dark (trousers, pole).
+ * One spectator, a big-headed little creature facing +X. Vertex attribute
+ * aInfo = (part, armSide, extra): part 0 clothes, 1 skin, 2 hair, 3 flag
+ * cloth, 4 dark (trousers, pole, horns); extra 1 = flag, 2..5 = the species
+ * features (fox ears, horns, long ears, pointed ears), each folded away
+ * unless the spectator's iKind picks it.
  */
 function spectatorGeometry() {
   const b = new MeshBuilder();
@@ -120,8 +123,14 @@ function spectatorGeometry() {
   put(new BoxGeometry(0.3, 0.5, 0.34), composeMatrix(0, 0.25, 0), 4);
   put(new CylinderGeometry(0.17, 0.2, 0.52, 6, 1, true), composeMatrix(0, 0.74, 0), 0);
   put(new SphereGeometry(0.2, 6, 3, 0, Math.PI * 2, 0, Math.PI / 2), composeMatrix(0, 0.98, 0, 0, 0, 0, [0.9, 0.5, 1.2]), 0); // shoulders
-  put(new SphereGeometry(0.15, 7, 5), composeMatrix(0.01, 1.18, 0), 1);
-  put(new SphereGeometry(0.16, 7, 3, 0, Math.PI * 2, 0, Math.PI * 0.55), composeMatrix(-0.02, 1.2, 0, 0, 0, 0.35), 2);
+  put(new SphereGeometry(0.19, 7, 5), composeMatrix(0.01, 1.22, 0), 1);
+  put(new SphereGeometry(0.2, 7, 3, 0, Math.PI * 2, 0, Math.PI * 0.55), composeMatrix(-0.02, 1.25, 0, 0, 0, 0.35), 2);
+  for (const s of [-1, 1]) {
+    put(new ConeGeometry(0.075, 0.2, 4), composeMatrix(-0.03, 1.46, s * 0.11, s * 0.35, 0, 0), 1, 0, 2);
+    put(new ConeGeometry(0.035, 0.16, 4), composeMatrix(0.05, 1.42, s * 0.1, s * 0.5, 0, -0.3), 4, 0, 3);
+    put(new SphereGeometry(0.055, 5, 3), composeMatrix(-0.05, 1.52, s * 0.08, s * 0.15, 0, 0, [0.6, 2.4, 1]), 1, 0, 4);
+    put(new ConeGeometry(0.05, 0.2, 4), composeMatrix(-0.02, 1.24, s * 0.26, s * Math.PI * 0.55, 0, 0), 1, 0, 5);
+  }
   for (const s of [-1, 1]) {
     const arm = new CylinderGeometry(0.06, 0.055, 0.42, 4, 1, true);
     put(arm, composeMatrix(0, 0.95 - 0.2, s * 0.25), 0, s);
@@ -145,6 +154,7 @@ attribute vec3 iCloth;
 attribute vec3 iSkin;
 attribute vec3 iHair;
 attribute vec4 iData;
+attribute float iKind;
 uniform float uExcite;
 uniform float uWave;
 uniform float uWaveAmt;
@@ -169,7 +179,11 @@ const CROWD_VERTEX = /* glsl */ `
     vec3 piv = vec3(0.0, 0.95, aInfo.g * 0.25);
     if (abs(aInfo.g) > 0.5) transformed = crowdRot(transformed - piv, aInfo.g, crowdArm) + piv;
     float flagOn = step(0.5, iData.w);
-    if (aInfo.b > 0.5) {
+    if (aInfo.b > 1.5) {
+      // Species features: only the spectator's own kind unfolds.
+      float mine = 1.0 - step(0.5, abs(iKind - (aInfo.b - 1.0)));
+      transformed = mix(vec3(0.0, 1.22, 0.0), transformed, mine);
+    } else if (aInfo.b > 0.5) {
       vec3 hand = crowdRot(vec3(0.0, -0.39, 0.0), 1.0, crowdArm) + vec3(0.0, 0.95, 0.25);
       transformed = mix(hand, transformed, flagOn);
       if (aInfo.r > 2.5 && aInfo.r < 3.5) transformed.x += sin(uTime * 9.0 + transformed.x * 8.0 + iData.x * 5.0) * 0.05 * (0.3 + crowdCheer);
@@ -196,7 +210,11 @@ class Crowd {
     const n = seats.length;
     const cloth = new Float32Array(n * 3), skin = new Float32Array(n * 3), hair = new Float32Array(n * 3), data = new Float32Array(n * 4);
     const clothes = [0xc0392b, 0x2e6fd8, 0xf2c94c, 0xf4efe4, 0x27ae60, 0x8e44ad, 0xe67e22, 0x16a3b8, 0xd35d8a, 0x7a5a3a, 0xe8e0d0, 0x34495e];
-    const skins = [0xf6d2b4, 0xe8b48e, 0xc98c62, 0x9a6440, 0x6b4428, 0xf2c6a0];
+    // The stands are full of the same creatures as the fighters: fur, hide and stone.
+    const skins = [0xe8873a, 0xf4efe6, 0x82ad5c, 0x67a39a, 0xbfe3ff, 0xd8ccff, 0xf6ead8, 0xb8865c, 0xd8443a, 0x8e3c8e, 0x9a958c, 0xb8a080];
+    // Feature per skin: 1 fox ears, 2 horns, 3 long ears, 4 pointed ears, 0 none (stone).
+    const kinds = [1, 1, 2, 4, 4, 4, 3, 3, 2, 2, 0, 0];
+    const kind = new Float32Array(n);
     const hairs = [0x2a1d14, 0x5a3a20, 0x111018, 0xb8823a, 0xd8c08a, 0x8a3a1a, 0x9a9aa0];
     const c = new Color();
     const m = new Matrix4(), q = new Quaternion(), up = new Vector3(0, 1, 0);
@@ -208,7 +226,9 @@ class Crowd {
       const team = rnd() < 0.3;
       c.setHex(team ? (blue ? 0x2e6fd8 : 0xc0392b) : clothes[Math.floor(rnd() * clothes.length)]).multiplyScalar(0.85 + rnd() * 0.3);
       c.toArray(cloth, i * 3);
-      c.setHex(skins[Math.floor(rnd() * skins.length)]).toArray(skin, i * 3);
+      const si = Math.floor(rnd() * skins.length);
+      c.setHex(skins[si]).toArray(skin, i * 3);
+      kind[i] = kinds[si];
       c.setHex(hairs[Math.floor(rnd() * hairs.length)]).toArray(hair, i * 3);
       const flag = rnd() < 0.09 ? (blue ? 1 : 2) : 0;
       data.set([rnd(), s.a, rnd(), flag], i * 4);
@@ -221,6 +241,7 @@ class Crowd {
     geo.setAttribute('iSkin', new InstancedBufferAttribute(skin, 3));
     geo.setAttribute('iHair', new InstancedBufferAttribute(hair, 3));
     geo.setAttribute('iData', new InstancedBufferAttribute(data, 4));
+    geo.setAttribute('iKind', new InstancedBufferAttribute(kind, 1));
     const mat = customStyled('cb-crowd', {
       vertexPars: CROWD_PARS,
       normalVertex: CROWD_NORMAL,
@@ -259,9 +280,9 @@ const rowH = (i: number) => 2.6 + i * 0.95;
  * arcaded upper wall with striped awnings, gates, statues and an imperial box.
  */
 export class Colosseum extends Arena {
-  readonly grade: GradeSettings = { sat: 1.08, contrast: 1.1, shadows: [-0.02, -0.005, 0.04], highlights: [0.04, 0.018, -0.02], bloom: 1.15, vignette: 0.55 };
+  readonly grade: GradeSettings = { sat: 1.18, contrast: 1.06, shadows: [-0.02, -0.005, 0.05], highlights: [0.035, 0.02, -0.01], bloom: 1.1, vignette: 0.42 };
   readonly atmosphere: AtmosphereSettings = {
-    fog: 0xe9c29a, sun: 0xffc27a, sunDir: [0.75, 0.22, -0.62], density: 0.006, falloff: 0.06, baseY: 0, max: 0.6, glow: 0.6, ao: 0.5,
+    fog: 0xe9c29a, sun: 0xffc27a, sunDir: [0.75, 0.22, -0.62], density: 0.0045, falloff: 0.06, baseY: 0, max: 0.5, glow: 0.5, ao: 0.3,
   };
   private readonly crowd: Crowd | null;
   private rays: import('three').ShaderMaterial | null = null;
@@ -291,7 +312,6 @@ export class Colosseum extends Arena {
     const near = new MeshBuilder();
     const far = new MeshBuilder();
     const windy = new MeshBuilder();
-    const lines = new MeshBuilder();
     const skyB = new MeshBuilder();
 
     // --- Floor ------------------------------------------------------------------
@@ -403,7 +423,8 @@ export class Colosseum extends Arena {
     for (const sx of [-1, 1]) {
       const a = Math.PI - sx * 1.15;
       const x = Math.sin(a) * (wallR + 0.05), z = Math.cos(a) * (wallR + 0.05);
-      for (const b of [near, lines]) {
+      {
+        const b = near;
         b.put(new RoundedBoxGeometry(0.8, 4.4, 1.0, 1, 0.08), 0xe2cca6, x + Math.cos(a) * 1.9, 2.2, z - Math.sin(a) * 1.9, { ry: a });
         b.put(new RoundedBoxGeometry(0.8, 4.4, 1.0, 1, 0.08), 0xe2cca6, x - Math.cos(a) * 1.9, 2.2, z + Math.sin(a) * 1.9, { ry: a });
         b.put(new TorusGeometry(1.9, 0.4, 5, 12, Math.PI), 0xe2cca6, x, 4.0, z, { ry: a, s: [1, 0.8, 1.2] });
@@ -415,7 +436,8 @@ export class Colosseum extends Arena {
       const sa = a - sx * 0.22;
       const px = Math.sin(sa) * (wallR - 1.2), pz = Math.cos(sa) * (wallR - 1.2);
       const marble = 0xf2ece0;
-      for (const b of [near, lines]) {
+      {
+        const b = near;
         b.put(new RoundedBoxGeometry(1.4, 1.6, 1.4, 1, 0.08), 0xc9b897, px, 0.8, pz, { ry: sa });
         b.put(new CylinderGeometry(0.28, 0.36, 1.3, 8), marble, px, 2.25, pz);
         b.put(new SphereGeometry(0.25, 10, 8), marble, px, 3.15, pz);
@@ -425,7 +447,8 @@ export class Colosseum extends Arena {
       }
       // Brazier on a tripod in front of the gate pillar.
       const bx = sx * (ARENA_HALF_WIDTH + 2.2), bz = -4.5;
-      for (const b of [near, lines]) {
+      {
+        const b = near;
         b.put(G.cyl(6), 0x3a3030, bx, 0, bz, { s: [0.12, 2.4, 0.12] });
         b.put(new CylinderGeometry(0.6, 0.3, 0.45, 10), 0xc9a24a, bx, 2.55, bz, { gloss: 0.8 });
       }
@@ -441,7 +464,8 @@ export class Colosseum extends Arena {
     for (const a of [Math.PI - 0.82, Math.PI - 0.42, Math.PI + 0.42, Math.PI + 0.82]) {
       const r = wallR - 0.25;
       const x = Math.sin(a) * r, z = Math.cos(a) * r;
-      for (const b of [near, lines]) {
+      {
+        const b = near;
         b.put(new RoundedBoxGeometry(0.16, 0.7, 0.5, 1, 0.03), 0x3a3030, x, 2.2, z, { ry: a });
         b.put(new CylinderGeometry(0.34, 0.18, 0.3, 8), 0xc9a24a, Math.sin(a) * (r - 0.35), 2.7, Math.cos(a) * (r - 0.35), { gloss: 0.8 });
       }
@@ -466,7 +490,8 @@ export class Colosseum extends Arena {
     {
       const a = Math.PI, r = rowR(3);
       const x = Math.sin(a) * r, z = Math.cos(a) * r, y = rowH(2);
-      for (const b of [near, lines]) {
+      {
+        const b = near;
         b.put(new RoundedBoxGeometry(6.4, 1.3, 3.2, 1, 0.1), 0xe2cca6, x, y + 0.65, z + 0.6);
         for (const k of [-1, 1]) b.put(G.cyl(10), 0xd9b04a, x + k * 2.9, y + 1.3, z + 1.8, { s: [0.18, 3.6, 0.18], gloss: 0.8 });
         b.put(new RoundedBoxGeometry(7.2, 0.4, 3.8, 1, 0.1), 0x6a2a8a, x, y + 5.0, z + 0.4);
@@ -485,7 +510,7 @@ export class Colosseum extends Arena {
     // Sky clouds over the rim.
     for (let i = 0; i < 10; i++) cloud(skyB, rnd, -320 + i * 70 + rnd() * 30, 60 + rnd() * 50, -330, 14 + rnd() * 10, 0xffffff, 0.5);
 
-    finish(this.group, near, far, lines, windy, skyB, opts.shadows);
+    finish(this.group, near, far, windy, skyB, opts.shadows);
 
     // --- Crowd ---------------------------------------------------------------------
     const seats: { x: number; y: number; z: number; a: number }[] = [];

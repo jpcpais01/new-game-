@@ -77,9 +77,11 @@ interface StyleOptions {
   /**
    * Cel shading: two flat tones (lit and a soft, hue-shifted shadow) split
    * by a narrow soft edge, like an illustrated character, instead of the
-   * three painterly bands.
+   * three painterly bands. On by default; characters get a crisper edge
+   * than scenery (`crisp`).
    */
   cel?: boolean;
+  crisp?: boolean;
 }
 
 const PAINTED_BANDS = /* glsl */ `
@@ -89,10 +91,10 @@ const PAINTED_BANDS = /* glsl */ `
   col += (base + 0.15) * uTermTint * term;
 `;
 
-const CEL_BANDS = /* glsl */ `
+const celBands = (lo: number, hi: number) => /* glsl */ `
   // Two tones split by a narrow soft edge; the shadow keeps the mood's hue
   // but stays light and saturated, as in a cel-painted illustration.
-  t1 = smoothstep(uRamp.x - 0.012, uRamp.x + 0.03, ratio);
+  t1 = smoothstep(uRamp.x - ${lo.toFixed(3)}, uRamp.x + ${hi.toFixed(3)}, ratio);
   t2 = t1;
   vec3 shade = base * mix(uShadowTint, vec3(1.0), 0.4);
   shade = max(mix(vec3(dot(shade, vec3(0.299, 0.587, 0.114))), shade, 1.25), vec3(0.0));
@@ -162,7 +164,7 @@ varying float vGloss;
   float ndv = clamp(dot(normal, vdir), 0.0, 1.0);
   // Gloss 0..1 is shininess; 2 and above marks self-lit paint (see sculpt/paint.ts).
   float gl = clamp(vGloss, 0.0, 1.0);
- ${o.cel ? CEL_BANDS : PAINTED_BANDS}
+ ${o.cel === false ? PAINTED_BANDS : o.crisp ? celBands(0.012, 0.03) : celBands(0.03, 0.08)}
   // Sky fill brightens upward-facing shadow areas a touch (reads as bounce light).
   col += base * uSkyFill * (0.5 + 0.5 * normal.y) * (1.0 - t2);
   #if NUM_DIR_LIGHTS > 0
@@ -193,7 +195,7 @@ varying float vGloss;
     if (o.fighter) {
       fbody += `
   float fres = 1.0 - ndv;
-  ${o.cel ? 'col += uRim * smoothstep(0.66, 0.74, fres) * (0.25 + 0.4 * t1);' : 'col += uRim * smoothstep(0.58, 0.86, fres) * 0.5;'}
+  ${o.cel !== false ? 'col += uRim * smoothstep(0.66, 0.74, fres) * (0.25 + 0.4 * t1);' : 'col += uRim * smoothstep(0.58, 0.86, fres) * 0.5;'}
   col = mix(col, uTint * (0.6 + fres), clamp(uTintAmt, 0.0, 1.0));
   col = mix(col, vec3(1.0), clamp(uFlash, 0.0, 1.0));
 `;
@@ -213,7 +215,7 @@ varying float vGloss;
 
 /** Vertex-coloured, skinned, cel-shaded body material for one fighter. */
 export function fighterMaterial(u: FighterUniforms): MeshLambertMaterial {
-  return stylize(new MeshLambertMaterial({ vertexColors: true }), 'cb-fighter-cel', { fighter: u, cel: true });
+  return stylize(new MeshLambertMaterial({ vertexColors: true }), 'cb-fighter-cel', { fighter: u, crisp: true });
 }
 
 /**
@@ -328,9 +330,9 @@ function hullOutline(width: IUniform<number>, darkness: number, sat: number): Sh
   return m;
 }
 
-/** Coloured line art around scenery: a darker, more saturated shade of each surface. */
+/** Coloured ink around scenery: a deep, saturated shade of each surface. */
 export function outlineMaterial(): ShaderMaterial {
-  return (outline ??= hullOutline(STYLE.uOutlineWidth, 0.22, 1.5));
+  return (outline ??= hullOutline(STYLE.uOutlineWidth, 0.16, 1.5));
 }
 
 /** The bold, near-black ink line around characters and their gear. */
