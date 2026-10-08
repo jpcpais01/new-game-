@@ -883,7 +883,7 @@ function cloneValue(v: unknown): unknown {
 }
 
 /** Fighter fields that never change during a battle and can be shared by forks. */
-const SHARED_FIGHTER_KEYS = new Set(['abilities', 'has', 'base', 'gear', 'gearIds', 'look', 'profile']);
+const SHARED_FIGHTER_KEYS = new Set(['abilities', 'has', 'base', 'gear', 'gearIds', 'look', 'skins', 'profile']);
 
 function cloneFighter(f: Fighter): Fighter {
   const c = { ...f } as unknown as Record<string, unknown>;

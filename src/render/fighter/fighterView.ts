@@ -75,6 +75,8 @@ export class FighterView {
   private readonly scale: number;
   private shieldShown = 0;
   private phoenix: Object3D | null = null;
+  /** Bones that turn on their own (halos, rings, rotors on skinned gear). */
+  private readonly spinners: Object3D[] = [];
   private readonly clothVel = new Map<Object3D, number>();
   /** World-space positions kept for effects (weapon trail etc.). */
   readonly tipWorld = new Vector3();
@@ -99,7 +101,7 @@ export class FighterView {
     this.group.add(this.teamRing);
     this.yaw = this.yawFor(f.facing);
     this.group.rotation.y = this.yaw;
-    this.vfx = weaponVfx(f.gear);
+    this.vfx = weaponVfx(f.gear, f.skins);
     // Form height lives in the rig body; gear can add a little on top.
     this.scale = items.includes('colossus_boots') ? 1.05 : 1;
     this.group.scale.setScalar(this.scale);
@@ -110,6 +112,7 @@ export class FighterView {
       else this.rig.enchantMaterial.color.setRGB(1, 1, 1);
     }
     this.phoenix = this.rig.phoenix;
+    for (const [name, o] of this.rig.tags) if (name.startsWith('spin:')) this.spinners.push(o);
     this.rig.orbiters.forEach((o, i) => this.orbiters.push({ item: o.item, mesh: o.bone, phase: i * 2.1, radius: 0.78 + i * 0.08 }));
 
     // Shield bubble (Aegis or any shield).
@@ -253,6 +256,7 @@ export class FighterView {
     }
     // Collapse the spent feather into the head (never scale to exactly zero: NaN normals).
     if (this.phoenix) this.phoenix.scale.setScalar(f.phoenixUsed ? 0.01 : 1);
+    for (const o of this.spinners) o.rotation.y += (o.userData.spin as number) * dt;
   }
 
   private updateCloth(f: Fighter, dt: number): void {

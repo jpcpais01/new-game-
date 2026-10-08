@@ -31,8 +31,11 @@ export default defineConfig({
         description: 'Fully automatic 1v1 arena battles driven by gear, abilities and adaptive AI.',
         theme_color: '#0d0f1a',
         background_color: '#0d0f1a',
-        display: 'fullscreen',
-        orientation: 'landscape',
+        id: '/',
+        // Standalone with no orientation: on Xiaomi (HyperOS/MIUI) a WebAPK installed
+        // with display "fullscreen" or any fixed orientation never launches. The game
+        // goes fullscreen and locks landscape itself on a tap (src/ui/fullscreen.ts).
+        display: 'standalone',
         start_url: '/',
         scope: '/',
         icons: [

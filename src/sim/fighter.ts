@@ -1,5 +1,5 @@
 import {
-  buildAbilities, buildProfile, computeBaseStats, gearIds, type Appearance, type CharacterBuild, type CombatProfile,
+  buildAbilities, buildProfile, computeBaseStats, gearIds, type Appearance, type CharacterBuild, type CombatProfile, type SkinChoice,
 } from './loadout';
 import type {
   AbilityDef, ActionState, FighterId, FighterTotals, FormId, GearId, GearSet, Stats, StatusId, StatusInstance,
@@ -19,6 +19,8 @@ export interface Fighter {
   gearIds: GearId[];
   has: Set<GearId>;
   look: Appearance | undefined;
+  /** Cosmetic skins per gear piece (renderer only). */
+  skins: SkinChoice | undefined;
   /** AI temperament and spacing derived from form + gear. */
   profile: CombatProfile;
   abilities: AbilityDef[];
@@ -76,6 +78,7 @@ export function createFighter(id: FighterId, cfg: FighterConfig): Fighter {
     gearIds: ids,
     has: new Set(ids),
     look: cfg.look,
+    skins: cfg.skins,
     profile: buildProfile(cfg.form, cfg.gear),
     abilities,
     cooldowns: abilities.map(() => 0),

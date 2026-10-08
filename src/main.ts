@@ -16,6 +16,7 @@ import { Hud } from './ui/hud';
 import { DEFAULT_BUILDS, sanitizeBuild } from './sim/loadout';
 import { Menu, ZOOM_LABEL, ZOOM_ORDER, type Loadout, type MenuSettings } from './ui/menu';
 import { Results } from './ui/results';
+import { setupPhoneFullscreen } from './ui/fullscreen';
 import { Creator } from './ui/creator';
 import { CharacterStage } from './render/characterStage';
 import {
@@ -112,8 +113,8 @@ const results = new Results({
 const menu = new Menu(loadouts, settings, {
   onChange: (l) => {
     loadouts = l;
-    // Gear changes on the blue corner belong to the persistent character.
-    if (player) { player = { ...player, gear: { ...l[0].gear } }; saveCharacter(player); }
+    // Gear and skin changes on the blue corner belong to the persistent character.
+    if (player) { player = { ...player, gear: { ...l[0].gear }, skins: { ...l[0].skins } }; saveCharacter(player); }
     newBattle(randomSeed());
   },
   onEditCharacter: () => openCreator(),
@@ -344,6 +345,7 @@ canvas.addEventListener('pointermove', (e) => {
 const endDrag = (e: PointerEvent) => { if (e.pointerId === dragId) { dragId = -1; stage.release(); } };
 canvas.addEventListener('pointerup', endDrag);
 canvas.addEventListener('pointercancel', endDrag);
+setupPhoneFullscreen();
 // Audio needs a user gesture; unlock on the first one.
 window.addEventListener('pointerdown', () => sfx.unlock(), { once: true });
 document.addEventListener('visibilitychange', () => {
@@ -384,6 +386,10 @@ void boot().then(async () => {
   }
   if (params.has('demo')) {
     loadouts = [generateRival(), generateRival()];
+    // `&main=longbow,spear` forces the main weapons (for checking animations).
+    params.get('main')?.split(',').forEach((id, i) => {
+      if (loadouts[i] && id) loadouts[i] = sanitizeBuild({ ...loadouts[i], gear: { ...loadouts[i].gear, main: id } }, loadouts[i]);
+    });
     startFight(randomSeed());
   } else if (!lab && (!player || params.has('create'))) {
     // First launch: meet your fighter before anything else.

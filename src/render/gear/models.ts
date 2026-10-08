@@ -1,6 +1,7 @@
 import type { Object3D } from 'three';
 import { resolveArt, type ArtKey, type ResolvedArt } from '../../gear/art';
 import { ITEM_ART } from '../../gear/itemArt';
+import { skinnedArt, type SkinDef } from '../../gear/skins';
 import { gearOf } from '../../sim/gear';
 import type { GearId } from '../../sim/types';
 import type { RigBuildApi, RigDecorator } from '../fighter/look';
@@ -42,6 +43,10 @@ export interface GearSockets {
   clothBone(parent: Object3D, x: number, y: number, z: number): Object3D;
   /** A bone orbiting the fighter for this item. */
   orbiter(): Object3D;
+  /** A bone the view spins about its own Y axis (halos, rings, rotors), `speed` in rad/s. */
+  spin(parent: Object3D, x: number, y: number, z: number, speed?: number): Object3D;
+  /** Names a bone the animator drives (bow string, nocked arrow). */
+  tag(name: string, o: Object3D): void;
 }
 
 /**
@@ -85,6 +90,8 @@ function unproxied(parent: Object3D, x: number, y: number, z: number): [Object3D
   return [parent.parent, [o.x + x * sc.x, o.y + y * sc.y, o.z + z * sc.z]];
 }
 
+let spinCount = 0;
+
 function socketsFrom(api: RigBuildApi, id: GearId): GearSockets {
   const k = api.sockets, m = api.metrics, sh = m.form.shape;
   // The new torso carries muscle and cloth volume, so worn pieces sit a little proud of it.
@@ -118,47 +125,90 @@ function socketsFrom(api: RigBuildApi, id: GearId): GearSockets {
     bone: (parent, x, y, z) => { const [p, pos] = unproxied(parent, x, y, z); return api.bone(p, pos); },
     clothBone: (parent, x, y, z) => { const [p, pos] = unproxied(parent, x, y, z); return api.cloth(p, ...pos); },
     orbiter: () => api.orbiter(id),
+    spin: (parent, x, y, z, speed = 1) => {
+      const [p, pos] = unproxied(parent, x, y, z);
+      const b = api.bone(p, pos);
+      b.userData.spin = speed;
+      api.tag(`spin:${spinCount++}`, b);
+      return b;
+    },
+    tag: (name, o) => api.tag(name, o),
   };
 }
 
+/**
+ * A skin's own model: replaces the base model of its slot. Any slot it leaves
+ * out falls back to the base model in the skin's colours.
+ */
+export interface SkinModel {
+  weapon?: WeaponFn;
+  offhand?: OffhandFn;
+  defense?: DefenseFn;
+  head?: HeadFn;
+  /** Body parts a head piece covers. */
+  hides?: ('hair' | 'ears')[];
+  boots?: BootFn;
+  special?: SpecialFn;
+}
+
 /** Rig decorator that models one gear piece (registered in fighter/gearModels.ts). */
-export function gearDecorator(id: GearId): RigDecorator {
-  const look = lookOf(id);
+export function gearDecorator(id: GearId, skin: SkinDef | null = null, model: SkinModel | null = null): RigDecorator {
+  const look = resolveArt(skinnedArt(id, skin));
   const slot = gearOf(id).slot;
   return (api) => {
     const s = socketsFrom(api, id);
     const m = mats(look);
     const grip = api.look.grip;
-    // The left hand is free for a secondary when the main weapon is one-handed and nothing is strapped to that arm.
-    const leftFree = grip === 'oneHand' && (api.look.offhand === 'none' || api.look.offhand === 'focus');
+    const hands = api.look.hands;
+    // A secondary sits in the left hand only when nothing else claims it (see HandPlan).
+    const leftFree = hands.left === 'free' && hands.shield !== 'arm';
     switch (slot) {
       case 'main': {
-        const w = WEAPONS[look.art] ?? WEAPONS.sword!;
-        const t = w(s.grip, m, s);
-        if (look.art === 'twin_daggers') WEAPONS.dagger!(s.offGrip, m, s);
-        api.setWeapon(t.base, t.tip);
-        if ((grip === 'twoHand' || grip === 'polearm') && !ONE_HANDED.includes(look.art)) api.setOffGrip(t.offGrip ?? [0, 0.24, 0]);
-        else if (grip === 'twoHand' || grip === 'polearm') api.setOffGrip(t.offGrip ?? [0, -0.11, 0]);
+        const w = model?.weapon ?? WEAPONS[look.art] ?? WEAPONS.sword!;
+        // A bow is held in the left hand; the right hand draws the string.
+        const bow = grip === 'bow';
+        // A spear wielded one-handed (shield on the arm) is held nearer its balance point.
+        const choke = grip === 'polearm' && !hands.twoHanded ? 0.35 : 0;
+        // The second twin dagger is sheathed on the hip when the left hand is busy.
+        const ws = id === 'twin_daggers' && hands.left !== 'dagger' ? { ...s, offGrip: sheath(s, 'hip') } : s;
+        const t = w(bow ? s.offGrip : choke ? group(s.grip, [0, -choke, 0]) : s.grip, m, ws);
+        if (choke) { t.base[1] -= choke; t.tip[1] -= choke; }
+        // A skinned twin-dagger model authors its own off-hand blade.
+        if (id === 'twin_daggers' && !model?.weapon) WEAPONS.dagger!(ws.offGrip, m, s);
+        api.setWeapon(t.base, t.tip, bow ? 'off' : 'main');
+        if (hands.twoHanded) api.setOffGrip(t.offGrip ?? (ONE_HANDED.includes(look.art) ? [0, -0.11, 0] : [0, 0.24, 0]));
         break;
       }
-      case 'defense':
-        DEFENSE[look.art]?.(s, m);
+      case 'defense': {
+        let ds = s;
+        // A shield is slung on the back while the left arm holds a bow.
+        if (hands.shield === 'back' && (id === 'tower_shield' || id === 'mirror_aegis')) ds = { ...s, forearmL: group(s.chest, [-0.1, 0.38, 0], [0, Math.PI / 2, 0.08]) };
+        // The parrying dagger is sheathed at the back of the belt when the left hand is busy.
+        if (id === 'parrying_blade' && hands.left !== 'parry') ds = { ...s, offGrip: sheath(s, 'back') };
+        (model?.defense ?? DEFENSE[look.art])?.(ds, m);
         break;
+      }
       case 'offhand':
-        OFFHAND[look.art]?.(s, m, leftFree);
+        // The frost orb floats behind the left shoulder when that hand is busy:
+        // a stand-in forearm puts the orb's usual offset there.
+        (model?.offhand ?? OFFHAND[look.art])?.(id === 'frost_orb' && !leftFree ? { ...s, forearmL: group(s.chest, [-0.4, 0.92, 0.06]) } : s, m, leftFree);
         break;
-      case 'head':
-        if (look.art === 'knight_helm' || look.art === 'hood') api.hide('hair');
-        if (look.art === 'knight_helm') api.hide('ears');
-        HEAD[look.art]?.(s, m);
+      case 'head': {
+        const hides = model?.head ? model.hides ?? [] : [
+          ...(look.art === 'knight_helm' || look.art === 'hood' ? ['hair' as const] : []),
+          ...(look.art === 'knight_helm' ? ['ears' as const] : []),
+        ];
+        for (const h of hides) api.hide(h);
+        (model?.head ?? HEAD[look.art])?.(s, m);
         break;
+      }
       case 'boots': {
-        const b = BOOTS[look.art] ?? BOOTS.leather_boots!;
+        const b = model?.boots ?? BOOTS[look.art] ?? BOOTS.leather_boots!;
         for (const leg of [s.legL, s.legR]) b(leg, m, s);
         break;
       }
       case 'special': {
-        const r = SPECIAL[look.art]?.(s, m);
+        const r = (model?.special ?? SPECIAL[look.art])?.(s, m);
         if (r?.phoenix) api.tag('phoenix', r.phoenix);
         break;
       }
@@ -168,9 +218,19 @@ export function gearDecorator(id: GearId): RigDecorator {
 
 // --- weapons ---------------------------------------------------------------------
 
-type WeaponFn = (g: Object3D, m: Mats, s: GearSockets) => WeaponTrailPoints;
+/** Mount for a sheathed blade (grip frame: blade along +Y): on the left hip, or across the back of the belt. */
+function sheath(s: GearSockets, where: 'hip' | 'back'): Object3D {
+  return where === 'hip'
+    ? group(s.hips, [0.08, -0.02, -0.27], [0.25, 0, Math.PI * 0.82])
+    : group(s.hips, [-0.24, 0.02, 0.04], [-Math.PI / 2 + 0.25, 0, 0]);
+}
 
-function hilt(g: Object3D, m: Mats, len = 0.2, pommel = 0.045): void {
+/** Bow string geometry shared with the animator (grip space of the left hand). */
+export const BOW_STRING = { tipY: 0.86, arrowY: 0.03, arrowLen: 0.8 };
+
+export type WeaponFn = (g: Object3D, m: Mats, s: GearSockets) => WeaponTrailPoints;
+
+export function hilt(g: Object3D, m: Mats, len = 0.2, pommel = 0.045): void {
   part(g, cyl(0.026, 0.03, len, 8), m.wrap, { pos: [0, 0.02, 0] });
   for (let k = 0; k < 3; k++) part(g, torus(0.03, 0.007, Math.PI * 2, 4, 8), lineless(m.leather), { pos: [0, -0.05 + k * 0.06, 0], rot: [Math.PI / 2, 0, 0] });
   part(g, sphere(pommel, 10, 8), m.trim, { pos: [0, 0.02 - len / 2 - pommel * 0.6, 0] });
@@ -252,15 +312,28 @@ const WEAPONS: Partial<Record<ArtKey, WeaponFn>> = {
     }
     return { base: [0, 1.0, 0], tip: [0, 1.36, 0] };
   },
-  bow: (g, m) => {
-    // Riser in the hand, limbs bending away from the string.
+  bow: (g, m, s) => {
+    // Held in the left fist: grip at the origin, limbs along ±Y bending towards
+    // the target (+X), string behind the riser. The string halves and the
+    // nocked arrow hang on bones the animator drives (see fighter/bow.ts).
     part(g, rbox(0.06, 0.24, 0.05, 0.02), m.leather, { pos: [0, 0, 0] });
     for (const sy of [-1, 1]) {
       part(g, bent(`bowLimb${sy}`, [[0, 0], [0.12, sy * 0.4], [-0.02, sy * 0.78]], 0.03, 0.014), m.wood, { pos: [0, sy * 0.1, 0] });
       part(g, sphere(0.022, 6, 4), m.trim, { pos: [-0.02, sy * 0.88, 0] });
+      // String half from the limb tip to the centre (the nock point at rest).
+      const half = s.bone(g, -0.025, sy * BOW_STRING.tipY, 0);
+      part(half, box(0.008, BOW_STRING.tipY, 0.008), lineless({ color: 0xf3ead6 }), { pos: [0, -sy * BOW_STRING.tipY / 2, 0] });
+      s.tag(sy > 0 ? 'bowTop' : 'bowBottom', half);
     }
-    part(g, box(0.008, 1.74, 0.008), lineless({ color: 0xf3ead6 }), { pos: [-0.03, 0, 0] });
     part(g, octa(0.03), m.gem, { pos: [0.04, 0, 0] });
+    // Nocked arrow: nock at the bone, pointing at the target (+X), resting on the left of the riser.
+    const arrow = s.bone(g, -0.025, BOW_STRING.arrowY, 0);
+    const L = BOW_STRING.arrowLen;
+    part(arrow, cyl(0.009, 0.009, L, 6), { color: 0xc9a46a }, { pos: [L / 2, 0, 0], rot: [0, 0, -Math.PI / 2] });
+    part(arrow, cone(0.024, 0.08, 6), m.steel, { pos: [L + 0.03, 0, 0], rot: [0, 0, -Math.PI / 2] });
+    for (const k of [-1, 1]) part(arrow, box(0.12, 0.004, 0.035), lineless({ color: m.tint }), { pos: [0.08, 0, k * 0.018] });
+    part(arrow, box(0.12, 0.035, 0.004), lineless({ color: m.tint }), { pos: [0.08, 0.018, 0] });
+    s.tag('arrow', arrow);
     return { base: [0, -0.6, 0], tip: [0, 0.6, 0] };
   },
   crossbow: (g, m) => {
@@ -284,7 +357,38 @@ const WEAPONS: Partial<Record<ArtKey, WeaponFn>> = {
 
 // --- secondary weapons ------------------------------------------------------------
 
-type OffhandFn = (s: GearSockets, m: Mats, inHand: boolean) => void;
+/** Hand crossbow geometry shared with the animator (grip frame: muzzle +X, top +Y, prod tips at ±Z). */
+export const XBOW = { tipX: 0.27, tipZ: 0.27, stringY: 0.085, cockX: 0.06, boltLen: 0.3 };
+
+function handCrossbow(g: Object3D, m: Mats, s: GearSockets): void {
+  // Stock over the fist, pistol grip down into it, trigger guard.
+  part(g, rbox(0.44, 0.055, 0.05, 0.018), m.wood, { pos: [0.12, 0.055, 0] });
+  part(g, rbox(0.05, 0.12, 0.045, 0.016), m.wood, { pos: [-0.005, 0.0, 0], rot: [0, 0, 0.25] });
+  part(g, torus(0.025, 0.006, Math.PI, 4, 8), m.steel, { pos: [0.05, 0.02, 0], rot: [0, 0, Math.PI] });
+  // Rail with a groove for the bolt, and a steel nose.
+  part(g, box(0.3, 0.012, 0.022), m.steel, { pos: [0.18, 0.084, 0] });
+  part(g, rbox(0.05, 0.06, 0.06, 0.012), m.steel, { pos: [0.33, 0.06, 0] });
+  // Prod: a recurved arc lying flat across the nose, tips swept back.
+  const flat = group(g, [XBOW.tipX + 0.09 - 0.43, XBOW.stringY, 0], [Math.PI / 2, 0, 0]);
+  part(group(flat, [0, 0, 0], [0, 0, -0.7]), torus(0.43, 0.016, 1.4, 6, 16), m.main, {});
+  for (const z of [-1, 1]) part(g, sphere(0.018, 6, 4), m.trim, { pos: [XBOW.tipX, XBOW.stringY, z * XBOW.tipZ] });
+  part(g, octa(0.022), m.gem, { pos: [0.2, 0.06, 0.03] });
+  // String halves from each prod tip to the latch (driven bones).
+  for (const z of [-1, 1]) {
+    const half = s.bone(g, XBOW.tipX, XBOW.stringY, z * XBOW.tipZ);
+    part(half, box(0.006, 0.006, XBOW.tipZ), lineless({ color: 0xf3ead6 }), { pos: [0, 0, -z * XBOW.tipZ / 2] });
+    s.tag(z > 0 ? 'xbowStringR' : 'xbowStringL', half);
+  }
+  // Bolt: nock at the bone, along +X.
+  const bolt = s.bone(g, XBOW.cockX, XBOW.stringY + 0.012, 0);
+  const L = XBOW.boltLen;
+  part(bolt, cyl(0.008, 0.008, L, 6), { color: 0xc9a46a }, { pos: [L / 2, 0, 0], rot: [0, 0, -Math.PI / 2] });
+  part(bolt, cone(0.02, 0.06, 4), m.steel, { pos: [L + 0.02, 0, 0], rot: [0, 0, -Math.PI / 2] });
+  part(bolt, box(0.06, 0.03, 0.004), lineless({ color: m.tint }), { pos: [0.04, 0.012, 0] });
+  s.tag('xbowBolt', bolt);
+}
+
+export type OffhandFn = (s: GearSockets, m: Mats, inHand: boolean) => void;
 
 const OFFHAND: Partial<Record<ArtKey, OffhandFn>> = {
   throwing_knives: (s, m, inHand) => {
@@ -295,18 +399,30 @@ const OFFHAND: Partial<Record<ArtKey, OffhandFn>> = {
       part(kn, blade(0.14, 0.04, 0.01, 0, 0.4), m.main, { pos: [0, 0.02, 0] });
       part(kn, cyl(0.012, 0.012, 0.06, 6), m.cloth, { pos: [0, -0.02, 0] });
     }
-    if (inHand) {
-      for (let k = 0; k < 3; k++) {
-        const kn = group(s.offGrip, [0, 0.02, 0], [(k - 1) * 0.35, 0, 0]);
-        part(kn, blade(0.22, 0.05, 0.012, 0, 0.4), m.main, { pos: [0, 0.05, 0] });
-        part(kn, torus(0.02, 0.006, Math.PI * 2, 4, 8), m.trim, { pos: [0, -0.03, 0] });
-      }
+    // A fan of knives in the left hand: always there when the hand is free,
+    // otherwise drawn from the bandolier only to throw (the animator shows and
+    // hides this bone; see Animator.knives).
+    const fan = s.bone(s.offGrip, 0, 0, 0);
+    for (let k = 0; k < 3; k++) {
+      const kn = group(fan, [0, 0.02, 0], [(k - 1) * 0.35, 0, 0]);
+      part(kn, blade(0.22, 0.05, 0.012, 0, 0.4), m.main, { pos: [0, 0.05, 0] });
+      part(kn, torus(0.02, 0.006, Math.PI * 2, 4, 8), m.trim, { pos: [0, -0.03, 0] });
     }
+    s.tag(inHand ? 'knivesHeld' : 'knivesDrawn', fan);
   },
   crossbow: (s, m, inHand) => {
-    if (inHand) { WEAPONS.crossbow!(s.offGrip, m, s); return; }
-    const h = group(s.hips, [0.0, -0.05, -0.27], [0, 0, 2.6], 0.85);
-    WEAPONS.crossbow!(h, m, s);
+    // The crossbow hangs on a bone the animator moves between the left hand and
+    // the left hip (when that hand is busy), aims, looses and re-cocks (see
+    // fighter/crossbow.ts). Modelled in the hand's grip frame: muzzle +X, top +Y.
+    const xb = s.bone(s.offGrip, 0, 0, 0);
+    handCrossbow(xb, m, s);
+    s.tag('xbow', xb);
+    if (!inHand) {
+      // Holster on the left hip, muzzle down.
+      const holster = s.bone(s.hips, 0.02, -0.04, -0.29);
+      holster.rotation.set(0.25, 0, -Math.PI / 2 - 0.3);
+      s.tag('xbowHolster', holster);
+    }
   },
   chakram: (s, m, inHand) => {
     if (inHand) { WEAPONS.chakram!(s.offGrip, m, s); return; }
@@ -344,9 +460,9 @@ const OFFHAND: Partial<Record<ArtKey, OffhandFn>> = {
 
 // --- defense ----------------------------------------------------------------------
 
-type DefenseFn = (s: GearSockets, m: Mats) => WeaponTrailPoints | void;
+export type DefenseFn = (s: GearSockets, m: Mats) => WeaponTrailPoints | void;
 
-function pauldrons(s: GearSockets, spec: Mats['main'], trim: Mats['trim']): void {
+export function pauldrons(s: GearSockets, spec: Mats['main'], trim: Mats['trim']): void {
   const k = s.big ? 1.25 : 1;
   for (const sa of [s.shoulderL, s.shoulderR]) {
     part(sa, halfSphere(0.17 * k), spec, { scale: [1.15, 0.85, 1.05] });
@@ -356,7 +472,7 @@ function pauldrons(s: GearSockets, spec: Mats['main'], trim: Mats['trim']): void
 }
 
 /** Inner face of a shield (seen when the shield arm is turned away): wood boards and leather straps. */
-function shieldBack(sh: Object3D, m: Mats, w: number, h: number): void {
+export function shieldBack(sh: Object3D, m: Mats, w: number, h: number): void {
   part(sh, rbox(w, h, 0.02, 0.01), m.wood, { pos: [0, 0, 0.035] });
   for (let k = -1; k <= 1; k++) part(sh, box(0.006, h * 0.96, 0.004), lineless(m.wrap), { pos: [k * w * 0.25, 0, 0.047] });
   for (const y of [h * 0.18, -h * 0.18]) part(sh, rbox(w * 0.85, 0.05, 0.03, 0.01), m.leather, { pos: [0, y, 0.05] });
@@ -445,7 +561,7 @@ const DEFENSE: Partial<Record<ArtKey, DefenseFn>> = {
 
 // --- head -------------------------------------------------------------------------
 
-type HeadFn = (s: GearSockets, m: Mats) => void;
+export type HeadFn = (s: GearSockets, m: Mats) => void;
 
 const HEAD: Partial<Record<ArtKey, HeadFn>> = {
   knight_helm: (s, m) => {
@@ -525,15 +641,15 @@ const HEAD: Partial<Record<ArtKey, HeadFn>> = {
 
 // --- boots ------------------------------------------------------------------------
 
-type BootFn = (leg: Leg, m: Mats, s: GearSockets) => void;
+export type BootFn = (leg: Leg, m: Mats, s: GearSockets) => void;
 
 /** Places a boot part on the shin or, below the ankle, on the foot. */
-function lp(leg: Leg, g: Parameters<typeof part>[1], spec: Parameters<typeof part>[2], o: Parameters<typeof part>[3] = {}): void {
+export function lp(leg: Leg, g: Parameters<typeof part>[1], spec: Parameters<typeof part>[2], o: Parameters<typeof part>[3] = {}): void {
   const y = o.pos?.[1] ?? 0;
   part(y < -0.38 ? leg.foot : leg.shin, g, spec, o);
 }
 
-function bootBase(shin: Leg, shaft: Mats['main'], foot: Mats['main'], sole: Mats['main'], s: GearSockets): void {
+export function bootBase(shin: Leg, shaft: Mats['main'], foot: Mats['main'], sole: Mats['main'], s: GearSockets): void {
   const k = s.big ? 1.18 : 1;
   lp(shin, cyl(0.1 * k, 0.092 * k, 0.24, 12), shaft, { pos: [0, -0.3, 0] });
   lp(shin, rbox(0.32, 0.12, 0.165 * k, 0.05), foot, { pos: [0.075, -0.43, 0] });
@@ -577,7 +693,7 @@ const BOOTS: Partial<Record<ArtKey, BootFn>> = {
 
 // --- specials ----------------------------------------------------------------------
 
-type SpecialFn = (s: GearSockets, m: Mats) => { orbiter?: Object3D; phoenix?: Object3D } | void;
+export type SpecialFn = (s: GearSockets, m: Mats) => { orbiter?: Object3D; phoenix?: Object3D } | void;
 
 function orbiter(s: GearSockets): Object3D {
   return s.orbiter();
