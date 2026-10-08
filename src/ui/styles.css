@@ -425,6 +425,8 @@ button:focus-visible { outline: 2px solid var(--ember-hi); outline-offset: 2px; 
   transition: transform 0.08s, box-shadow 0.08s, background 0.15s;
 }
 .skin-opt .item-icon { width: 54px; height: 54px; }
+.outfit-opt .item-icon { display: block; }
+.outfit-opt .item-icon svg { display: block; width: 100%; height: 100%; }
 .skin-opt span { font-size: 10.5px; font-weight: 700; line-height: 1.15; text-align: center; color: var(--muted); }
 .skin-opt:hover { background: linear-gradient(180deg, var(--plate-3), var(--plate-2)); }
 .skin-opt:active { transform: translateY(2px); box-shadow: var(--hi), 0 1px 0 var(--ink); }

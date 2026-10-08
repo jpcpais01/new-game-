@@ -80,6 +80,8 @@ export interface Appearance {
   accent: number;
   /** Leather/boots tone. */
   leather: number;
+  /** Character skin the body is sculpted in (character/outfits.ts); the house tunic when unset. */
+  outfit?: string;
 }
 
 export interface FighterLook {
@@ -253,7 +255,7 @@ export function lookFor(src: LookSource): FighterLook {
   // A creator look sets the skin, eye and hair colours and derives the outfit from its two colours.
   const pal = sim ? lookPalette(sim) : null;
   const appearance: Appearance = sim && pal
-    ? { skin: sim.skin, hair: sim.hairColor, eyes: sim.eyeColor, primary: pal.main, secondary: pal.pants, accent: pal.trim, leather: pal.boots }
+    ? { skin: sim.skin, hair: sim.hairColor, eyes: sim.eyeColor, primary: pal.main, secondary: pal.pants, accent: pal.trim, leather: pal.boots, outfit: sim.outfit }
     : base;
   const grip = gripOf(src.gear);
   const hands = handPlan(src.gear);

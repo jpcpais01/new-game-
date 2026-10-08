@@ -1,15 +1,16 @@
-import type { Bone } from 'three';
+import { Vector3, type Bone } from 'three';
 import type { RigBuildApi } from './look';
 import { J } from './poses';
 import type { RigPartSpec } from './rig';
 import { sculptBody } from './sculpt/body';
+import { OUTFIT_COLORS } from './sculpt/outfits';
 import { mixHex, paintedGeometry, type PaintColors } from './sculpt/paint';
 
 /**
  * The fighter's base body: a sculpted, painted figure for the look's form
  * (see sculpt/body.ts), skinned along its bone chains so elbows, knees, hips
  * and the spine bend as one surface. Sculpts are cached per form and detail
- * tier; only the paint is redone per character.
+ * tier and outfit (character skin); only the paint is redone per character.
  */
 
 let detailTier = 2;
@@ -33,9 +34,13 @@ const ARM_L = [J.UARM_L, J.FARM_L, J.HAND_L] as const;
 const LEG_R = [J.THIGH_R, J.SHIN_R, J.FOOT_R] as const;
 const LEG_L = [J.THIGH_L, J.SHIN_L, J.FOOT_L] as const;
 
-/** Paint palette for a fighter's outfit from its look colours. */
+/**
+ * Paint palette for a fighter: the house outfit takes the look's colours, a
+ * character skin brings its own palette (skin, hair and eyes stay theirs).
+ */
 export function bodyColors(api: RigBuildApi): PaintColors {
   const a = api.appearance;
+  const skin = a.outfit ? OUTFIT_COLORS[a.outfit as keyof typeof OUTFIT_COLORS] : undefined;
   return {
     skin: a.skin,
     shirt: a.primary,
@@ -47,12 +52,13 @@ export function bodyColors(api: RigBuildApi): PaintColors {
     eyes: a.eyes,
     sash: a.accent,
     mark: a.accent,
+    ...skin,
   };
 }
 
 export function buildBody(api: RigBuildApi, j: Bone[]): void {
   const m = api.metrics;
-  const sculpt = sculptBody(m.form.id, m.form.shape, m.hipH, m.ankleH, detailTier);
+  const sculpt = sculptBody(m.form.id, m.form.shape, m.hipH, m.ankleH, detailTier, api.appearance.outfit);
   const colors = bodyColors(api);
   const bodySpace = j[J.HIPS].parent!;
   const put = (s: typeof sculpt.torso, chain: readonly number[]) => {
@@ -64,9 +70,12 @@ export function buildBody(api: RigBuildApi, j: Bone[]): void {
   put(sculpt.armL, ARM_L);
   put(sculpt.legR, LEG_R);
   put(sculpt.legL, LEG_L);
-  // The sash's loose ends sway from the knot.
-  const hips = j[J.HIPS];
-  const r = sculpt.sash.root;
-  const tail = api.cloth(hips, r[0] - hips.position.x, r[1] - hips.position.y, r[2] - hips.position.z, 1.3);
-  api.part(tail, paintedGeometry(sculpt.sash.mesh, colors), { color: 0xffffff, vertexColors: true } as RigPartSpec);
+  // Loose cloth (sash ends, tabards, coat tails, scarves) sways from its root.
+  bodySpace.updateWorldMatrix(true, true);
+  for (const c of sculpt.cloth) {
+    const bone = j[c.bone === 'chest' ? J.CHEST : J.HIPS];
+    const at = bone.worldToLocal(bodySpace.localToWorld(new Vector3(...c.root)));
+    const tail = api.cloth(bone, at.x, at.y, at.z, c.stiffness);
+    api.part(tail, paintedGeometry(c.mesh, colors), { color: 0xffffff, vertexColors: true } as RigPartSpec);
+  }
 }

@@ -132,6 +132,8 @@ varying float vGloss;
   float t2 = smoothstep(uRamp.y - 0.04, uRamp.y + 0.04, ratio);
   vec3 vdir = vViewPosition * inversesqrt(max(dot(vViewPosition, vViewPosition), 1e-8));
   float ndv = clamp(dot(normal, vdir), 0.0, 1.0);
+  // Gloss 0..1 is shininess; 2 and above marks self-lit paint (see sculpt/paint.ts).
+  float gl = clamp(vGloss, 0.0, 1.0);
   vec3 col = mix(mix(base * uShadowTint, base * uMidTint, t1), base * uLitTint, t2);
   // Painterly terminator: a warm, saturated glow where light turns into shadow.
   float term = smoothstep(uRamp.x - 0.2, uRamp.x, ratio) * (1.0 - smoothstep(uRamp.x + 0.02, uRamp.y + 0.06, ratio));
@@ -141,11 +143,15 @@ varying float vGloss;
   #if NUM_DIR_LIGHTS > 0
     vec3 hv = directionalLights[0].direction + vdir;
     hv *= inversesqrt(max(dot(hv, hv), 1e-8));
-    float spec = smoothstep(0.93, 0.955, clamp(dot(normal, hv), 0.0, 1.0)) * vGloss * (0.35 + 0.65 * t2);
+    float spec = smoothstep(0.93, 0.955, clamp(dot(normal, hv), 0.0, 1.0)) * gl * (0.35 + 0.65 * t2);
     col += mix(base, vec3(1.0), 0.6) * spec * 0.9;
   #endif
   // Glossy surfaces also pick up a thin bright edge.
-  col += base * smoothstep(0.72, 0.9, 1.0 - ndv) * vGloss * 0.5;
+  col += base * smoothstep(0.72, 0.9, 1.0 - ndv) * gl * 0.5;
+  {
+    float em = clamp(vGloss - 2.0, 0.0, 4.0);
+    col = mix(col, base * (1.0 + em), min(em, 1.0));
+  }
 `;
     if (o.ao) {
       fbody += `

@@ -8,6 +8,8 @@ import { FORM_IDS, FORMS } from '../sim/forms';
 import { GEAR_SLOTS, gearOf, SLOT_NAMES } from '../sim/gear';
 import { SKIN_THEME_IDS, SKIN_THEMES, skinOf, skinsFor, withSkin, type SkinTheme } from '../gear/skins';
 import { skinStrip } from './skinIcons';
+import { outfitStrip } from './outfitIcons';
+import { OUTFITS } from '../character/outfits';
 import type { FormId, Stats } from '../sim/types';
 import { h, hex } from './dom';
 import { formIcon, icon, type IconName } from './icons';
@@ -169,7 +171,9 @@ export class Creator {
         content = [
           this.swatches('Main colour', OUTFIT_COLORS, 'primary'),
           this.swatches('Trim colour', OUTFIT_COLORS, 'secondary'),
-          h('p.cr-note', null, 'Outfit colours tint your clothes. Weapons and gear keep their own materials.'),
+          h('p.cr-note', null, this.draft.look.outfit === 'tunic'
+            ? 'Outfit colours tint your clothes. Weapons and gear keep their own materials.'
+            : `Your ${OUTFITS[this.draft.look.outfit].name} outfit wears its own colours. Pick Wanderer in Skins to wear these.`),
         ];
         break;
       case 'skins':
@@ -237,8 +241,23 @@ export class Creator {
     );
   }
 
-  /** Skins tab: whole themed sets first, then a strip per equipped piece. */
+  /** Skins tab: the character skin (outfit) first, then gear sets and a strip per equipped piece. */
   private skinRows(): (HTMLElement | null)[] {
+    const outfit = OUTFITS[this.draft.look.outfit];
+    const outfitRow = h('section.cr-row', null,
+      h('h4', null, 'Outfit'),
+      outfitStrip(this.draft.look, (id) => {
+        sfx.play('ui');
+        this.draft.look = { ...this.draft.look, outfit: id };
+        this.changed(true);
+      }),
+      h('p.cr-note', null, outfit.id === 'tunic' ? outfit.blurb : `${outfit.blurb} Wears its own colours; your face and hair stay yours.`),
+    );
+    return [outfitRow, ...this.gearSkinRows()];
+  }
+
+  /** Item skins: whole themed sets first, then a strip per equipped piece. */
+  private gearSkinRows(): (HTMLElement | null)[] {
     const gear = GEAR_SLOTS.map((slot) => this.draft.gear[slot]).filter((g) => g !== undefined);
     const skinnable = gear.filter((g) => skinsFor(g).length);
     if (!skinnable.length) return [h('p.cr-note', null, 'None of your gear has skins yet.')];
@@ -256,7 +275,7 @@ export class Creator {
     const sets = SKIN_THEME_IDS.filter((t) => skinnable.some((g) => skinsFor(g).some((k) => k.theme === t)));
     return [
       h('section.cr-row', null,
-        h('h4', null, 'Sets'),
+        h('h4', null, 'Gear sets'),
         h('div.chips', null,
           h('button.chip-btn' + (wearing(null) ? '.on' : ''), { onclick: () => wear(null) }, 'Default'),
           ...sets.map((t) => h('button.chip-btn.theme-chip' + (wearing(t) ? '.on' : ''), {
@@ -273,7 +292,7 @@ export class Creator {
         }) : null;
         return strip && g ? h('section.cr-row', null, h('h4', null, `${SLOT_NAMES[slot]} · ${gearOf(g).name}`), strip) : null;
       }),
-      h('p.cr-note', null, 'Skins only change how gear looks. Stats and abilities stay the same.'),
+      h('p.cr-note', null, 'Skins only change how you look. Stats and abilities stay the same.'),
     ];
   }
 
@@ -284,7 +303,8 @@ export class Creator {
 
   private randomize(): void {
     sfx.play('ui');
-    this.draft.look = randomAppearance();
+    // A new face, hair and colours; the outfit is a choice, so it stays.
+    this.draft.look = { ...randomAppearance(), outfit: this.draft.look.outfit };
     this.changed(true);
   }
 
