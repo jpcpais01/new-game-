@@ -1,5 +1,6 @@
 import { ELEMENT_COLOR, resolveArt, weaponFamily, type Element, type ResolvedArt, type WeaponFamily } from '../../gear/art';
-import { itemArt } from '../../gear/itemArt';
+import { skinnedArt, skinOf } from '../../gear/skins';
+import type { SkinChoice } from '../../sim/loadout';
 import type { GearId, GearSet } from '../../sim/types';
 import type { Particles } from '../fx/particles';
 
@@ -32,14 +33,17 @@ const TRAIL_LIFE: Record<WeaponFamily, number> = {
   blade: 0.2, heavy: 0.28, pole: 0.22, dagger: 0.13, staff: 0.22, bow: 0.16, fist: 0.12, thrown: 0.16, focus: 0.18, none: 0.18,
 };
 
-export function weaponVfx(gear: GearSet | undefined): WeaponVfx {
+/** Resolved look of a gear piece as worn (skin included). */
+const wornArt = (id: GearId, skins: SkinChoice | undefined) => resolveArt(skinnedArt(id, skinOf(id, skins)));
+
+export function weaponVfx(gear: GearSet | undefined, skins?: SkinChoice): WeaponVfx {
   const main = gear?.main;
-  const look = main ? resolveArt(itemArt(main)) : null;
+  const look = main ? wornArt(main, skins) : null;
   const own = look && look.element !== 'none' ? look.element : null;
   const imbued: Element[] = [];
   for (const id of Object.values(gear ?? {}) as GearId[]) {
     if (!ENCHANTS.includes(id)) continue;
-    const e = resolveArt(itemArt(id)).element;
+    const e = wornArt(id, skins).element;
     if (e !== 'none' && e !== own && !imbued.includes(e)) imbued.push(e);
   }
   const elements = own ? [own, ...imbued] : imbued;

@@ -1,4 +1,5 @@
-import { DEFAULT_BUILDS, randomBuild, sanitizeBuild, type CharacterBuild } from '../sim/loadout';
+import { randomSkins, validSkins } from '../gear/skins';
+import { DEFAULT_BUILDS, gearIds, randomBuild, sanitizeBuild, type CharacterBuild } from '../sim/loadout';
 import { randomAppearance, sanitizeAppearance, type Appearance } from './appearance';
 
 /**
@@ -30,7 +31,7 @@ export function loadCharacter(): PlayerCharacter | null {
     const name = typeof o?.name === 'string' ? cleanName(o.name) : '';
     if (!name) return null;
     const b = sanitizeBuild(o, { ...DEFAULT_BUILDS[0], name });
-    return { ...b, name, look: sanitizeAppearance(o.look) };
+    return { ...b, name, look: sanitizeAppearance(o.look), skins: validSkins(b.skins) };
   } catch {
     return null;
   }
@@ -46,7 +47,7 @@ export function saveCharacter(c: PlayerCharacter): void {
  */
 export function newCharacter(previous?: CharacterBuild): PlayerCharacter {
   const base = previous ?? DEFAULT_BUILDS[0];
-  return { name: '', form: 'balanced', gear: { ...base.gear }, look: randomAppearance() };
+  return { name: '', form: 'balanced', gear: { ...base.gear }, look: randomAppearance(), skins: {} };
 }
 
 const FIRST = [
@@ -65,5 +66,6 @@ export function randomName(r: () => number = Math.random): string {
 export function generateRival(avoidName?: string): Character {
   let name = randomName();
   for (let i = 0; i < 4 && name === avoidName; i++) name = randomName();
-  return { ...randomBuild(), name, look: randomAppearance() };
+  const build = randomBuild();
+  return { ...build, name, look: randomAppearance(), skins: randomSkins(gearIds(build.gear)) };
 }

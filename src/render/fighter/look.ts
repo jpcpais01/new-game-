@@ -1,11 +1,12 @@
 import type { BufferGeometry, Object3D, Vector3 } from 'three';
 import { GEAR } from '../../sim/gear';
-import { gearIds, type Appearance as SimAppearance } from '../../sim/loadout';
+import { gearIds, type Appearance as SimAppearance, type SkinChoice } from '../../sim/loadout';
+import { skinOf, SKIN_THEMES } from '../../gear/skins';
 import type { FormId, GearSet } from '../../sim/types';
 import type { PartSpec } from '../meshBuilder';
 import { headLook, lookPalette } from './appearance';
 import type { BodyForm } from './forms';
-import { GEAR_MODELS } from './gearModels';
+import { gearModel } from './gearModels';
 
 /**
  * Everything the renderer needs to build and animate one fighter. Gameplay
@@ -166,6 +167,7 @@ export interface LookSource {
   form: FormId;
   gear: GearSet;
   look?: SimAppearance;
+  skins?: SkinChoice;
 }
 
 export function gripOf(gear: GearSet): GripStyle {
@@ -190,10 +192,7 @@ export function lookFor(src: LookSource): FighterLook {
     : base;
   const grip = gripOf(src.gear);
   const decorators: RigDecorator[] = [];
-  for (const id of gearIds(src.gear)) {
-    const d = GEAR_MODELS[id];
-    if (d) decorators.push(d);
-  }
+  for (const id of gearIds(src.gear)) decorators.push(gearModel(id, src.skins?.[id]));
   return {
     form: src.form,
     appearance,
@@ -203,11 +202,13 @@ export function lookFor(src: LookSource): FighterLook {
     grip,
     offhand: offhandOf(src.gear, grip),
     decorators,
-    accent: GEAR.main[src.gear.main]?.color ?? 0xffffff,
+    accent: accentOf(src),
   };
 }
 
-/** Accent colour for a fighter's effects: its main weapon's colour. */
-export function accentOf(f: { gear: GearSet }): number {
+/** Accent colour for a fighter's effects: its main weapon's colour (or its skin's theme). */
+export function accentOf(f: { gear: GearSet; skins?: SkinChoice }): number {
+  const skin = skinOf(f.gear.main, f.skins);
+  if (skin) return SKIN_THEMES[skin.theme].color;
   return GEAR.main[f.gear.main]?.color ?? 0xffffff;
 }

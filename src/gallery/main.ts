@@ -3,6 +3,7 @@ import { itemIconUrl } from '../ui/itemIcons';
 import { GEAR, GEAR_SLOTS, SLOT_NAMES, type GearDef } from '../sim/gear';
 import { ITEM_ART } from '../gear/itemArt';
 import type { FormId, GearSlot } from '../sim/types';
+import type { SkinTheme } from '../gear/skins';
 
 // Review page for item art: every icon in a few colourways, and (below) the 3D
 // gear models on a turntable. Open /gallery.html on any preview deploy.
@@ -36,8 +37,22 @@ const params = new URLSearchParams(location.search);
 const big = params.get('big');
 const view = params.get('view');
 
+// Skins in 3D: ?view=skins[&theme=x][&set], or a close-up with ?view=skin&id=x.
+if (view === 'skins' || view === 'skin') {
+  const canvas = document.createElement('canvas');
+  canvas.id = 'models';
+  if (view === 'skin') canvas.style.height = '100vh';
+  document.body.append(canvas);
+  void import('./models').then((m) => m.mountSkins(canvas, {
+    theme: (params.get('theme') as SkinTheme | null) ?? undefined,
+    id: params.get('id') ?? undefined,
+    form: (params.get('form') as FormId | null) ?? undefined,
+    set: params.has('set'),
+  }));
+}
+
 // 3D models: ?view=3d (all slots) or ?view=3d&slot=head.
-if (view === '3d' || !big) {
+if (view === '3d' || (!big && !view)) {
   const h2 = document.createElement('h2');
   h2.textContent = '3D gear (click to pause)';
   const canvas = document.createElement('canvas');
@@ -48,7 +63,7 @@ if (view === '3d' || !big) {
 }
 
 // The real catalog first: every gear piece with its icon.
-if (!big && view !== '3d') {
+if (!big && !view) {
   for (const slot of GEAR_SLOTS) {
     const h2 = document.createElement('h2');
     h2.textContent = SLOT_NAMES[slot];
@@ -89,7 +104,7 @@ if (big) {
   document.body.append(grid);
 }
 
-for (const slot of big || view === '3d' ? [] : ART_SLOTS) {
+for (const slot of big || view ? [] : ART_SLOTS) {
   const h2 = document.createElement('h2');
   h2.textContent = slot;
   const grid = document.createElement('div');

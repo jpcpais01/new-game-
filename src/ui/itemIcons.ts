@@ -56,7 +56,7 @@ function rad(id: string, a: number, b: number, c: number, cx = 0.38, cy = 0.32):
 }
 
 /** Paint references available to drawings. */
-interface Paint {
+export interface Paint {
   /** Main material of the item. */
   m: string;
   /** Trim material (guards, bands, settings). */
@@ -174,7 +174,7 @@ function torso(): string {
 
 // --- drawings ------------------------------------------------------------------
 
-type Draw = (p: Paint) => string;
+export type Draw = (p: Paint) => string;
 
 const DRAW: Record<ArtKey, Draw> = {
   // Weapons are drawn upright around x=32 and turned 45° (tip to the top right).
@@ -882,16 +882,34 @@ function sandal(p: Paint): string {
   ].join('');
 }
 
+/** Drawing primitives for other icon sets (skins) so they match this style exactly. */
+export const ICON_KIT = { OUT, LW, P, C, E, R, T, L, H, S, D, G, diag, halo, spark, gem, star, grip, mirrorX, link, light, dark, mix, css, stroke, boots, bootShape, torso, DRAW };
+
 // --- framing ---------------------------------------------------------------------
 
 export interface IconOptions {
   rarity?: Rarity;
   /** Draw the rarity frame and glow backdrop (default true). */
   frame?: boolean;
+  /** A drawing to use instead of the art key's own (skins with their own silhouette). */
+  draw?: Draw;
+  /** Extra layers behind and in front of the drawing, and a border colour (skin themes). */
+  decor?: IconDecor;
+  /** Cache key for `draw`/`decor` (they can't be compared otherwise). */
+  key?: string;
 }
 
-function frame(r: ResolvedArt, rarity: Rarity): { back: string; front: string; defs: string } {
-  const rc = RARITY_COLOR[rarity];
+/** Theme dressing for an icon: layers behind and over the drawing, inside the frame. */
+export interface IconDecor {
+  defs?: string;
+  back?: string;
+  front?: string;
+  /** Frame colour instead of the rarity colour. */
+  border?: number;
+}
+
+function frame(r: ResolvedArt, rarity: Rarity, border?: number): { back: string; front: string; defs: string } {
+  const rc = border ?? RARITY_COLOR[rarity];
   const bgA = mix(dark(r.tint, 0.55), dark(rc, 0.6), 0.5);
   const d = `<radialGradient id="Bg" cx=".5" cy=".42" r=".72"><stop offset="0" stop-color="${css(bgA)}"/><stop offset="1" stop-color="#0f0b1c"/></radialGradient>`
     + `<linearGradient id="Rb" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="${css(light(rc, 0.45))}"/><stop offset=".5" stop-color="${css(rc)}"/><stop offset="1" stop-color="${css(dark(rc, 0.35))}"/></linearGradient>`;
@@ -913,16 +931,18 @@ export function itemIconSvg(art: ItemArt, o: IconOptions = {}): string {
   const r = resolveArt(art);
   const { defs: d, p } = defs(r);
   const withFrame = o.frame !== false;
-  const fr = withFrame ? frame(r, o.rarity ?? 'rare') : null;
-  const draw = DRAW[r.art] ?? DRAW.relic_orb;
+  const fr = withFrame ? frame(r, o.rarity ?? 'rare', o.decor?.border) : null;
+  const draw = o.draw ?? DRAW[r.art] ?? DRAW.relic_orb;
+  const dc = o.decor;
   // The drawing is inset inside the frame so outlines never touch the border.
   const body = withFrame ? G('translate(4.5 3.8) scale(.86)', draw(p)) : G('translate(2 2) scale(.9375)', draw(p));
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><defs>${d}${fr?.defs ?? ''}</defs>${fr?.back ?? ''}${body}${fr?.front ?? ''}</svg>`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><defs>${d}${fr?.defs ?? ''}${dc?.defs ?? ''}</defs>`
+    + `${fr?.back ?? ''}${withFrame ? dc?.back ?? '' : ''}${body}${dc?.front ?? ''}${fr?.front ?? ''}</svg>`;
 }
 
 /** Cached `data:` URL for an item icon (use as <img src> or CSS background). */
 export function itemIconUrl(art: ItemArt, o: IconOptions = {}): string {
-  const key = `${art.art}|${art.tint}|${art.metal}|${art.cloth}|${art.element}|${o.rarity}|${o.frame}`;
+  const key = `${art.art}|${art.tint}|${art.metal}|${art.cloth}|${art.element}|${o.rarity}|${o.frame}|${o.key ?? ''}`;
   let url = cache.get(key);
   if (!url) {
     url = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(itemIconSvg(art, o));
