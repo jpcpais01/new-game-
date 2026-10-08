@@ -548,7 +548,7 @@ export class Brain {
         val += 0.03 * pHit;
         why = why || 'Drives them into the wall!';
       }
-      if (f.has.has('storm_crown') && f.stormCounter === 2) val += 0.02 * pHit;
+      if (f.has.has('storm_crown') && f.stormCounter === 3) val += 0.02 * pHit;
       if (f.has.has('frost_core') && stacksOf(e, 'chill') === 4) { val += 0.04 * pHit; why = why || 'Going for the freeze.'; }
       if (cornered && ab.knockback && ab.knockback >= 4) val += 0.03;
       if (ab.id === 'frost_nova' && dist < 2.2 && f.profile.ranged) val += 0.05;

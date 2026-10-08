@@ -156,7 +156,7 @@ export function refreshStats(f: Fighter): void {
 
   if (f.has.has('berserker_mask')) {
     const missing = 1 - f.hp / s.maxHp;
-    s.damageMult *= 1 + Math.min(0.5, missing * 0.7);
+    s.damageMult *= 1 + Math.min(0.4, missing * 0.6);
     if (missing > 0.6) s.attackSpeed *= 1.1;
   }
 }
