@@ -1,6 +1,6 @@
 import { Rng } from '../core/rng';
 import { clamp } from '../core/math';
-import { Brain } from './ai/brain';
+import { Brain, type FighterBrain } from './ai/brain';
 import {
   ARENA_HALF_WIDTH, BASE_ENERGY_REGEN, BODY_GAP, DT, ENERGY_ON_DEAL, ENERGY_ON_TAKE, MAX_ENERGY,
   ROUND_TIME, START_GAP, WALL_SPLAT_SPEED,
@@ -15,7 +15,11 @@ import type {
 export interface BattleConfig {
   seed: number;
   fighters: [FighterConfig, FighterConfig];
+  /** Overrides the AI controller per side (benchmarks against older AIs). */
+  brains?: [BrainFactory?, BrainFactory?];
 }
+
+export type BrainFactory = (f: Fighter, variance: number) => FighterBrain;
 
 interface HitOptions {
   mult?: number;
@@ -38,7 +42,7 @@ export class Battle {
   readonly rng: Rng;
   readonly seed: number;
   readonly fighters: [Fighter, Fighter];
-  readonly brains: [Brain, Brain];
+  readonly brains: [FighterBrain, FighterBrain];
   readonly projectiles: Projectile[] = [];
   /** Events produced since the consumer last drained them. */
   events: BattleEvent[] = [];
@@ -59,12 +63,33 @@ export class Battle {
     a.x = a.px = -START_GAP;
     b.x = b.px = START_GAP;
     this.fighters = [a, b];
-    this.brains = [new Brain(a, this.rng.next()), new Brain(b, this.rng.next())];
+    const make = (i: 0 | 1, f: Fighter, v: number): FighterBrain => cfg.brains?.[i]?.(f, v) ?? new Brain(f, v);
+    this.brains = [make(0, a, this.rng.next()), make(1, b, this.rng.next())];
     for (const f of this.fighters) refreshStats(f);
   }
 
   emit(e: BattleEvent): void {
-    this.events.push(e);
+    if (!this.sandbox) this.events.push(e);
+  }
+
+  /** True for look-ahead copies made by `fork`: their events are dropped. */
+  sandbox = false;
+
+  /**
+   * Independent copy of the whole battle for AI look-ahead. The copy draws
+   * from its own RNG (`seed`) so it can't peek at the real battle's future
+   * rolls, drops its events, and is driven by the brains `brains` returns.
+   */
+  fork(seed: number, brains: (copy: Battle) => [FighterBrain, FighterBrain]): Battle {
+    const c = Object.create(Battle.prototype) as Battle;
+    const w = c as unknown as Record<string, unknown>;
+    for (const k of Object.keys(this)) w[k] = cloneValue((this as unknown as Record<string, unknown>)[k]);
+    w.rng = new Rng(seed);
+    w.fighters = [cloneFighter(this.fighters[0]), cloneFighter(this.fighters[1])];
+    w.events = [];
+    c.sandbox = true;
+    w.brains = brains(c);
+    return c;
   }
 
   /** Remove and return all pending events. */
@@ -840,4 +865,27 @@ export class Battle {
       this.emit({ type: 'end', winner: this.winner, reason: 'time' });
     }
   }
+}
+
+// -----------------------------------------------------------------------------
+// Forking helpers
+// -----------------------------------------------------------------------------
+
+const isPlain = (v: unknown): v is Record<string, unknown> =>
+  !!v && typeof v === 'object' && Object.getPrototypeOf(v) === Object.prototype;
+
+/** One level deeper than a shallow copy: arrays of records and plain records are copied. */
+function cloneValue(v: unknown): unknown {
+  if (Array.isArray(v)) return v.map((x) => (isPlain(x) ? { ...x } : x));
+  if (isPlain(v)) return { ...v };
+  return v;
+}
+
+/** Fighter fields that never change during a battle and can be shared by forks. */
+const SHARED_FIGHTER_KEYS = new Set(['abilities', 'has', 'base', 'gear', 'gearIds', 'look', 'profile']);
+
+function cloneFighter(f: Fighter): Fighter {
+  const c = { ...f } as unknown as Record<string, unknown>;
+  for (const k of Object.keys(c)) if (!SHARED_FIGHTER_KEYS.has(k)) c[k] = cloneValue(c[k]);
+  return c as unknown as Fighter;
 }
