@@ -14,10 +14,15 @@ import { h, save, store } from './ui/dom';
 import { FloatingText } from './ui/floatingText';
 import { Hud } from './ui/hud';
 import { DEFAULT_BUILDS, sanitizeBuild } from './sim/loadout';
-import { Menu, randomLoadout, ZOOM_LABEL, ZOOM_ORDER, type Loadout, type MenuSettings } from './ui/menu';
+import { Menu, ZOOM_LABEL, ZOOM_ORDER, type Loadout, type MenuSettings } from './ui/menu';
 import { Results } from './ui/results';
+import { Creator } from './ui/creator';
+import { CharacterStage } from './render/characterStage';
+import {
+  generateRival, loadCharacter, newCharacter, randomName, saveCharacter, type PlayerCharacter,
+} from './character/profile';
 
-type State = 'menu' | 'intro' | 'battle' | 'ending' | 'results';
+type State = 'create' | 'menu' | 'intro' | 'battle' | 'ending' | 'results';
 
 const canvas = document.getElementById('game') as HTMLCanvasElement;
 const ui = document.getElementById('ui')!;
@@ -59,12 +64,14 @@ const floating = new FloatingText(fxLayer);
 const view = new BattleView(scene, fx, cam, renderer, arena, floating);
 renderer.setupPasses(scene, cam.camera);
 
-// Saves from the class era (or anything malformed) fall back to the defaults.
-const stored = store<unknown[]>('cb.loadouts', []);
-let loadouts: [Loadout, Loadout] = [
-  sanitizeBuild(stored?.[0], DEFAULT_BUILDS[0]),
-  sanitizeBuild(stored?.[1], DEFAULT_BUILDS[1]),
-];
+// The player's one persistent character (blue) against a generated rival (red).
+// Before a character exists, a guest stands in (demo mode, behind the creator);
+// its gear comes from an older blue-corner loadout so existing setups carry over.
+let player: PlayerCharacter | null = loadCharacter();
+const legacy = sanitizeBuild(store<unknown[]>('cb.loadouts', [])?.[0], DEFAULT_BUILDS[0]);
+const guest: PlayerCharacter = { ...newCharacter(legacy), name: randomName() };
+let loadouts: [Loadout, Loadout] = [player ?? guest, generateRival(player?.name)];
+const stage = new CharacterStage(scene, fx);
 let state: State = 'menu';
 let speed = 1;
 let paused = false;
@@ -105,14 +112,33 @@ const results = new Results({
 const menu = new Menu(loadouts, settings, {
   onChange: (l) => {
     loadouts = l;
-    save('cb.loadouts', l);
+    // Gear changes on the blue corner belong to the persistent character.
+    if (player) { player = { ...player, gear: { ...l[0].gear } }; saveCharacter(player); }
     newBattle(randomSeed());
+  },
+  onEditCharacter: () => openCreator(),
+  onNewRival: () => {
+    loadouts = [loadouts[0], generateRival(player?.name)];
+    menu.loadouts = loadouts;
+    newBattle(randomSeed());
+    menu.render();
   },
   onFight: () => startFight(randomSeed()),
   onSettings: (s) => applySettings(s),
 });
+const creator = new Creator({
+  onPreview: (c, cheer) => { stage.set(c); if (cheer) stage.cheer(); },
+  onFocus: (f) => { stage.focus = f; },
+  onSave: (c) => {
+    player = c;
+    saveCharacter(c);
+    loadouts = [c, loadouts[1].name === c.name ? generateRival(c.name) : loadouts[1]];
+    closeCreator();
+  },
+  onCancel: () => closeCreator(),
+});
 const fpsEl = h('div.fps');
-ui.append(hud.el, menu.el, results.el, fpsEl);
+ui.append(hud.el, menu.el, results.el, creator.el, fpsEl);
 hud.show(false);
 
 function applySettings(s: MenuSettings): void {
@@ -151,6 +177,39 @@ function startFight(seed: number): void {
   hud.show(true);
   hud.showBanner('READY');
   sfx.play('ui');
+}
+
+/** Character creation (first launch) or editing (from the menu). */
+function openCreator(): void {
+  state = 'create';
+  paused = false;
+  menu.show(false);
+  results.hide();
+  hud.show(false);
+  for (const f of view.fighters) if (f) f.group.visible = false;
+  layoutStage();
+  stage.snap(cam.camera);
+  stage.show(true);
+  creator.open(player ?? guest, !player);
+}
+
+function closeCreator(): void {
+  creator.close();
+  stage.show(false);
+  toMenu();
+}
+
+/** Keeps the character clear of the creator panel (side panel, or bottom sheet on phones). */
+function layoutStage(): void {
+  const w = window.innerWidth, hgt = window.innerHeight;
+  if (hgt > 520 && (w <= 760 || hgt > w)) {
+    stage.screenX = 0;
+    stage.bottomInset = Math.min(0.62, (hgt * 0.56 + 16) / hgt);
+  } else {
+    const panel = (hgt <= 520 ? Math.min(400, w * 0.52) : Math.min(440, w * 0.44)) + 32;
+    stage.screenX = ((w - panel) / 2 / w) * 2 - 1;
+    stage.bottomInset = 0;
+  }
 }
 
 function toMenu(): void {
@@ -194,6 +253,7 @@ function frame(now: number): void {
   last = now;
   renderer.trackFrame(realDt);
 
+  if (state === 'create') layoutStage();
   const simulating = state === 'battle' || state === 'ending' || state === 'results';
   if (state === 'intro' && !paused) {
     phaseT += realDt;
@@ -228,8 +288,9 @@ function frame(now: number): void {
   fx.smoke.update(time);
   arena.update(time, dt, fx);
   if (lab) lab(realDt * (paused ? 0 : 1));
+  else if (state === 'create') stage.update(realDt, cam.camera);
   else view.update(dt, acc / DT, state !== 'menu');
-  if (state !== 'menu') hud.update();
+  if (state !== 'menu' && state !== 'create') hud.update();
   floating.update(dt, cam.camera, window.innerWidth, window.innerHeight);
   const t1 = performance.now();
   debugHooks?.beforeRender();
@@ -258,14 +319,31 @@ window.addEventListener('resize', onResize);
 screen.orientation?.addEventListener?.('change', onResize);
 
 window.addEventListener('keydown', (e) => {
-  if (e.repeat) return;
+  if (e.repeat || state === 'create') return;
   if (e.key === ' ' ) { e.preventDefault(); togglePause(); }
   else if (e.key === '1' || e.key === '2' || e.key === '4') { speed = Number(e.key); hud.setSpeed(speed); }
   else if (e.key === 'Escape' && state !== 'menu') toMenu();
   else if (e.key.toLowerCase() === 'z') cycleZoom();
   else if (e.key === 'Enter' && (state === 'menu' || state === 'results')) startFight(randomSeed());
-  else if (e.key.toLowerCase() === 'r' && state === 'menu') { loadouts = [randomLoadout(), randomLoadout()]; menu.loadouts = loadouts; menu.render(); newBattle(randomSeed()); }
+  else if (e.key.toLowerCase() === 'r' && state === 'menu') { loadouts = [loadouts[0], generateRival(player?.name)]; menu.loadouts = loadouts; menu.render(); newBattle(randomSeed()); }
 });
+// Drag the character around on the creation turntable.
+let dragId = -1;
+let dragX = 0;
+canvas.addEventListener('pointerdown', (e) => {
+  if (state !== 'create') return;
+  dragId = e.pointerId;
+  dragX = e.clientX;
+  canvas.setPointerCapture(e.pointerId);
+});
+canvas.addEventListener('pointermove', (e) => {
+  if (e.pointerId !== dragId) return;
+  stage.drag(e.clientX - dragX);
+  dragX = e.clientX;
+});
+const endDrag = (e: PointerEvent) => { if (e.pointerId === dragId) { dragId = -1; stage.release(); } };
+canvas.addEventListener('pointerup', endDrag);
+canvas.addEventListener('pointercancel', endDrag);
 // Audio needs a user gesture; unlock on the first one.
 window.addEventListener('pointerdown', () => sfx.unlock(), { once: true });
 document.addEventListener('visibilitychange', () => {
@@ -305,8 +383,11 @@ void boot().then(async () => {
     });
   }
   if (params.has('demo')) {
-    loadouts = [randomLoadout(), randomLoadout()];
+    loadouts = [generateRival(), generateRival()];
     startFight(randomSeed());
+  } else if (!lab && (!player || params.has('create'))) {
+    // First launch: meet your fighter before anything else.
+    openCreator();
   }
 });
 if (import.meta.env.PROD) registerSW({ immediate: true });

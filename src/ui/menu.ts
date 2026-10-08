@@ -32,6 +32,10 @@ export interface MenuSettings {
 
 export interface MenuCallbacks {
   onChange(loadouts: [Loadout, Loadout]): void;
+  /** Open the character editor (name, form and look of the player's fighter). */
+  onEditCharacter(): void;
+  /** Replace the red corner with a newly generated rival. */
+  onNewRival(): void;
   onFight(): void;
   onSettings(s: MenuSettings): void;
 }
@@ -66,7 +70,7 @@ export class Menu {
       this.corner(1),
       h('div.menu-bottom', null,
         this.arenaRow(),
-        h('button.btn', { onclick: () => { sfx.play('ui'); this.loadouts = [randomLoadout(), randomLoadout()]; this.changed(); } }, '🎲 Random duel'),
+        h('button.btn', { onclick: () => { sfx.play('ui'); this.cb.onNewRival(); } }, '🎲 New rival'),
         h('button.btn-fight', { onclick: () => this.cb.onFight() }, 'FIGHT'),
         this.settingsRow(),
       ),
@@ -110,13 +114,16 @@ export class Menu {
     return h(`div.corner.glass.side-${side}`, null,
       h('header', null,
         h('div', null,
-          h('div.tag', null, side === 0 ? 'Blue corner' : 'Red corner'),
+          h('div.tag', null, side === 0 ? 'You · Blue corner' : 'Rival · Red corner'),
           h('div.name', null, lo.name),
           h('div.sub', null, `${form.name} · ${form.title}`),
         ),
-        h('button.btn', { title: 'Randomize', onclick: () => set(randomLoadout()) }, '🎲'),
+        side === 0
+          ? h('button.btn', { title: 'Edit your fighter', onclick: () => { sfx.play('ui'); this.cb.onEditCharacter(); } }, '✎ Edit')
+          : h('button.btn', { title: 'New rival', onclick: () => { sfx.play('ui'); this.cb.onNewRival(); } }, '🎲'),
       ),
-      h('div.classes.forms', null, ...FORM_IDS.map((id) =>
+      // Your form is part of who your character is: it changes in the editor.
+      side === 0 ? null : h('div.classes.forms', null, ...FORM_IDS.map((id) =>
         h('button.class-btn' + (id === lo.form ? '.sel' : ''), {
           style: { '--c': hex(FORMS[id].color) },
           title: FORMS[id].blurb,
