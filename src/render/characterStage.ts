@@ -4,6 +4,7 @@ import { damp } from '../core/math';
 import { createFighter, type Fighter } from '../sim/fighter';
 import { FORMS } from '../sim/forms';
 import { FighterView, type FxContext } from './fighter/fighterView';
+import { bodyDetail, withBodyDetail } from './fighter/body';
 
 export type StageFocus = 'body' | 'face';
 
@@ -68,7 +69,7 @@ export class CharacterStage {
 
   private rebuild(c: Character): void {
     const f = createFighter(0, { ...c, gear: { ...c.gear } });
-    const view = new FighterView(f, 0);
+    const view = withBodyDetail(Math.min(2, bodyDetail() + 1), () => new FighterView(f, 0));
     this.view?.dispose();
     this.view = view;
     this.fighter = f;

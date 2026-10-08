@@ -101,18 +101,36 @@ export function installDebug(ctx: DebugContext): DebugHooks {
   };
   const mark = () => { add(`### USER SAW FLICKER | ${sizes()}`); scanNaN('user mark'); status.textContent = 'Marked. Keep playing, then Copy report.'; };
 
+  // Starts folded on phones so it doesn't cover the fight; the header unfolds it.
+  const body = h('div', null, live, toggleRow);
+  const caret = h('span', { style: { display: 'inline-block', width: '1.2em' } });
+  const head = h('button', {
+    style: { font: 'inherit', fontWeight: '700', color: '#fc6', background: 'none', border: '0', padding: '4px 0', margin: '0 0 2px', cursor: 'pointer', textAlign: 'left', width: '100%' },
+    onclick: () => setOpen(body.style.display === 'none'),
+  }, caret, 'Clashborn debug', h('span', { style: { color: '#aaa', fontWeight: '400' } }, ' · press F (or Flicker!) the moment you see it'));
+  const setOpen = (v: boolean) => {
+    body.style.display = v ? '' : 'none';
+    caret.textContent = v ? '▾' : '▸';
+    head.setAttribute('aria-expanded', String(v));
+  };
+  setOpen(!matchMedia('(max-width: 700px), (max-height: 500px)').matches);
+  const touchBtn = { ...btnStyle, minHeight: '34px' };
   const panel = h('div', {
     style: {
-      position: 'fixed', left: '8px', bottom: '8px', zIndex: '100000', maxWidth: 'min(560px, calc(100vw - 16px))',
+      position: 'fixed', zIndex: '100000',
+      // Clear of the battle controls along the bottom, inside the notch/home-bar insets.
+      left: 'calc(8px + env(safe-area-inset-left, 0px))', bottom: 'calc(72px + env(safe-area-inset-bottom, 0px))',
+      maxWidth: 'min(560px, calc(100vw - 16px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)))',
+      maxHeight: 'calc(100% - 96px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px))', overflow: 'auto',
       background: 'rgba(0,0,0,0.85)', color: '#ddd', font: '11px/1.35 ui-monospace, Consolas, monospace',
-      padding: '8px', borderRadius: '8px', pointerEvents: 'auto',
+      padding: '6px 8px 8px', borderRadius: '8px', pointerEvents: 'auto', boxSizing: 'border-box',
     },
   },
-  h('div', { style: { fontWeight: '700', color: '#fc6', marginBottom: '4px' } }, 'Clashborn debug · press F (or Flicker!) the moment you see it'),
-  live, toggleRow,
+  head,
+  body,
   h('div', null,
-    h('button', { style: { ...btnStyle, background: '#a60', color: '#fff' }, onclick: mark }, 'Flicker!'),
-    h('button', { style: { ...btnStyle, background: '#246', color: '#fff' }, onclick: copy }, 'Copy report'),
+    h('button', { style: { ...touchBtn, background: '#a60', color: '#fff' }, onclick: mark }, 'Flicker!'),
+    h('button', { style: { ...touchBtn, background: '#246', color: '#fff' }, onclick: copy }, 'Copy report'),
   ),
   status);
   document.body.append(panel);

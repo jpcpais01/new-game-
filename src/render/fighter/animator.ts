@@ -28,6 +28,24 @@ const hipL = new Vector3();
 const hipR = new Vector3();
 const ease = (t: number) => t * t * (3 - 2 * t);
 
+/**
+ * Overlapping action: how quickly each joint follows its target relative to
+ * the body's spring (and how much it overshoots). The core leads, the head
+ * and the arms trail it out to the hands, so motion ripples outwards like a
+ * whip instead of every joint arriving at once.
+ */
+const LAG = new Float32Array(POSE_SIZE).fill(1);
+const SNAP = new Float32Array(POSE_SIZE).fill(1);
+{
+  const set = (j: number, w: number, z = 1) => { for (let a = 0; a < 3; a++) { LAG[j * 3 + a] = w; SNAP[j * 3 + a] = z; } };
+  set(J.HIPS, 1.12); set(J.SPINE, 1.06); set(J.CHEST, 1); set(J.NECK, 0.88, 0.95); set(J.HEAD, 0.78, 0.9);
+  for (const [c, u, f, h] of [[J.CLAV_L, J.UARM_L, J.FARM_L, J.HAND_L], [J.CLAV_R, J.UARM_R, J.FARM_R, J.HAND_R]]) {
+    set(c, 0.96); set(u, 0.92, 0.95); set(f, 0.85, 0.9); set(h, 0.76, 0.85);
+  }
+  for (const j of [J.THIGH_L, J.SHIN_L, J.FOOT_L, J.THIGH_R, J.SHIN_R, J.FOOT_R]) set(j, 1.05);
+  LAG[HIPS_X] = LAG[HIPS_Y] = 1.1;
+}
+
 /** Anims whose motion needs the off hand free, so a two-handed grip lets go. */
 const FREE_OFFHAND = new Set(['roar', 'castBig', 'cast', 'bash', 'blink', 'throw', 'shoot']);
 const HOLDABLE = new Set<string>(['dagger', 'parry', 'xbow', 'knives', 'chakram']);
@@ -68,6 +86,8 @@ export class Animator {
   private lastAction: unknown = null;
   private flinch = 0;
   private runBlend = 0;
+  /** How strongly the core leads the limbs this frame (1 = normal, more during strikes). */
+  private lead = 1;
   /** World position the head looks at (the opponent's head), if any. */
   readonly lookAt = new Vector3();
   hasLookAt = false;
@@ -82,11 +102,18 @@ export class Animator {
   private readonly xbow: CrossbowRig | null;
   private readonly xbowWant: XbowWant = { side: 'L', aim: 1, low: 1, loaded: true };
 
+  /** Upper lid bones (they turn about the eye to blink) and the blink clock. */
+  private readonly lids: Object3D[];
+  private blinkAt = 1 + Math.random() * 3;
+  private blinkT = 9;
+  private lidClose = 0;
+
   constructor(private readonly rig: Rig, private readonly form: BodyForm) {
     this.pose.set(stance(rig.look.grip, rig.look.offhand, form));
     this.bow = BowRig.from(rig);
     this.holder = Holder.from(rig);
     this.xbow = CrossbowRig.from(rig);
+    this.lids = ['lidL', 'lidR'].map((k) => rig.tags.get(k)).filter((b): b is Object3D => !!b);
   }
 
   private get ready(): Pose { return stance(this.rig.look.grip, this.rig.look.offhand, this.form); }
@@ -144,6 +171,28 @@ export class Animator {
     this.computeTarget(f, over, winner, dt);
     this.integrate(dt);
     this.apply(f, dt);
+    this.blink(f, dt);
+  }
+
+  /** Blinks now and then (sometimes twice), squeezes the eyes shut on hits, droops when stunned, closes on a knockout. */
+  private blink(f: Fighter, dt: number): void {
+    if (!this.lids.length) return;
+    this.blinkT += dt;
+    if (this.time > this.blinkAt) {
+      this.blinkT = 0;
+      this.blinkAt = this.time + (Math.random() < 0.2 ? 0.28 : 1.8 + Math.random() * 3.2);
+    }
+    const b = this.blinkT;
+    let want = b < 0.06 ? b / 0.06 : b < 0.16 ? 1 - (b - 0.06) / 0.1 : 0;
+    want = Math.max(want, this.flinch * 0.85, getStatus(f, 'stun') ? 0.55 : 0, f.alive ? 0 : 1);
+    // Lids close fast and open a little slower.
+    this.lidClose += (want - this.lidClose) * Math.min(1, dt * (want > this.lidClose ? 40 : 22));
+    for (const lid of this.lids) {
+      const base = lid.userData.base as Quaternion | undefined;
+      if (!base) continue;
+      _q2.setFromAxisAngle(_Z, -this.lidClose * (lid.userData.shut as number));
+      lid.quaternion.copy(base).multiply(_q2);
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -158,6 +207,7 @@ export class Animator {
     t.set(ready);
     this.omega = m.omega;
     this.zeta = m.zeta;
+    this.lead = 1;
     this.plant = 1;
     this.roll = 0;
     this.flinch = Math.max(0, this.flinch - dt * 3);
@@ -286,6 +336,7 @@ export class Animator {
       const k = clamp(a.t / a.windup, 0, 1);
       lerpPose(t, ready, W, ease(Math.min(1, k * 1.25)));
       this.omega = m.omega * (ab.heavy ? 0.9 : 1.3);
+      this.lead = 1.3;
       if (ab.heavy && k > 0.6) {
         // Telegraph: the body trembles with stored power before a heavy blow.
         const tr = (k - 0.6) * 0.06;
@@ -307,6 +358,8 @@ export class Animator {
         lerpPose(t, W, S, easeOutCubic(k));
         this.omega = Math.max(m.omega * 3, 40);
         this.zeta = Math.min(this.zeta, 0.6);
+        // The hips and chest fire first; the weapon arm cracks through after them.
+        this.lead = 1.8;
       }
       if (evade) {
         const p = clamp(a.t / a.active, 0, 1);
@@ -489,13 +542,18 @@ export class Animator {
   private integrate(dt: number): void {
     const n = Math.max(1, Math.ceil(dt * 120));
     const h = dt / n;
-    const w = this.omega, w2 = w * w, c = 2 * this.zeta * w;
     const x = this.pose, v = this.vel, t = this.target;
-    for (let s = 0; s < n; s++) {
-      for (let i = 0; i < POSE_SIZE; i++) {
-        v[i] += (w2 * (t[i] - x[i]) - c * v[i]) * h;
-        x[i] += v[i] * h;
+    const lead = this.lead;
+    for (let i = 0; i < POSE_SIZE; i++) {
+      const w = this.omega * (lead === 1 ? LAG[i] : Math.pow(LAG[i], lead)), w2 = w * w;
+      const c = 2 * this.zeta * SNAP[i] * w;
+      let vi = v[i], xi = x[i];
+      const ti = t[i];
+      for (let s = 0; s < n; s++) {
+        vi += (w2 * (ti - xi) - c * vi) * h;
+        xi += vi * h;
       }
+      v[i] = vi; x[i] = xi;
     }
   }
 

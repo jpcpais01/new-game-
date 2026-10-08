@@ -23,6 +23,9 @@ export class FightCamera {
   /** Player zoom preference (battle framing only). */
   zoom: Zoom = 'normal';
   private zoomK = 1;
+  /** Share of the screen height the picture is slid up by, to clear UI along the bottom. */
+  private lift = 0;
+  private liftTarget = 0;
 
   constructor(aspect: number) {
     this.camera = new PerspectiveCamera(30, aspect, 0.1, 400);
@@ -34,6 +37,23 @@ export class FightCamera {
     this.camera.fov = aspect < 1 ? 46 : aspect < 1.4 ? 36 : 30;
     this.camera.updateProjectionMatrix();
     STYLE.uAspect.value = 1 / Math.max(0.01, aspect);
+  }
+
+  /**
+   * Slides the picture up by `frac` of the screen height (a view offset, so the
+   * perspective doesn't change), e.g. to keep the duel above a phone's bottom sheet.
+   */
+  setLift(frac: number, snap = false): void {
+    this.liftTarget = clamp(frac, 0, 0.45);
+    if (snap) this.applyLift(this.liftTarget);
+  }
+
+  private applyLift(v: number): void {
+    if (v < 1e-3) v = 0;
+    if (v === this.lift) return;
+    this.lift = v;
+    if (v === 0) this.camera.clearViewOffset();
+    else this.camera.setViewOffset(1, 1, 0, v, 1, 1);
   }
 
   shake(amount: number): void {
@@ -51,6 +71,7 @@ export class FightCamera {
     const sep = Math.abs(ax - bx);
     // Close zoom crops tighter around the duel; distant shows the whole arena.
     this.zoomK = damp(this.zoomK, ZOOM_FACTOR[this.zoom], 4, dt);
+    this.applyLift(Math.abs(this.liftTarget - this.lift) < 1e-3 ? this.liftTarget : damp(this.lift, this.liftTarget, 5, dt));
     const zk = this.zoomK + (1 - this.zoomK) * this.showcase;
     // Both fighters always stay in frame: close zoom only trims the margins
     // and the height headroom, distant pulls the whole shot back.

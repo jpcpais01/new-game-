@@ -19,6 +19,7 @@ import { Results } from './ui/results';
 import { setupPhoneFullscreen } from './ui/fullscreen';
 import { Creator } from './ui/creator';
 import { CharacterStage } from './render/characterStage';
+import { detailFor, setBodyDetail } from './render/fighter/body';
 import {
   generateRival, loadCharacter, newCharacter, randomName, saveCharacter, type PlayerCharacter,
 } from './character/profile';
@@ -36,6 +37,7 @@ if (ARENA_IDS.includes(params.get('arena') as ArenaId)) settings.arena = params.
 if (ZOOM_ORDER.includes(params.get('zoom') as Zoom)) settings.zoom = params.get('zoom') as Zoom;
 const resolveQuality = (q: MenuSettings['quality']): Quality => (q === 'auto' ? detectQuality() : q);
 
+setBodyDetail(detailFor(resolveQuality(settings.quality)));
 const renderer = new GameRenderer(canvas, resolveQuality(settings.quality));
 const scene = new Scene();
 const cam = new FightCamera(renderer.aspect);
@@ -154,6 +156,7 @@ function applySettings(s: MenuSettings): void {
   if (s.quality !== prevQuality) {
     const q = resolveQuality(s.quality);
     renderer.setQuality(q);
+    setBodyDetail(detailFor(q));
     renderer.setupPasses(scene, cam.camera);
   }
   if (s.quality !== prevQuality || s.arena !== prevArena) void loadArena(s.arena);
@@ -188,10 +191,11 @@ function openCreator(): void {
   results.hide();
   hud.show(false);
   for (const f of view.fighters) if (f) f.group.visible = false;
-  layoutStage();
   stage.snap(cam.camera);
   stage.show(true);
   creator.open(player ?? guest, !player);
+  cam.setLift(0, true);
+  layoutStage();
 }
 
 function closeCreator(): void {
@@ -202,13 +206,15 @@ function closeCreator(): void {
 
 /** Keeps the character clear of the creator panel (side panel, or bottom sheet on phones). */
 function layoutStage(): void {
+  const p = creator.panel;
   const w = window.innerWidth, hgt = window.innerHeight;
-  if (hgt > 520 && (w <= 760 || hgt > w)) {
+  if (!p || !w || !hgt) return;
+  // Offsets ignore the panel's slide-in transform, so the camera aims at where it settles.
+  if (p.offsetTop > hgt * 0.25) {
     stage.screenX = 0;
-    stage.bottomInset = Math.min(0.62, (hgt * 0.56 + 16) / hgt);
+    stage.bottomInset = Math.min(0.62, Math.max(0, (hgt - p.offsetTop + 8) / hgt));
   } else {
-    const panel = (hgt <= 520 ? Math.min(400, w * 0.52) : Math.min(440, w * 0.44)) + 32;
-    stage.screenX = ((w - panel) / 2 / w) * 2 - 1;
+    stage.screenX = (Math.max(0, p.offsetLeft - 16) / 2 / w) * 2 - 1;
     stage.bottomInset = 0;
   }
 }
@@ -255,6 +261,8 @@ function frame(now: number): void {
   renderer.trackFrame(realDt);
 
   if (state === 'create') layoutStage();
+  // On phones in portrait the loadout sheet covers the lower half: lift the duel above it.
+  else cam.setLift(state === 'menu' ? Math.max(0, menu.bottomCover - 0.34) : 0);
   const simulating = state === 'battle' || state === 'ending' || state === 'results';
   if (state === 'intro' && !paused) {
     phaseT += realDt;
