@@ -673,18 +673,67 @@ button:focus-visible { outline: 2px solid var(--ember-hi); outline-offset: 2px; 
   border: 1.5px solid var(--ink); pointer-events: none !important;
 }
 
-/* Build label: faint, tucked into the bottom-left edge, never takes a tap. */
+/* Build label and patch notes button, bottom-left. The label is faint and never takes
+   a tap; the button is a small keycap. Both sit under every panel (first in #ui). */
 #ui > .version {
-  position: absolute; left: calc(6px + var(--safe-l)); bottom: calc(3px + var(--safe-b));
+  position: absolute; left: calc(8px + var(--safe-l)); bottom: calc(8px + var(--safe-b));
+  display: flex; align-items: center; gap: 6px;
+  pointer-events: none;
+}
+.version-txt {
   font: 700 9.5px/1 var(--font); font-stretch: 85%; letter-spacing: 0.06em;
   color: rgba(255, 244, 228, 0.42); -webkit-text-stroke: 2.5px rgba(23, 15, 29, 0.55); paint-order: stroke fill;
-  white-space: nowrap; pointer-events: none;
+  white-space: nowrap;
 }
+.version .notes-btn {
+  position: relative; order: -1; pointer-events: auto;
+  width: 30px; height: 30px; min-height: 0; padding: 0; border-radius: 9px;
+  color: var(--muted); box-shadow: var(--hi), 0 2px 0 var(--ink);
+}
+.notes-btn .ic { width: 17px; height: 17px; }
+.notes-btn:hover { color: var(--text); }
+.notes-btn:active { box-shadow: var(--hi), 0 0 0 var(--ink); }
+.notes-btn.unseen { color: var(--text); }
+.notes-btn.unseen::after {
+  content: ''; position: absolute; top: -4px; right: -4px; width: 9px; height: 9px; border-radius: 50%;
+  background: var(--ember); border: 2px solid var(--ink);
+}
+/* The menu layer and its bottom row span the screen; only their contents should take taps. */
+#ui > .menu, .menu-bottom { pointer-events: none; }
+.menu-bottom > * { pointer-events: auto; }
+/* In battle only the label shows, tucked into the edge. */
+#ui:has(> .hud:not([hidden])) > .version { left: calc(6px + var(--safe-l)); bottom: calc(3px + var(--safe-b)); }
+#ui:has(> .hud:not([hidden])) .notes-btn { display: none; }
 /* Portrait: the menu's bottom row and the creator sheet fill the bottom edge, so
-   outside battles the label moves to the top-left, clear of the centred title. */
+   outside battles it moves to the top-left, the button under the label, clear of the title. */
 @media (orientation: portrait) {
-  #ui:not(:has(> .hud:not([hidden]))) > .version { top: calc(4px + var(--safe-t)); bottom: auto; }
+  #ui:not(:has(> .hud:not([hidden]))) > .version {
+    top: calc(6px + var(--safe-t)); bottom: auto; left: calc(6px + var(--safe-l));
+    flex-direction: column; align-items: flex-start; gap: 5px;
+  }
+  #ui:not(:has(> .hud:not([hidden]))) .notes-btn { order: 0; }
 }
+
+/* Patch notes sheet */
+.notes-modal { width: min(560px, 100%); }
+.notes-body { display: grid; gap: 10px; align-content: start; }
+.note {
+  padding: 10px 12px 11px; border-radius: 13px;
+  background: rgba(23, 15, 29, 0.35); border: 2px solid var(--ink);
+}
+.note.latest { background: linear-gradient(180deg, rgba(255, 180, 60, 0.13), rgba(23, 15, 29, 0.3) 70%); box-shadow: inset 0 0 0 1.5px rgba(255, 180, 60, 0.35); }
+.note-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.note-ver {
+  display: inline-block; transform: skewX(var(--slant)); flex: none;
+  padding: 2px 8px; border-radius: 5px; font-size: 11.5px; font-weight: 800; letter-spacing: 0.04em;
+  color: var(--text); background: var(--plate-3); box-shadow: 0 2px 0 var(--ink);
+}
+.note.latest .note-ver { color: var(--ink); background: linear-gradient(180deg, var(--ember-hi), var(--ember)); }
+.note-title { flex: 1; min-width: 0; font-size: 15px; font-weight: 800; }
+.note-date { font-size: 11px; color: var(--dim); white-space: nowrap; }
+.note ul { margin: 7px 0 0; padding-left: 18px; display: grid; gap: 4px; }
+.note li { font-size: 13px; line-height: 1.4; color: #e6d9e8; }
+.note li::marker { color: var(--ember); }
 
 /* ---------------------------------------------------------------- character creator */
 /* #ui > * turns pointer events on; the full-screen layer must let drags reach the canvas. */
@@ -1117,6 +1166,7 @@ button:focus-visible { outline: 2px solid var(--ember-hi); outline-offset: 2px; 
 @media (pointer: coarse) {
   .btn, .chip-btn { min-height: 40px; }
   .class-btn { min-height: 44px; }
+  .version .notes-btn { width: 34px; height: 34px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

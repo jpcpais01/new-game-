@@ -1,14 +1,14 @@
 {
   "name": "clashborn",
   "private": true,
-  "version": "0.4.0",
+  "version": "0.6.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run src/sim/battle.test.ts src/sim/ai/ai.test.ts src/gear/skins.test.ts src/render/fighter/handPlan.test.ts",
+    "test": "vitest run src/patchnotes.test.ts src/sim/battle.test.ts src/sim/ai/ai.test.ts src/gear/skins.test.ts src/render/fighter/handPlan.test.ts",
     "sim": "vitest run src/sim/balance.test.ts --disable-console-intercept",
     "duel": "vitest run scripts/duel.test.ts --dir . --disable-console-intercept",
     "icons": "node scripts/icons.mjs",
