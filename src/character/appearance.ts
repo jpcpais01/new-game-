@@ -1,4 +1,5 @@
 import { OUTFIT_IDS, OUTFIT_SKINS, type OutfitId } from './outfits';
+import { SPECIES, SPECIES_IDS, type SpeciesId } from './species';
 
 /**
  * The look of a character: face, hair, colours and outfit. Pure data (no three.js) so
@@ -25,6 +26,9 @@ export type FacialHair = (typeof FACIAL_HAIR)[number];
 export type Marking = (typeof MARKINGS)[number];
 
 export interface Appearance {
+  /** The kind of creature (character/species.ts): silhouette, head, ears, horns, tail. */
+  species: SpeciesId;
+  /** Skin, fur or stone colour. */
   skin: number;
   hairStyle: HairStyle;
   hairColor: number;
@@ -44,10 +48,8 @@ export interface Appearance {
   outfit: OutfitId;
 }
 
-export const SKIN_TONES = [
-  0xffe0c8, 0xf6cfae, 0xf0c49c, 0xe0a87e, 0xc98a5c, 0xae744a, 0x93603c, 0x74492e,
-  0xb8d4e8, 0x9cc79a,
-];
+/** Every species' skin colours (the creator shows the chosen species' own). */
+export const SKIN_TONES = SPECIES_IDS.flatMap((id) => SPECIES[id].skins);
 export const HAIR_COLORS = [
   0x15121c, 0x3a2418, 0x6a3e22, 0x8a5a2b, 0xc8873a, 0xe8c070, 0xd8642a, 0xa8281e,
   0xe9ecff, 0x9aa0b0, 0x4a7cff, 0x58d0a0, 0xc06bff, 0xff7ab6,
@@ -59,7 +61,7 @@ export const OUTFIT_COLORS = [
 ];
 
 export const DEFAULT_APPEARANCE: Appearance = {
-  skin: 0xf0c49c, hairStyle: 'swept', hairColor: 0x3a2418, eyes: 'round', eyeColor: 0x2a3f8a,
+  species: 'kitsu', skin: 0xe8873a, hairStyle: 'swept', hairColor: 0xf4efe6, eyes: 'round', eyeColor: 0xa8702a,
   brows: 'soft', mouth: 'neutral', nose: 'button', jaw: 'soft', facialHair: 'none', marking: 'none',
   primary: 0x2f5be0, secondary: 0xf3c24f, outfit: 'tunic',
 };
@@ -67,30 +69,46 @@ export const DEFAULT_APPEARANCE: Appearance = {
 const pick = <T>(arr: readonly T[], r: () => number): T => arr[Math.floor(r() * arr.length) % arr.length];
 
 /** A coherent random look (used for "Randomize" and generated opponents). */
-export function randomAppearance(r: () => number = Math.random): Appearance {
-  const fantasy = r() < 0.12;
-  const skin = fantasy ? pick(SKIN_TONES.slice(8), r) : pick(SKIN_TONES.slice(0, 8), r);
-  // Natural hair most of the time, dyed or fantasy hair sometimes.
-  const hairColor = r() < 0.72 ? pick(HAIR_COLORS.slice(0, 8), r) : pick(HAIR_COLORS.slice(8), r);
+export function randomAppearance(r: () => number = Math.random, species?: SpeciesId): Appearance {
+  const sp = SPECIES[species ?? pick(SPECIES_IDS, r)];
+  // The species' own colours most of the time, an odd one out sometimes.
+  const skin = r() < 0.9 ? pick(sp.skins, r) : pick(SKIN_TONES, r);
+  const hairColor = r() < 0.7 ? pick(sp.hair, r) : pick(HAIR_COLORS, r);
   const primary = pick(OUTFIT_COLORS, r);
   let secondary = pick(OUTFIT_COLORS, r);
   if (secondary === primary) secondary = 0xf3c24f;
   return {
+    species: sp.id,
     skin,
     hairStyle: pick(HAIR_STYLES, r),
     hairColor,
     eyes: r() < 0.08 ? 'glow' : pick(EYE_STYLES.slice(0, 4), r),
-    eyeColor: pick(EYE_COLORS, r),
+    eyeColor: r() < 0.45 ? sp.eyes : pick(EYE_COLORS, r),
     brows: pick(BROW_STYLES.slice(0, 4), r),
     mouth: pick(MOUTH_STYLES, r),
     nose: pick(NOSE_STYLES, r),
     jaw: pick(JAW_STYLES, r),
-    facialHair: r() < 0.55 ? 'none' : pick(FACIAL_HAIR.slice(1), r),
+    facialHair: !sp.beards || r() < 0.6 ? 'none' : pick(FACIAL_HAIR.slice(1), r),
     marking: r() < 0.6 ? 'none' : pick(MARKINGS.slice(1), r),
     primary,
     secondary,
     // Some rivals show up in a character skin.
     outfit: r() < 0.3 ? pick(OUTFIT_SKINS, r) : 'tunic',
+  };
+}
+
+/**
+ * Switches a look to another species: the skin and eyes move into the new
+ * species' range unless they already fit it; everything else stays.
+ */
+export function withSpecies(a: Appearance, id: SpeciesId): Appearance {
+  if (a.species === id) return a;
+  const from = SPECIES[a.species], to = SPECIES[id];
+  return {
+    ...a,
+    species: id,
+    skin: to.skins.includes(a.skin) ? a.skin : to.skins[Math.max(0, from.skins.indexOf(a.skin))] ?? to.skins[0],
+    eyeColor: a.eyeColor === from.eyes ? to.eyes : a.eyeColor,
   };
 }
 
@@ -102,6 +120,7 @@ export function sanitizeAppearance(raw: unknown): Appearance {
   const a = (raw && typeof raw === 'object' ? raw : {}) as Partial<Record<keyof Appearance, unknown>>;
   const d = DEFAULT_APPEARANCE;
   return {
+    species: oneOf(a.species, SPECIES_IDS, d.species),
     skin: isColor(a.skin) ? a.skin : d.skin,
     hairStyle: oneOf(a.hairStyle, HAIR_STYLES, d.hairStyle),
     hairColor: isColor(a.hairColor) ? a.hairColor : d.hairColor,

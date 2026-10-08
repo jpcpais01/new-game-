@@ -7,7 +7,6 @@ import { getStatus, stacksOf, type Fighter } from '../../sim/fighter';
 import { glow } from '../materials';
 import type { Particles } from '../fx/particles';
 import { Animator } from './animator';
-import { bodyForm } from './forms';
 import { gearGeo } from './geo';
 import { lookFor, type FighterLook } from './look';
 import { buildRig, type Rig } from './rig';
@@ -96,7 +95,7 @@ export class FighterView {
     this.look = look;
     this.rig = buildRig(look);
     this.group = this.rig.root;
-    this.anim = new Animator(this.rig, bodyForm(look.form));
+    this.anim = new Animator(this.rig, this.rig.metrics.form);
     // Team identity: coloured rim light and a glowing ring at the feet, so
     // mirror matches stay readable.
     const teamColor = team === 0 ? 0x4d8bff : 0xff4d5e;

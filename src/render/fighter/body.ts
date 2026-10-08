@@ -52,13 +52,29 @@ export function bodyColors(api: RigBuildApi): PaintColors {
     eyes: a.eyes,
     sash: a.accent,
     mark: a.accent,
+    ...speciesColors(a.species, a.skin, a.hair),
     ...skin,
   };
 }
 
+/** Horn, fur-tip, spirit and crystal colours of a species. */
+export function speciesColors(species: string | undefined, skin: number, hair: number): Partial<PaintColors> {
+  switch (species) {
+    case 'imp': return { horn: mixHex(0xeee0c8, skin, 0.22) };
+    case 'golem': return { crystal: hair };
+    case 'wisp': return { spirit: mixHex(hair, 0xffffff, 0.15) };
+    case 'kitsu': {
+      // Fox tips are pale on dark fur and darker on pale fur.
+      const l = (((skin >> 16) & 255) * 0.3 + ((skin >> 8) & 255) * 0.59 + (skin & 255) * 0.11) / 255;
+      return { tip: l > 0.82 ? mixHex(skin, 0x3a3440, 0.5) : mixHex(skin, 0xfffaf2, 0.85) };
+    }
+    default: return { horn: 0xeadcbc };
+  }
+}
+
 export function buildBody(api: RigBuildApi, j: Bone[]): void {
   const m = api.metrics;
-  const sculpt = sculptBody(m.form.id, m.form.shape, m.hipH, m.ankleH, detailTier, api.appearance.outfit);
+  const sculpt = sculptBody(m.form.id, m.form.shape, m.hipH, m.ankleH, detailTier, api.appearance.outfit, m.form.species);
   const colors = bodyColors(api);
   const bodySpace = j[J.HIPS].parent!;
   const put = (s: typeof sculpt.torso, chain: readonly number[]) => {

@@ -4,7 +4,7 @@ import {
 } from 'three';
 import { smoothstep } from '../../core/math';
 import {
-  createFighterUniforms, fighterMaterial, glowVertexMaterial, outlineMaterial, type FighterUniforms,
+  createFighterUniforms, fighterMaterial, glowVertexMaterial, inkOutlineMaterial, type FighterUniforms,
 } from '../materials';
 import type { PartSpec } from '../meshBuilder';
 import { buildBody } from './body';
@@ -61,7 +61,7 @@ export interface Rig {
 const AUTHOR_MAT = new MeshBasicMaterial();
 
 function makeMetrics(look: FighterLook): BodyMetrics {
-  const form = bodyForm(look.form);
+  const form = bodyForm(look.form, look.species);
   const s = form.shape;
   const ankleH = 0.085 * s.footS;
   return {
@@ -117,7 +117,7 @@ export function buildRig(look: FighterLook): Rig {
   const spine = joints[J.SPINE] = mk(hips, 0, s.waistLen, 0);
   const chest = joints[J.CHEST] = mk(spine, 0, s.chestLen, 0);
   const neck = joints[J.NECK] = mk(chest, 0.012, s.neckLen, 0);
-  const head = joints[J.HEAD] = mk(neck, 0.018, 0.095 + s.neckR * 0.2, 0);
+  const head = joints[J.HEAD] = mk(neck, 0.018, s.headLift + s.neckR * 0.2, 0);
   const clavY = s.neckLen * 0.8;
   const clavL = joints[J.CLAV_L] = mk(chest, -0.01, clavY, -0.06);
   const uarmL = joints[J.UARM_L] = mk(clavL, 0, 0.01, -(s.shoulderW - 0.06));
@@ -455,7 +455,7 @@ function bake(root: Group, bones: Bone[], u: FighterUniforms): { meshes: Skinned
   const bodyMat = fighterMaterial(u);
   materials.push(bodyMat);
   mkMesh(lit, bodyMat, true);
-  mkMesh(line, outlineMaterial(), false);
+  mkMesh(line, inkOutlineMaterial(), false);
   const gm = glowVertexMaterial();
   materials.push(gm);
   mkMesh(glowB, gm, false);

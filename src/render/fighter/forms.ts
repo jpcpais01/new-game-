@@ -1,10 +1,14 @@
+import { isSpecies, type SpeciesId } from '../../character/species';
 import { FORMS, type BodyShape } from '../../sim/forms';
 import type { FormId } from '../../sim/types';
+import { SPECIES_BODY } from './species';
 
 /**
  * Body forms as the renderer sees them: proportions in metres and movement
- * feel. Proportions come from the sim's FormDef.body (so tuning a form there
- * reshapes it here); muscle, belly and motion are render-only flavour.
+ * feel. The species sets the creature's proportions (render/fighter/
+ * species.ts); the sim's FormDef.body reshapes the build on top (so tuning a
+ * form there reshapes it here); muscle, belly and motion are render-only
+ * flavour.
  */
 
 export interface FormShape {
@@ -39,6 +43,10 @@ export interface FormShape {
   muscle: number;
   /** 0..1 belly volume. */
   belly: number;
+  /** Neck joint to head joint (m): low for heads sunk between the shoulders. */
+  headLift: number;
+  /** 0..1 extra forearm mass (big-fisted creatures). */
+  forePop: number;
 }
 
 export interface FormMotion {
@@ -66,6 +74,7 @@ export interface FormMotion {
 
 export interface BodyForm {
   id: FormId;
+  species: SpeciesId;
   name: string;
   shape: FormShape;
   motion: FormMotion;
@@ -75,7 +84,7 @@ const BASE_SHAPE: FormShape = {
   scale: 1, thigh: 0.43, shin: 0.41, waistLen: 0.12, chestLen: 0.22, neckLen: 0.42,
   upperArm: 0.3, forearm: 0.28, shoulderW: 0.27, hipW: 0.12, chestW: 0.25, waistW: 0.18, chestD: 0.19,
   headR: 0.17, neckR: 0.07, armR: 0.068, foreR: 0.06, thighR: 0.105, calfR: 0.078, handS: 1, footS: 1,
-  muscle: 0.5, belly: 0,
+  muscle: 0.5, belly: 0, headLift: 0.095, forePop: 0,
 };
 const BASE_MOTION: FormMotion = {
   omega: 16, zeta: 0.72, stepTime: 0.26, stepHeight: 0.13, bounce: 0.012, bounceHz: 1.6,
@@ -112,49 +121,68 @@ const FLAVOUR: Record<FormId, { shape: Partial<FormShape>; motion: Partial<FormM
 
 /**
  * Turns the sim's relative BodyShape (all 1 for Balanced) into metres, then
- * applies the render flavour on top.
+ * applies the render flavour and the species' proportions on top.
  */
-function shapeFor(id: FormId): FormShape {
+function shapeFor(id: FormId, species: SpeciesId): FormShape {
   const b: BodyShape = FORMS[id]?.body ?? { height: 1, bulk: 1, shoulders: 1, limbs: 1, head: 1 };
   const f = FLAVOUR[id]?.shape ?? {};
+  const sp = SPECIES_BODY[species];
   const s = { ...BASE_SHAPE };
-  s.scale = b.height;
+  // The form's height difference is kept, softened so tiny creatures stay readable.
+  s.scale = Math.max(0.78, Math.min(1.22, (1 + (b.height - 1) * 0.7) * sp.height));
   // Limb length relative to height; the torso gives some back so the total stays close.
   const L = b.limbs;
-  s.thigh = (f.thigh ?? BASE_SHAPE.thigh) * L;
-  s.shin = (f.shin ?? BASE_SHAPE.shin) * L;
-  s.upperArm = BASE_SHAPE.upperArm * L;
-  s.forearm = BASE_SHAPE.forearm * L;
-  const torso = 1 - (L - 1) * 0.6;
+  s.thigh = (f.thigh ?? BASE_SHAPE.thigh) * L * sp.legs;
+  s.shin = (f.shin ?? BASE_SHAPE.shin) * L * sp.legs;
+  s.upperArm = BASE_SHAPE.upperArm * L * sp.arms;
+  s.forearm = BASE_SHAPE.forearm * L * sp.arms;
+  const torso = (1 - (L - 1) * 0.6) * sp.torso;
   s.waistLen = BASE_SHAPE.waistLen * torso;
   s.chestLen = BASE_SHAPE.chestLen * torso;
   s.neckLen = (f.neckLen ?? BASE_SHAPE.neckLen) * torso;
   // Bulk thickens everything, shoulders widen the frame.
   const k = b.bulk;
-  for (const key of ['armR', 'foreR', 'thighR', 'calfR', 'chestD', 'neckR', 'waistW'] as const) s[key] = (f[key] ?? BASE_SHAPE[key]) * k;
-  s.chestW = BASE_SHAPE.chestW * Math.pow(k, 0.7) * Math.pow(b.shoulders, 0.5);
-  s.shoulderW = BASE_SHAPE.shoulderW * b.shoulders * Math.pow(k, 0.35);
-  s.hipW = (f.hipW ?? BASE_SHAPE.hipW) * Math.pow(k, 0.5);
+  for (const key of ['thighR', 'calfR', 'chestD', 'neckR'] as const) s[key] = (f[key] ?? BASE_SHAPE[key]) * k * sp.bulk;
+  for (const key of ['armR', 'foreR'] as const) s[key] = BASE_SHAPE[key] * k * sp.limbBulk;
+  s.foreR *= 1 + sp.forePop * 0.45;
+  s.waistW = (f.waistW ?? BASE_SHAPE.waistW) * k * sp.waist;
+  s.chestW = BASE_SHAPE.chestW * Math.pow(k, 0.7) * Math.pow(b.shoulders, 0.5) * sp.chest;
+  s.shoulderW = BASE_SHAPE.shoulderW * b.shoulders * Math.pow(k, 0.35) * sp.shoulders;
+  s.hipW = (f.hipW ?? BASE_SHAPE.hipW) * Math.pow(k, 0.5) * sp.hips;
+  // Arms hang clear of the ribcage whatever the mix of species and form.
+  s.shoulderW = Math.max(s.shoulderW, s.chestW * 0.9 + s.armR * 0.7);
   // The head follows the body's mass a little, so big builds don't end up
-  // pin-headed and small ones keep a lighter head; b.head keeps each form's
-  // own proportion on top of that.
-  s.headR = BASE_SHAPE.headR * b.head * Math.pow(k, 0.45) * Math.pow(b.shoulders, 0.15);
-  s.handS = (f.handS ?? 1) * Math.pow(k, 0.3);
-  s.footS = (f.footS ?? 1) * Math.pow(k, 0.25);
-  s.muscle = f.muscle ?? BASE_SHAPE.muscle;
-  s.belly = f.belly ?? BASE_SHAPE.belly;
+  // pin-headed and small ones keep a lighter head; the species sets the real
+  // head-to-body ratio.
+  s.headR = BASE_SHAPE.headR * Math.pow(b.head, 0.6) * Math.pow(k, 0.3) * sp.head;
+  s.handS = (f.handS ?? 1) * Math.pow(k, 0.3) * sp.hands;
+  s.footS = (f.footS ?? 1) * Math.pow(k, 0.25) * sp.feet;
+  s.muscle = ((f.muscle ?? BASE_SHAPE.muscle) + sp.muscle) / 2;
+  s.belly = Math.min(1, (f.belly ?? BASE_SHAPE.belly) * 0.6 + sp.belly);
+  s.headLift = sp.headLift;
+  s.forePop = sp.forePop;
   return s;
+}
+
+function motionFor(id: FormId, species: SpeciesId): FormMotion {
+  const m: FormMotion = { ...BASE_MOTION, ...FLAVOUR[id]?.motion };
+  // The species' own way of moving, met halfway by the form's.
+  const sp = SPECIES_BODY[species].motion;
+  for (const key of Object.keys(sp) as (keyof FormMotion)[]) m[key] = (m[key] + sp[key]!) / 2;
+  return m;
 }
 
 const formCache = new Map<string, BodyForm>();
 
-/** Resolves a form by id; unknown ids fall back to Balanced. */
-export function bodyForm(id: string | undefined): BodyForm {
+/** Resolves a form and species; unknown ids fall back to Balanced and the default species. */
+export function bodyForm(id: string | undefined, species?: string): BodyForm {
   const fid = (id && id in FORMS ? id : 'balanced') as FormId;
-  let f = formCache.get(fid);
+  const sid: SpeciesId = isSpecies(species) ? species : 'kitsu';
+  const key = `${fid}:${sid}`;
+  let f = formCache.get(key);
   if (!f) {
-    f = { id: fid, name: FORMS[fid].name, shape: shapeFor(fid), motion: { ...BASE_MOTION, ...FLAVOUR[fid]?.motion } };
-    formCache.set(fid, f);
+    f = { id: fid, species: sid, name: FORMS[fid].name, shape: shapeFor(fid, sid), motion: motionFor(fid, sid) };
+    formCache.set(key, f);
   }
   return f;
 }

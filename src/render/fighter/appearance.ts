@@ -1,10 +1,11 @@
 import { Bone, BufferGeometry, Euler, Float32BufferAttribute, Mesh, MeshBasicMaterial, Object3D, Quaternion, SphereGeometry, TorusGeometry, Vector3 } from 'three';
 import type { Appearance } from '../../character/appearance';
 import type { PartSpec } from '../meshBuilder';
-import { bodyDetail } from './body';
+import { bodyDetail, speciesColors } from './body';
 import type { RigDecorator } from './look';
 import type { RigPartSpec } from './rig';
-import { EYE, EYE_LIDS, HEAD_R, sculptHead, type FaceFeature } from './sculpt/head';
+import { EYE_LIDS, eyeOf, faceOf, HEAD_R, sculptHead, type FaceFeature } from './sculpt/head';
+import { SPECIES_HEAD } from './species';
 import { M, paintedGeometry, type PaintColors } from './sculpt/paint';
 import { noise3 } from './sculpt/sdf';
 
@@ -125,7 +126,9 @@ export const LOOK_HEAD_R = HEAD_R;
 export function headLook(a: Appearance): RigDecorator {
   return (api) => {
     const g = api.group(api.sockets.skull);
-    g.scale.setScalar(api.metrics.headR / LOOK_HEAD_R);
+    const k = api.metrics.headR / LOOK_HEAD_R;
+    const [sx, sy, sz] = (SPECIES_HEAD[a.species] ?? SPECIES_HEAD.kitsu).scale;
+    g.scale.set(k * sx, k * sy, k * sz);
     addHeadLook(g, LOOK_HEAD_R, 0, a, {
       noHair: api.isHidden('hair'),
       noEars: api.isHidden('ears'),
@@ -140,7 +143,49 @@ function headColors(a: Appearance): PaintColors {
   return {
     skin: a.skin, shirt: a.primary, trim: a.secondary, pants: a.primary, boot: a.primary, wrap: a.secondary,
     hair: a.hairColor, eyes: a.eyeColor, sash: a.secondary, mark: a.secondary,
+    ...speciesColors(a.species, a.skin, a.hairColor),
   };
+}
+
+/**
+ * Species markings painted into the face's materials: a spirit's glowing
+ * tear streaks and brow sigil, a golem's cracks, a fox's pale muzzle and
+ * cheek tufts. Coordinates in skull radii.
+ */
+function speciesPaint(a: Appearance) {
+  const S = HEAD_R;
+  const eye = eyeOf(a.species);
+  const seg = (Y: number, Z: number, y0: number, z0: number, y1: number, z1: number) => {
+    const dy = y1 - y0, dz = z1 - z0;
+    const t = Math.max(0, Math.min(1, ((Y - y0) * dy + (Z - z0) * dz) / (dy * dy + dz * dz)));
+    return Math.hypot(Y - (y0 + dy * t), Z - (z0 + dz * t));
+  };
+  switch (a.species) {
+    case 'wisp':
+      return (m: number, x: number, y: number, z: number) => {
+        if (m !== M.SKIN || x / S < 0.3) return m;
+        const Y = y / S, AZ = Math.abs(z) / S;
+        const y0 = eye.y - eye.r - 0.07;
+        if (seg(Y, AZ, y0, eye.z + 0.05, y0 - 0.24, eye.z + 0.11) < 0.034) return M.SPIRIT;
+        if (Math.abs(Y - 0.5) / 0.13 + AZ / 0.07 < 1) return M.SPIRIT;
+        return m;
+      };
+    case 'golem':
+      return (m: number, x: number, y: number, z: number) => {
+        if (m !== M.SKIN) return m;
+        const n = noise3(x * 30, y * 30, z * 30);
+        return Math.abs(n) < 0.022 ? M.SKIN_DARK : m;
+      };
+    case 'kitsu':
+      return (m: number, x: number, y: number, z: number) => {
+        if (m !== M.SKIN) return m;
+        const X = x / S, Y = y / S, AZ = Math.abs(z) / S;
+        if (X > 0.48 && Y < -0.43 - Math.max(0, AZ - 0.2) * 0.4) return M.TIP;
+        if (AZ > 0.74 && Y < -0.42) return M.TIP;
+        return m;
+      };
+  }
+  return undefined;
 }
 
 /** 1 inside a shape, 0 outside, with a soft edge `w` wide (d = signed distance, negative inside). */
@@ -153,6 +198,7 @@ const soft = (d: number, w = 0.03) => Math.max(0, Math.min(1, 0.5 - d / w));
  */
 function faceBlend(a: Appearance) {
   const S = HEAD_R;
+  const eye = eyeOf(a.species);
   const blush = mix(a.skin, 0xff6470, 0.55), lip = mix(a.skin, 0xb84a58, 0.4);
   const stubble = mix(a.skin, a.hairColor, 0.42), scar = mix(a.skin, 0x9a4646, 0.45), shave = mix(a.skin, a.hairColor, 0.3);
   const segD = (Y: number, Z: number, y0: number, z0: number, y1: number, z1: number) => {
@@ -193,7 +239,7 @@ function faceBlend(a: Appearance) {
         break;
       case 'tattoo': {
         if (Z < 0) {
-          const dy = Y - EYE.y, dz = Z + EYE.z;
+          const dy = Y - eye.y, dz = Z + eye.z;
           const rr = Math.hypot(dy, dz), ang = Math.atan2(dy, -dz);
           const arc = ang > -2.2 && ang < 0.6 ? Math.abs(rr - 0.32) - 0.022 : 1;
           const line = Y < -0.3 && Y > -0.62 ? Math.abs(dz + 0.04) - 0.02 : 1;
@@ -287,16 +333,22 @@ export function addHeadLook(head: Object3D, r: number, headY: number, a: Appeara
   grp.position.set(0, headY, 0);
   grp.scale.setScalar(k);
   head.add(grp);
+  a = faceOf(a);
+  const eye = eyeOf(a.species);
+  const spec = SPECIES_HEAD[a.species] ?? SPECIES_HEAD.kitsu;
   const sc = sculptHead(a, { noHair: opts.noHair, noEars: opts.noEars }, bodyDetail());
   const colors = headColors(a);
+  // Spirits' hair burns with their own light.
+  const hairPaint = spec.hairGlow ? { tweak: (m: number) => (m === M.HAIR || m === M.HAIR_DARK ? M.SPIRIT : m) } : {};
 
-  part(grp, paintedGeometry(sc.face, colors, { blend: faceBlend(a), wash: 0.55, edge: 0.4 }), painted);
+  part(grp, paintedGeometry(sc.face, colors, { blend: faceBlend(a), tweak: speciesPaint(a), wash: 0.55, edge: 0.4 }), painted);
+  if (sc.horns) part(grp, paintedGeometry(sc.horns, colors), painted);
   // Brows and the mouth line: crisp shapes on the skin.
   for (const f of sc.features) {
     const color = f.kind === 'brow' ? mix(a.hairColor, 0x0c0a12, 0.3) : mix(a.skin, 0x3a1418, 0.72);
     part(grp, featureTube(f), { color, gloss: f.kind === 'brow' ? 0.05 : 0.25, outline: false });
   }
-  if (sc.hair) part(grp, paintedGeometry(sc.hair, colors), painted);
+  if (sc.hair) part(grp, paintedGeometry(sc.hair, colors, hairPaint), painted);
   if (sc.facial) part(grp, paintedGeometry(sc.facial, colors), painted);
   for (const t of sc.tails) {
     const pos: V3 = [t.root[0] * HEAD_R, t.root[1] * HEAD_R, t.root[2] * HEAD_R];
@@ -304,33 +356,35 @@ export function addHeadLook(head: Object3D, r: number, headY: number, a: Appeara
     if (opts.cloth) b = opts.cloth(grp, pos, t.stiffness);
     else { b = new Bone(); b.position.set(...pos); grp.add(b); }
     cloth.push(b);
-    part(b, paintedGeometry(t.mesh, colors), painted);
+    part(b, paintedGeometry(t.mesh, colors, hairPaint), painted);
   }
 
   // Eyes: glossy eyeballs with layered irises, looking a touch outwards,
   // under smooth lids with a lash line along the upper edge.
-  const er = EYE.r * HEAD_R;
+  const er = eye.r * HEAD_R;
   const lids = EYE_LIDS[a.eyes];
   const lidR = er * 1.08;
   const skinLid = mix(a.skin, 0x8a5058, 0.1);
   const lash = mix(a.hairColor, 0x0a0810, 0.75);
   for (const s of [-1, 1]) {
-    const c: V3 = [EYE.x * HEAD_R, EYE.y * HEAD_R, s * EYE.z * HEAD_R];
+    const c: V3 = [eye.x * HEAD_R, eye.y * HEAD_R, s * eye.z * HEAD_R];
     _dir.set(1, -0.04, s * 0.14).normalize();
     _q.setFromUnitVectors(_up, _dir);
     const cap = (rad: number, ang: number, spec: PartSpec) => { part(grp, sph(rad, ang), spec, c).quaternion.copy(_q); };
     if (a.eyes === 'glow') {
       part(grp, sph(er), { color: a.eyeColor, glow: 2.4 }, c);
     } else {
-      // Big irises (they carry the expression and read from far away): dark rim, colour, a lighter ring, pupil.
-      part(grp, sph(er, Math.PI, 28, 16), { color: 0xfbf8f4, gloss: 0.8, outline: false }, c);
-      cap(er * 1.004, 0.8, { color: shade(a.eyeColor, -0.6), outline: false, gloss: 1 });
-      cap(er * 1.007, 0.72, { color: a.eyeColor, outline: false, gloss: 1 });
-      cap(er * 1.009, 0.5, { color: shade(a.eyeColor, 0.28), outline: false, gloss: 1 });
-      cap(er * 1.012, 0.36, { color: 0x07060b, outline: false, gloss: 1 });
+      // Anime irises fill most of the eye (they carry the expression and read
+      // from far away): dark rim, colour, a lighter lower ring, pupil, and two
+      // bold catch lights.
+      part(grp, sph(er, Math.PI, 28, 16), { color: spec.sclera, gloss: 0.8, outline: false }, c);
+      cap(er * 1.004, 0.9, { color: shade(a.eyeColor, -0.65), outline: false, gloss: 1 });
+      cap(er * 1.007, 0.8, { color: a.eyeColor, outline: false, gloss: 1 });
+      cap(er * 1.009, 0.56, { color: shade(a.eyeColor, 0.32), outline: false, gloss: 1 });
+      cap(er * 1.012, 0.4, { color: 0x07060b, outline: false, gloss: 1 });
       // Catch lights.
-      _dir.set(1, 0.4, s * 0.12).normalize();
-      part(grp, sph(er * 0.17, Math.PI, 10, 8), { color: 0xffffff, glow: 1.4 }, [c[0] + _dir.x * er, c[1] + _dir.y * er, c[2] + _dir.z * er]);
+      _dir.set(1, 0.42, s * 0.16).normalize();
+      part(grp, sph(er * 0.22, Math.PI, 10, 8), { color: 0xffffff, glow: 1.5 }, [c[0] + _dir.x * er, c[1] + _dir.y * er, c[2] + _dir.z * er]);
       _dir.set(1, -0.28, -s * 0.1).normalize();
       part(grp, sph(er * 0.07, Math.PI, 8, 6), { color: 0xffffff, glow: 1.1 }, [c[0] + _dir.x * er, c[1] + _dir.y * er, c[2] + _dir.z * er]);
     }

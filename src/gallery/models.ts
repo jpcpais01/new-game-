@@ -1,6 +1,5 @@
 import { Color, DirectionalLight, Group, HemisphereLight, PerspectiveCamera, Scene, type Object3D } from 'three';
 import { SKIN_BY_ID, SKIN_THEME_IDS, SKINS, type SkinDef, type SkinTheme } from '../gear/skins';
-import { bodyForm } from '../render/fighter/forms';
 import { lookFor } from '../render/fighter/look';
 import { HIPS_Y, J, JOINT_COUNT, stance } from '../render/fighter/poses';
 import { buildRig, type Rig } from '../render/fighter/rig';
@@ -22,7 +21,7 @@ function gearFor(slot: GearSlot, id: string): GearSet {
 }
 
 function pose(rig: Rig): void {
-  const p = stance(rig.look.grip, rig.look.offhand, bodyForm(rig.look.form));
+  const p = stance(rig.look.grip, rig.look.offhand, rig.metrics.form);
   for (let i = 0; i < JOINT_COUNT; i++) rig.joints[i].rotation.set(p[i * 3], p[i * 3 + 1], p[i * 3 + 2]);
   rig.joints[J.HIPS].position.y = rig.metrics.hipH + p[HIPS_Y];
 }
