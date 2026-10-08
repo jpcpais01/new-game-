@@ -142,6 +142,8 @@ const creator = new Creator({
 });
 const fpsEl = h('div.fps');
 ui.append(hud.el, menu.el, results.el, creator.el, fpsEl);
+// First in #ui so every panel paints over it instead of the other way round.
+ui.prepend(h('div.version', { 'aria-hidden': 'true' }, __APP_VERSION__));
 hud.show(false);
 
 function applySettings(s: MenuSettings): void {
