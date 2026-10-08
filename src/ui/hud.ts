@@ -5,6 +5,7 @@ import { FORMS } from '../sim/forms';
 import { gearOf } from '../sim/gear';
 import type { BattleEvent, StatusId } from '../sim/types';
 import { h } from './dom';
+import { fmtHp } from './format';
 import { gearIcon } from './itemIcons';
 
 const STATUS_ICON: Record<StatusId, string> = {
@@ -158,7 +159,7 @@ export class Hud {
         const t = `scaleX(${(hpQ / 1000).toFixed(3)})`;
         s.fill.style.transform = t;
         s.ghost.style.transform = t;
-        s.num.textContent = String(Math.ceil(Math.max(0, f.hp)));
+        s.num.textContent = fmtHp(f.hp, f.alive);
       }
       const sh = Math.round(Math.min(1, f.shield / f.stats.maxHp) * 1000);
       if (sh !== s.last.shield) {

@@ -6,6 +6,7 @@ import {
 } from '../sim/loadout';
 import type { FormId, GearId, GearSlot } from '../sim/types';
 import { h, hex } from './dom';
+import { fmtMult } from './format';
 import { emptySlotIcon, gearIcon } from './itemIcons';
 import { ARENA_IDS, ARENA_NAMES, type ArenaId } from '../render/scene/arena';
 import type { Zoom } from '../render/camera';
@@ -136,7 +137,7 @@ export class Menu {
         ...statRow('Power', stats.power, 80, String(Math.round(stats.power))),
         ...statRow('Armor', stats.armor, 80, String(Math.round(stats.armor))),
         ...statRow('Resist', stats.resist, 80, String(Math.round(stats.resist))),
-        ...statRow('Speed', stats.attackSpeed * stats.moveSpeed, 6.5, stats.attackSpeed.toFixed(2) + 'x'),
+        ...statRow('Speed', stats.attackSpeed * stats.moveSpeed, 6.5, fmtMult(stats.attackSpeed)),
       ),
       h('div.abilities', null, ...buildAbilities(lo.gear).map((a) =>
         h('span.ability' + (a.slot === 'ultimate' ? '.ult' : ''), { title: a.desc }, a.name))),

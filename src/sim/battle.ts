@@ -417,7 +417,7 @@ export class Battle {
         if (ab.buff) for (const b of ab.buff) this.applyStatus(f, f, b);
         if (ab.heal) this.heal(f, f.stats.maxHp * ab.heal);
         if (ab.shieldGain) {
-          const amount = f.stats.maxHp * ab.shieldGain;
+          const amount = Math.round(f.stats.maxHp * ab.shieldGain);
           f.shield = Math.max(f.shield, amount);
           this.emit({ type: 'shield', f: f.id, amount });
         }
