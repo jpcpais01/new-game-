@@ -13,6 +13,7 @@ import { DT } from './sim/constants';
 import { h, save, store } from './ui/dom';
 import { FloatingText } from './ui/floatingText';
 import { Hud } from './ui/hud';
+import { DEFAULT_BUILDS, sanitizeBuild } from './sim/loadout';
 import { Menu, randomLoadout, ZOOM_LABEL, ZOOM_ORDER, type Loadout, type MenuSettings } from './ui/menu';
 import { Results } from './ui/results';
 
@@ -58,10 +59,12 @@ const floating = new FloatingText(fxLayer);
 const view = new BattleView(scene, fx, cam, renderer, arena, floating);
 renderer.setupPasses(scene, cam.camera);
 
-let loadouts = store<[Loadout, Loadout]>('cb.loadouts', [
-  { classId: 'vanguard', items: ['thornmail', 'storm_sigil', 'aegis_charm'] },
-  { classId: 'arcanist', items: ['frost_core', 'mirror_ward', 'hourglass'] },
-]);
+// Saves from the class era (or anything malformed) fall back to the defaults.
+const stored = store<unknown[]>('cb.loadouts', []);
+let loadouts: [Loadout, Loadout] = [
+  sanitizeBuild(stored?.[0], DEFAULT_BUILDS[0]),
+  sanitizeBuild(stored?.[1], DEFAULT_BUILDS[1]),
+];
 let state: State = 'menu';
 let speed = 1;
 let paused = false;

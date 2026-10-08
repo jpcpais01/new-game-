@@ -4,8 +4,10 @@ import {
 } from 'three';
 import { clamp, damp, easeInCubic, easeOutCubic, smoothstep } from '../../core/math';
 import { getStatus, stacksOf, type Fighter } from '../../sim/fighter';
-import { ITEMS } from '../../sim/items';
-import type { ClassId, ItemId } from '../../sim/types';
+import { FORMS } from '../../sim/forms';
+import { gearOf } from '../../sim/gear';
+import type { GearId } from '../../sim/types';
+import { archetypeOf, isBig, type Archetype } from './archetype';
 import { glow } from '../materials';
 import type { Particles } from '../fx/particles';
 import {
@@ -18,7 +20,8 @@ export interface FxContext {
   smoke: Particles;
 }
 
-const ENCHANTS: ItemId[] = ['ember_brand', 'frost_core', 'venom_vial', 'vampiric_fang', 'executioner', 'storm_sigil'];
+/** Gear that tints the weapon edge and sheds particles from it. */
+export const ENCHANTS: GearId[] = ['ember_core', 'frost_core', 'twin_daggers', 'vampiric_fang', 'executioner_hood', 'storm_crown'];
 const _v = new Vector3();
 const _v2 = new Vector3();
 
@@ -57,7 +60,7 @@ function shieldMaterial(color: number): ShaderMaterial {
  */
 export class FighterView {
   readonly rig: Rig;
-  readonly classId: ClassId;
+  readonly classId: Archetype;
   readonly group: Group;
   private readonly pose: Pose = new Float32Array(POSE_SIZE);
   private readonly target: Pose = new Float32Array(POSE_SIZE);
@@ -71,13 +74,13 @@ export class FighterView {
   private emitAcc = 0;
   private time = 0;
   private readonly enchantColor: Color | null;
-  private readonly enchants: ItemId[];
+  private readonly enchants: GearId[];
   private readonly shield: Mesh;
   private readonly shieldMat: ShaderMaterial;
   private readonly ice: Mesh;
   private readonly stars: Group;
   private readonly mark: Mesh;
-  private readonly orbiters: { item: ItemId; mesh: Object3D; phase: number; radius: number }[] = [];
+  private readonly orbiters: { item: GearId; mesh: Object3D; phase: number; radius: number }[] = [];
   private readonly scale: number;
   private shieldShown = 0;
   private phoenix: Object3D | null = null;
@@ -88,9 +91,12 @@ export class FighterView {
 
   private readonly teamRing: Mesh;
 
-  constructor(classId: ClassId, items: ItemId[], facing: 1 | -1, team: 0 | 1) {
+  constructor(f: Fighter, team: 0 | 1) {
+    const classId = archetypeOf(f.gear);
+    const items = f.gearIds;
+    const facing = f.facing;
     this.classId = classId;
-    this.rig = buildRig(classId, items);
+    this.rig = buildRig(classId, items, isBig(f));
     this.group = this.rig.root;
     // Team identity: coloured rim light and a glowing ring at the feet, so
     // mirror matches stay readable.
@@ -104,8 +110,8 @@ export class FighterView {
     this.yaw = this.yawFor(facing);
     this.group.rotation.y = this.yaw;
     this.enchants = items.filter((i) => ENCHANTS.includes(i));
-    this.enchantColor = this.enchants.length ? new Color(ITEMS[this.enchants[0]].color) : null;
-    this.scale = items.includes('giants_belt') ? 1.08 : 1;
+    this.enchantColor = this.enchants.length ? new Color(gearOf(this.enchants[0]).color) : null;
+    this.scale = FORMS[f.form].body.height * (items.includes('colossus_boots') ? 1.05 : 1) / (isBig(f) ? 1.12 : 1);
     this.group.scale.setScalar(this.scale);
 
     if (this.rig.enchantMaterial) {
@@ -361,8 +367,8 @@ export class FighterView {
       o.mesh.position.set(Math.cos(o.phase) * r, 1.5 + Math.sin(o.phase * 1.7) * 0.15, Math.sin(o.phase) * r);
       o.mesh.rotation.y += dt * 3;
       let on = 1;
-      if (o.item === 'mirror_ward') on = f.mirrorCd <= 0 ? 1 : 0.35;
-      if (o.item === 'storm_sigil') on = 0.5 + f.stormCounter * 0.35;
+      if (o.item === 'mirror_aegis') on = f.mirrorCd <= 0 ? 1 : 0.35;
+      if (o.item === 'storm_crown') on = 0.5 + f.stormCounter * 0.25;
       o.mesh.scale.setScalar(Math.max(0.01, (f.alive ? 1 : 0) * on * (1 + Math.sin(this.time * 6) * 0.05 * on)));
     }
     // Collapse the spent feather into the head (never scale to exactly zero: NaN normals).
@@ -400,10 +406,10 @@ export class FighterView {
       for (const id of this.enchants) {
         const t = Math.random();
         _v.lerpVectors(base, tip, t);
-        const col = ITEMS[id].color;
-        const cfg = id === 'ember_brand' ? { g: -2.5, sp: 0.6, life: 0.5, size: 0.11, i: 2.4 }
+        const col = gearOf(id).color;
+        const cfg = id === 'ember_core' ? { g: -2.5, sp: 0.6, life: 0.5, size: 0.11, i: 2.4 }
           : id === 'frost_core' ? { g: 0.8, sp: 0.2, life: 0.8, size: 0.06, i: 2.6 }
-            : id === 'venom_vial' ? { g: 3, sp: 0.1, life: 0.6, size: 0.06, i: 1.8 }
+            : id === 'twin_daggers' ? { g: 3, sp: 0.1, life: 0.6, size: 0.06, i: 1.8 }
               : { g: 0, sp: 0.3, life: 0.4, size: 0.07, i: 2 };
         fx.add.emit(_v.x, _v.y, _v.z, (Math.random() - 0.5) * cfg.sp, cfg.sp * 0.5, 0, cfg.life,
           ((col >> 16) & 255) / 255 * cfg.i, ((col >> 8) & 255) / 255 * cfg.i, (col & 255) / 255 * cfg.i,
@@ -421,7 +427,7 @@ export class FighterView {
       fx.smoke.emit(x - Math.sign(f.vx) * 0.2, 0.08, (Math.random() - 0.5) * 0.3, -f.vx * 0.12, 0.35, 0, 0.55, 0.85, 0.8, 0.72, 0.22, 0, 2, 1.6, 0);
     }
     // Zephyr boots afterimage dust.
-    if (f.has.has('swift_boots') && Math.abs(f.vx) > 3) {
+    if (f.has.has('zephyr_boots') && Math.abs(f.vx) > 3) {
       fx.add.emit(x, y + 0.1, 0, -f.vx * 0.1, 0.3, 0, 0.4, 0.4, 2.2, 1.6, 0.12, 0, 2, 0.1, 0);
     }
   }

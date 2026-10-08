@@ -1,23 +1,26 @@
-import { CLASS_ABILITIES, EVADE } from './abilities';
-import { CLASSES } from './classes';
-import { ITEMS } from './items';
+import {
+  buildAbilities, buildProfile, computeBaseStats, gearIds, type Appearance, type CharacterBuild, type CombatProfile,
+} from './loadout';
 import type {
-  AbilityDef, ActionState, ClassId, FighterId, FighterTotals, ItemId, Stats, StatusId, StatusInstance,
+  AbilityDef, ActionState, FighterId, FighterTotals, FormId, GearId, GearSet, Stats, StatusId, StatusInstance,
 } from './types';
 import { MAX_ENERGY } from './constants';
 
-export interface FighterConfig {
-  classId: ClassId;
-  items: ItemId[];
-  name?: string;
-}
+export { computeBaseStats };
+
+export type FighterConfig = CharacterBuild;
 
 export interface Fighter {
   id: FighterId;
-  classId: ClassId;
   name: string;
-  items: ItemId[];
-  has: Set<ItemId>;
+  form: FormId;
+  gear: GearSet;
+  /** Equipped gear ids in slot order. */
+  gearIds: GearId[];
+  has: Set<GearId>;
+  look: Appearance | undefined;
+  /** AI temperament and spacing derived from form + gear. */
+  profile: CombatProfile;
   abilities: AbilityDef[];
   cooldowns: number[];
 
@@ -49,7 +52,6 @@ export interface Fighter {
   phoenixUsed: boolean;
   stormCounter: number;
   mirrorCd: number;
-  aegisIdle: number;
   ironWillCd: number;
   /** Echo hits queued: [delay, damage] pairs. */
   echoQueue: { delay: number; amount: number; dtype: AbilityDef['damageType'] }[];
@@ -62,37 +64,26 @@ export interface Fighter {
   totals: FighterTotals;
 }
 
-export function computeBaseStats(classId: ClassId, items: ItemId[]): Stats {
-  const s: Stats = { ...CLASSES[classId].base };
-  for (const id of items) {
-    const it = ITEMS[id];
-    if (it.add) for (const k in it.add) (s as any)[k] += (it.add as any)[k];
-  }
-  for (const id of items) {
-    const it = ITEMS[id];
-    if (it.mul) for (const k in it.mul) (s as any)[k] *= (it.mul as any)[k];
-  }
-  s.cdr = Math.min(s.cdr, 0.6);
-  return s;
-}
-
 export function createFighter(id: FighterId, cfg: FighterConfig): Fighter {
-  const base = computeBaseStats(cfg.classId, cfg.items);
-  const abilities = [...CLASS_ABILITIES[cfg.classId], EVADE];
-  const has = new Set(cfg.items);
+  const base = computeBaseStats(cfg.form, cfg.gear);
+  const abilities = buildAbilities(cfg.gear);
+  const ids = gearIds(cfg.gear);
   const f: Fighter = {
     id,
-    classId: cfg.classId,
-    name: cfg.name ?? CLASSES[cfg.classId].name,
-    items: cfg.items.slice(),
-    has,
+    name: cfg.name,
+    form: cfg.form,
+    gear: { ...cfg.gear },
+    gearIds: ids,
+    has: new Set(ids),
+    look: cfg.look,
+    profile: buildProfile(cfg.form, cfg.gear),
     abilities,
     cooldowns: abilities.map(() => 0),
     x: 0, y: 0, px: 0, py: 0, vx: 0, vy: 0,
     facing: id === 0 ? 1 : -1,
     move: 0,
     hp: base.maxHp,
-    shield: has.has('aegis_charm') ? base.maxHp * 0.22 : 0,
+    shield: 0,
     energy: 20,
     base,
     stats: { ...base },
@@ -104,7 +95,6 @@ export function createFighter(id: FighterId, cfg: FighterConfig): Fighter {
     phoenixUsed: false,
     stormCounter: 0,
     mirrorCd: 0,
-    aegisIdle: 0,
     ironWillCd: 0,
     echoQueue: [],
     sinceHurt: 99,
@@ -145,6 +135,7 @@ export function refreshStats(f: Fighter): void {
   s.critMult = b.critMult; s.lifesteal = b.lifesteal; s.cdr = b.cdr; s.energyRegen = b.energyRegen;
   s.tenacity = b.tenacity; s.thorns = b.thorns; s.healMult = b.healMult;
   s.damageMult = b.damageMult; s.damageTakenMult = b.damageTakenMult;
+  s.poise = b.poise; s.reach = b.reach; s.force = b.force; s.knockbackTaken = b.knockbackTaken;
 
   for (let i = 0; i < f.statuses.length; i++) {
     const st = f.statuses[i];
@@ -165,7 +156,12 @@ export function refreshStats(f: Fighter): void {
 
   if (f.has.has('berserker_mask')) {
     const missing = 1 - f.hp / s.maxHp;
-    s.damageMult *= 1 + Math.min(0.5, missing * 0.7);
+    s.damageMult *= 1 + Math.min(0.4, missing * 0.6);
     if (missing > 0.6) s.attackSpeed *= 1.1;
   }
+}
+
+/** Effective reach of a melee or AoE ability for this fighter (long limbs reach further). */
+export function reachOf(f: Fighter, ab: AbilityDef): number {
+  return ab.kind === 'melee' || ab.kind === 'aoe' ? ab.range * f.stats.reach : ab.range;
 }

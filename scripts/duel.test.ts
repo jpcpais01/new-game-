@@ -1,16 +1,25 @@
 import { it } from 'vitest';
-// Usage: A=vanguard B=ronin IA=item1,item2 IB=... N=5 V=1 npm run duel
+// Usage: A=balanced B=agile GA=longsword,tower_shield GB=katana N=5 V=1 npm run duel
+// GA/GB list gear ids (any order); unspecified slots stay empty except the
+// main weapon, which defaults to the longsword.
 import { Battle } from '../src/sim/battle';
-import type { ClassId, ItemId } from '../src/sim/types';
+import { gearOf } from '../src/sim/gear';
+import type { CharacterBuild } from '../src/sim/loadout';
+import type { FormId, GearId, GearSet } from '../src/sim/types';
+
+function build(form: string, list: string, name: string): CharacterBuild {
+  const gear = { main: 'longsword' } as GearSet;
+  for (const id of list.split(',').filter(Boolean)) (gear as any)[gearOf(id as GearId).slot] = id;
+  return { name, form: form as FormId, gear };
+}
 
 it('duel trace', () => {
-  const A = (process.env.A ?? 'vanguard') as ClassId, B = (process.env.B ?? 'ronin') as ClassId;
-  const IA = (process.env.IA ?? '').split(',').filter(Boolean) as ItemId[];
-  const IB = (process.env.IB ?? '').split(',').filter(Boolean) as ItemId[];
+  const A = build(process.env.A ?? 'balanced', process.env.GA ?? '', 'A');
+  const B = build(process.env.B ?? 'agile', process.env.GB ?? 'katana', 'B');
   const verbose = !!process.env.V;
   const out: string[] = [];
   for (let s = 1; s <= Number(process.env.N ?? 5); s++) {
-    const b = new Battle({ seed: s * 101, fighters: [{ classId: A, items: IA }, { classId: B, items: IB }] });
+    const b = new Battle({ seed: s * 101, fighters: [A, B] });
     const uses: Record<string, number> = {};
     while (!b.over && b.tick < 60 * 120) {
       b.step();
@@ -19,7 +28,7 @@ it('duel trace', () => {
         if (verbose && (e.type === 'thought' || e.type === 'plan')) out.push(`${b.time.toFixed(2)} [${e.f}] ${e.type === 'thought' ? e.text : 'PLAN ' + e.plan}`);
       }
     }
-    const t = b.fighters.map((f) => `${f.classId} hp=${f.hp.toFixed(0)} dmg=${f.totals.damageDealt.toFixed(0)} hits=${f.totals.hits} par=${f.totals.parries} blk=${f.totals.blocks} ev=${f.totals.evades} feint=${f.totals.feints}`);
+    const t = b.fighters.map((f) => `${f.form}/${f.gear.main} hp=${f.hp.toFixed(0)} dmg=${f.totals.damageDealt.toFixed(0)} hits=${f.totals.hits} par=${f.totals.parries} blk=${f.totals.blocks} ev=${f.totals.evades} feint=${f.totals.feints}`);
     out.push(`seed ${s}: winner ${b.winner} t=${b.time.toFixed(1)}\n  ${t.join('\n  ')}\n  ${JSON.stringify(uses)}`);
   }
   process.stdout.write(out.join('\n') + '\n');

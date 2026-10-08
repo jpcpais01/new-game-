@@ -1,4 +1,5 @@
-import type { AnimKey, ClassId } from '../../sim/types';
+import type { AnimKey } from '../../sim/types';
+import type { Archetype } from './archetype';
 
 /** Joint order for pose arrays. Each joint stores an XYZ euler (radians). */
 export const J = {
@@ -48,7 +49,7 @@ export function lerpPose(out: Pose, a: Pose, b: Pose, t: number): Pose {
 
 const legsStance = { THIGH_L: 24, SHIN_L: -22, THIGH_R: -18, SHIN_R: -26 } as const;
 
-export const READY: Record<ClassId, Pose> = {
+export const READY: Record<Archetype, Pose> = {
   vanguard: makePose({
     HIPS: -4, SPINE: -3, CHEST: [0, -18, -4], HEAD: [0, 14, 6],
     UARM_R: [-10, 0, 20], FARM_R: [0, 0, 75], WEAPON: [0, 0, 35],
@@ -164,11 +165,14 @@ const ACTIONS: Record<AnimKey, (ready: Pose) => ActionPoses> = {
     { CHEST: [0, 5, -45], HIPS: -20, HEAD: -15, UARM_R: [10, 0, 40], FARM_R: [0, 0, 0], UARM_L: [-10, 0, 35], FARM_L: [0, 0, 5], WEAPON: [0, 0, -85],
       THIGH_L: 60, SHIN_L: -60, THIGH_R: -40, SHIN_R: -50, hipsY: -0.45 },
   ),
+  // Placeholders until throw/shoot get their own keyframes.
+  throw: (r) => ACTIONS.spin(r),
+  shoot: (r) => ACTIONS.cast(r),
 };
 
 const cache = new Map<string, ActionPoses>();
 
-export function actionPoses(classId: ClassId, anim: AnimKey): ActionPoses {
+export function actionPoses(classId: Archetype, anim: AnimKey): ActionPoses {
   const key = classId + anim;
   let p = cache.get(key);
   if (!p) {
@@ -188,7 +192,7 @@ function twoHanded(p: Pose): void {
 
 export const HURT_ADD = makePose({ CHEST: [0, 0, 22], HEAD: [0, 0, 18], HIPS: 8, UARM_R: [0, 0, -15], UARM_L: [0, 0, -15], hipsY: -0.08 });
 
-export const VICTORY: Record<ClassId, Pose> = {
+export const VICTORY: Record<Archetype, Pose> = {
   vanguard: makePose({ CHEST: [0, 10, 8], HEAD: [0, 15, 18], UARM_R: [-20, 0, 175], FARM_R: [0, 0, 5], WEAPON: [0, 0, 70], UARM_L: [10, 0, 20], FARM_L: [0, 0, 60], THIGH_L: 10, THIGH_R: -8 }),
   ronin: makePose({ CHEST: [0, -30, -2], HEAD: [0, 30, 0], UARM_R: [-15, 0, -10], FARM_R: [0, 0, 60], WEAPON: [0, 0, 170], UARM_L: [10, 0, 10], FARM_L: [0, 0, 80], THIGH_L: 12, THIGH_R: -8 }),
   arcanist: makePose({ CHEST: [0, 0, 10], HEAD: [0, 0, 20], UARM_R: [-25, 0, 165], FARM_R: [0, 0, 10], WEAPON: [0, 0, -60], UARM_L: [25, 0, 140], FARM_L: [0, 0, 20] }),

@@ -2,13 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { runHeadless } from './headless';
 import { Battle } from './battle';
 import type { BattleConfig } from './battle';
+import { DEFAULT_BUILDS } from './loadout';
 
 const cfg = (seed: number): BattleConfig => ({
   seed,
-  fighters: [
-    { classId: 'vanguard', items: ['thornmail', 'storm_sigil', 'aegis_charm'] },
-    { classId: 'arcanist', items: ['frost_core', 'mirror_ward', 'hourglass'] },
-  ],
+  fighters: [DEFAULT_BUILDS[0], DEFAULT_BUILDS[1]],
 });
 
 describe('battle simulation', () => {

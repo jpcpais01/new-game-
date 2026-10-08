@@ -1,8 +1,8 @@
 import { clamp, lerp } from '../../core/math';
 import type { Battle } from '../battle';
-import { CLASSES, type Personality } from '../classes';
+import type { Personality } from '../forms';
 import { ARENA_HALF_WIDTH, DT, ROUND_TIME } from '../constants';
-import { getStatus, isDisabled, stacksOf, type Fighter } from '../fighter';
+import { getStatus, isDisabled, reachOf, stacksOf, type Fighter } from '../fighter';
 import type { AbilityDef } from '../types';
 
 /**
@@ -80,10 +80,13 @@ export class Brain {
   private sampleT = 0;
   private parriedRecently = 0;
   private feintKey = -1;
+  /** Whether the special slot grants an ultimate worth saving energy for. */
+  private readonly hasUlt: boolean;
 
   constructor(f: Fighter, variance: number) {
     this.f = f;
-    const base = CLASSES[f.classId].personality;
+    // Temperament comes from the body (form) and is nudged by the gear.
+    const base = f.profile.personality;
     // Each fighter instance has a slightly different temperament.
     const v = (k: number) => clamp(k + (variance - 0.5) * 0.2, 0.05, 0.95);
     this.p = {
@@ -93,9 +96,8 @@ export class Brain {
       adaptivity: base.adaptivity,
       reaction: base.reaction,
     };
-    if (f.has.has('berserker_mask')) this.p.aggression = Math.min(0.95, this.p.aggression + 0.12);
-    if (f.has.has('aegis_charm') || f.has.has('thornmail')) this.p.caution = Math.min(0.95, this.p.caution + 0.05);
     this.hitRate = f.abilities.map(() => 0.65);
+    this.hasUlt = f.abilities.some((a) => a.slot === 'ultimate');
     this.bobPhase = variance * 10;
   }
 
@@ -195,8 +197,8 @@ export class Brain {
         let reach = false;
         let tti = remaining;
         switch (ab.kind) {
-          case 'melee': reach = dist <= ab.range + (ab.lunge ?? 0) + 0.4; break;
-          case 'aoe': reach = dist <= ab.range + (ab.lunge ?? 0) + 0.3; break;
+          case 'melee': reach = dist <= reachOf(e, ab) + (ab.lunge ?? 0) + 0.4; break;
+          case 'aoe': reach = dist <= reachOf(e, ab) + (ab.lunge ?? 0) + 0.3; break;
           case 'dash': reach = dist <= (ab.dash?.distance ?? 0) + 0.2; tti += 0.06; break;
           case 'projectile': reach = true; tti += Math.max(0, dist - 1) / ab.projectile!.speed; break;
           case 'meteor': reach = true; tti += 12 / ab.projectile!.speed; break;
@@ -299,23 +301,22 @@ export class Brain {
 
   private choosePlan(b: Battle, e: Fighter): void {
     const f = this.f;
-    const me = CLASSES[f.classId];
-    const them = CLASSES[e.classId];
+    const me = f.profile;
+    const them = e.profile;
     const myHp = f.hp / f.stats.maxHp;
     const enHp = e.hp / e.stats.maxHp;
     const p = this.p;
     const rnd = () => b.rng.next() * 0.12;
     const enemyBuffed = !!getStatus(e, 'rage') || !!getStatus(e, 'ironskin');
     const enemyDots = stacksOf(e, 'burn') + stacksOf(e, 'poison');
-    const ultReady = f.energy >= 100;
+    const ultReady = this.hasUlt && f.energy >= 100;
     const losingOnTime = b.time > ROUND_TIME - 15 && myHp <= enHp;
 
     const scores: Record<Plan, number> = {
       pressure: 0.45 + p.aggression * 0.4 + (them.ranged ? 0.35 : 0) + (enHp < myHp ? 0.1 : 0) - (me.ranged ? 0.45 : 0) + rnd(),
       kite: (me.ranged ? 0.85 : 0) + (me.ranged && enemyDots > 0 ? 0.15 : 0) + p.caution * 0.15 - (them.ranged ? 0.25 : 0) + rnd(),
       bait: p.cunning * 0.45 + (this.enemyAggro > 0.55 ? 0.2 : 0) + this.enemyDefends * 0.35 + (them.ranged ? -0.3 : 0) + rnd(),
-      turtle: p.caution * 0.3 + (myHp < 0.35 ? 0.2 : 0) + (enemyBuffed ? 0.3 : 0) - p.aggression * 0.2
-        + (f.has.has('aegis_charm') && f.shield <= 0 && myHp < 0.6 ? 0.15 : 0) + rnd(),
+      turtle: p.caution * 0.3 + (myHp < 0.35 ? 0.2 : 0) + (enemyBuffed ? 0.3 : 0) - p.aggression * 0.2 + rnd(),
       allin: (ultReady ? 0.3 : 0) + (enHp < 0.3 ? 0.45 : 0) + (isDisabled(e) ? 0.3 : 0)
         + (f.has.has('berserker_mask') && myHp < 0.4 ? 0.4 : 0)
         + (f.has.has('phoenix_feather') && !f.phoenixUsed && myHp < 0.35 ? 0.3 : 0)
@@ -386,7 +387,7 @@ export class Brain {
       let why = '';
 
       // ----- Defensive answers -----
-      if (ab.kind === 'guard' || ab.slot === 'evade' || ab.kind === 'blink' || ab.id === 'iron_skin') {
+      if (ab.kind === 'guard' || ab.slot === 'evade' || ab.kind === 'blink' || ab.id === 'iron_skin' || ab.id === 'barrier') {
         const startup = ab.windup / f.stats.attackSpeed;
         if (threat) {
           if (ab.kind === 'guard') {
@@ -412,6 +413,10 @@ export class Brain {
             if (threat.tti < startup) continue;
             val = threat.danger * 0.55 + (cornered ? 0.03 : 0);
             why = 'Hardens to tank it.';
+          } else if (ab.id === 'barrier') {
+            if (threat.tti < startup || f.shield > f.stats.maxHp * 0.05) continue;
+            val = Math.min(threat.danger, ab.shieldGain ?? 0) * 0.9 + 0.01;
+            why = 'Throws up a barrier.';
           } else {
             const iframes = ab.dash?.iframes ?? ab.iframes ?? 0.2;
             const lo = startup + 0.01;
@@ -430,10 +435,16 @@ export class Brain {
             val = 0.03 + p.aggression * 0.02;
             why = 'Tanks through the pressure.';
           }
-        } else if ((ab.slot === 'evade' || ab.kind === 'blink') && cornered && CLASSES[f.classId].ranged) {
+        } else if (ab.id === 'barrier') {
+          // Proactive shield when trading and the old one is gone.
+          if (f.shield <= 0 && dist < 3.5 && f.sinceHurt < 1.5) {
+            val = 0.03 + p.caution * 0.02;
+            why = 'Shields up before the trade.';
+          }
+        } else if ((ab.slot === 'evade' || ab.kind === 'blink') && cornered && f.profile.ranged) {
           val = 0.04;
           why = 'Escapes the corner.';
-        } else if (ab.kind === 'blink' && CLASSES[f.classId].ranged && dist < 1.8 && e.alive) {
+        } else if (ab.kind === 'blink' && f.profile.ranged && dist < 1.8 && e.alive) {
           val = 0.035 + p.caution * 0.03;
           why = 'Too close — blinks away.';
         }
@@ -461,14 +472,14 @@ export class Brain {
 
       switch (ab.kind) {
         case 'melee': {
-          const reach = ab.range + lunge;
+          const reach = reachOf(f, ab) + lunge;
           const predicted = dist - closing;
           pHit = predicted <= reach ? 0.88 : predicted <= reach + 0.3 ? 0.35 : 0;
           break;
         }
         case 'aoe': {
           const predicted = dist - closing;
-          pHit = predicted <= ab.range + lunge * 0.8 ? 0.9 : 0;
+          pHit = predicted <= reachOf(f, ab) + lunge * 0.8 ? 0.9 : 0;
           break;
         }
         case 'dash': {
@@ -537,16 +548,16 @@ export class Brain {
         val += 0.03 * pHit;
         why = why || 'Drives them into the wall!';
       }
-      if (f.has.has('storm_sigil') && f.stormCounter === 2) val += 0.02 * pHit;
+      if (f.has.has('storm_crown') && f.stormCounter === 3) val += 0.02 * pHit;
       if (f.has.has('frost_core') && stacksOf(e, 'chill') === 4) { val += 0.04 * pHit; why = why || 'Going for the freeze.'; }
       if (cornered && ab.knockback && ab.knockback >= 4) val += 0.03;
-      if (ab.id === 'frost_nova' && dist < 2.2 && CLASSES[f.classId].ranged) val += 0.05;
+      if (ab.id === 'frost_nova' && dist < 2.2 && f.profile.ranged) val += 0.05;
 
       // Item awareness.
       if (e.has.has('thornmail') && ab.kind === 'melee' && ab.damageType !== 'magic') {
         val -= pHit * expDmg * e.stats.thorns * (e.stats.maxHp / f.stats.maxHp) * (myHp < 0.35 ? 1.5 : 0.8);
       }
-      if (ab.kind === 'projectile' && e.has.has('mirror_ward') && e.mirrorCd <= 0 && !ab.projectile!.ground) {
+      if (ab.kind === 'projectile' && e.has.has('mirror_aegis') && e.mirrorCd <= 0 && !ab.projectile!.ground) {
         if (ab.slot === 'basic') { val = 0.03; why = 'Pops the Mirror Ward with a cheap shot.'; }
         else val -= expDmg * 1.2;
       }
@@ -561,7 +572,7 @@ export class Brain {
           val *= 0.4;
           why = 'Saving the ultimate for after the Phoenix.';
         }
-      } else if (ab.cost > 0) {
+      } else if (ab.cost > 0 && this.hasUlt) {
         // Keep a reserve for the ultimate when close to it.
         if (f.energy - ab.cost < 100 && f.energy > 80) val *= 0.7;
       }
@@ -604,7 +615,7 @@ export class Brain {
 
   private moveDecision(e: Fighter, threat: Threat | null, enemyOpen: number, waiting: boolean): void {
     const f = this.f;
-    const me = CLASSES[f.classId];
+    const me = f.profile;
     const dx = e.x - f.x;
     const dist = Math.abs(dx);
     const toward = Math.sign(dx) || f.facing;
@@ -651,7 +662,7 @@ export class Brain {
     let r = 0;
     for (let i = 0; i < e.abilities.length; i++) {
       const ab = e.abilities[i];
-      if (ab.kind === 'melee' && e.cooldowns[i] <= 0.4) r = Math.max(r, ab.range + (ab.lunge ?? 0));
+      if (ab.kind === 'melee' && e.cooldowns[i] <= 0.4) r = Math.max(r, reachOf(e, ab) + (ab.lunge ?? 0));
     }
     return r || 2;
   }
