@@ -1,6 +1,6 @@
 :root {
   --bg: #0d0f1a;
-  --panel: rgba(14, 16, 32, 0.72);
+  --panel: rgba(14, 16, 32, 0.84);
   --panel-solid: #12142a;
   --line: rgba(255, 255, 255, 0.1);
   --text: #eef0ff;
@@ -109,10 +109,10 @@ button {
 
 /* ---------------------------------------------------------------- shared */
 .glass {
+  /* No backdrop-filter: blurring a live WebGL canvas every frame is costly and
+     flickers on some mobile GPUs. A denser tint reads the same. */
   background: var(--panel);
   border: 1px solid var(--line);
-  backdrop-filter: blur(10px) saturate(1.2);
-  -webkit-backdrop-filter: blur(10px) saturate(1.2);
   border-radius: 14px;
 }
 .side-0 { --team: var(--blue); --team-glow: var(--blue-glow); }

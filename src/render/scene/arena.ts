@@ -204,7 +204,7 @@ export class Arena {
 
     // Boundary rune lines at the walls of the fighting lane.
     for (const s of [-1, 1]) {
-      const line = new Mesh(new BoxGeometry(0.08, 0.02, 6), glow(s < 0 ? 0x5a8dff : 0xff5a6a, 2.2));
+      const line = new Mesh(new BoxGeometry(0.16, 0.02, 6), glow(s < 0 ? 0x5a8dff : 0xff5a6a, 1.1));
       line.position.set(s * (ARENA_HALF_WIDTH + 0.45), 0.02, 0);
       this.group.add(line);
     }

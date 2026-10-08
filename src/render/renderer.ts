@@ -46,6 +46,7 @@ export class GameRenderer {
   readonly canvas: HTMLCanvasElement;
   settings: QualitySettings;
   private composer: EffectComposer | null = null;
+  private composerSized = false;
   private chroma: ChromaticAberrationEffect | null = null;
   private chromaAmt = 0;
   /** Resolution multiplier from dynamic scaling (0.5 .. 1). */
@@ -55,6 +56,11 @@ export class GameRenderer {
   private fastTime = 0;
   private width = 1;
   private height = 1;
+  private pixelRatio = 0;
+  private clock = 0;
+  private lastChange = 0;
+  private lastRaise = -99;
+  private raiseLockedUntil = 0;
 
   constructor(canvas: HTMLCanvasElement, quality: Quality) {
     this.canvas = canvas;
@@ -94,6 +100,7 @@ export class GameRenderer {
       this.renderer.toneMappingExposure = 1.05;
     }
     this.scale = 1;
+    this.composerSized = false;
     this.resize();
   }
 
@@ -104,7 +111,7 @@ export class GameRenderer {
     this.composer.addPass(new RenderPass(scene, camera));
     const bloom = new BloomEffect({
       mipmapBlur: true,
-      luminanceThreshold: 0.82,
+      luminanceThreshold: 0.9,
       luminanceSmoothing: 0.25,
       intensity: 1.15,
       radius: 0.72,
@@ -128,10 +135,15 @@ export class GameRenderer {
   resize(): void {
     const w = this.canvas.clientWidth || window.innerWidth;
     const h = this.canvas.clientHeight || window.innerHeight;
+    const pr = Math.min(window.devicePixelRatio || 1, this.settings.maxPixelRatio) * this.scale;
+    // Mobile browsers fire resize for toolbar changes; reallocating render
+    // targets for an unchanged size would cost a frame for nothing.
+    if (w === this.width && h === this.height && pr === this.pixelRatio && this.composerSized) return;
+    this.pixelRatio = pr;
+    this.composerSized = true;
+    this.renderer.setPixelRatio(pr);
     this.width = w;
     this.height = h;
-    const pr = Math.min(window.devicePixelRatio || 1, this.settings.maxPixelRatio) * this.scale;
-    this.renderer.setPixelRatio(pr);
     this.renderer.setSize(w, h, false);
     this.composer?.setSize(w, h, false);
   }
@@ -140,21 +152,41 @@ export class GameRenderer {
     return this.width / Math.max(1, this.height);
   }
 
-  /** Feed real frame times; adjusts the render scale to hold the frame rate. */
+  /**
+   * Feed real frame times; adjusts the render scale to hold the frame rate.
+   * Changes are rare and damped: a resolution change is visible, so the scale
+   * must never bounce back and forth (that reads as flicker).
+   */
   trackFrame(dt: number): void {
-    this.frameEma += (dt - this.frameEma) * 0.08;
-    if (this.frameEma > 1 / 50) { this.slowTime += dt; this.fastTime = 0; }
-    else if (this.frameEma < 1 / 57) { this.fastTime += dt; this.slowTime = 0; }
+    this.clock += dt;
+    this.frameEma += (dt - this.frameEma) * 0.05;
+    // Let things settle after a change (and after tab switches) before judging.
+    if (this.clock - this.lastChange < 2) return;
+    if (this.frameEma > 1 / 45) { this.slowTime += dt; this.fastTime = 0; }
+    else if (this.frameEma < 1 / 58) { this.fastTime += dt; this.slowTime = 0; }
     else { this.slowTime = 0; this.fastTime = 0; }
-    if (this.slowTime > 0.75 && this.scale > 0.5) {
-      this.scale = Math.max(0.5, this.scale - 0.1);
-      this.slowTime = 0;
-      this.resize();
-    } else if (this.fastTime > 4 && this.scale < 1) {
-      this.scale = Math.min(1, this.scale + 0.05);
-      this.fastTime = 0;
-      this.resize();
+    if (this.slowTime > 1.5 && this.scale > 0.5) {
+      // Dropping soon after raising means the higher scale doesn't fit: stop trying.
+      if (this.clock - this.lastRaise < 12) this.raiseLockedUntil = this.clock + 90;
+      this.setScale(Math.max(0.5, this.scale - 0.15));
+    } else if (this.fastTime > 6 && this.scale < 1 && this.clock > this.raiseLockedUntil) {
+      this.lastRaise = this.clock;
+      this.setScale(Math.min(1, this.scale + 0.1));
     }
+  }
+
+  /** Resets frame timing, e.g. after the tab was hidden. */
+  resetTiming(): void {
+    this.lastChange = this.clock;
+    this.frameEma = 1 / 60;
+    this.slowTime = this.fastTime = 0;
+  }
+
+  private setScale(v: number): void {
+    this.scale = v;
+    this.slowTime = this.fastTime = 0;
+    this.lastChange = this.clock;
+    this.resize();
   }
 
   get fps(): number {
@@ -169,7 +201,7 @@ export class GameRenderer {
     this.renderer.info.reset();
     if (this.chroma) {
       this.chromaAmt = Math.max(0, this.chromaAmt - dt * 4);
-      const a = this.chromaAmt * 0.004;
+      const a = this.chromaAmt * 0.0022;
       this.chroma.offset.set(a, a * 0.6);
     }
     if (this.composer) this.composer.render(dt);

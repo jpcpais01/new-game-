@@ -70,7 +70,7 @@ uniform vec3 uRim;`)
   float fres = pow(1.0 - saturate(dot(normalize(normal), normalize(vViewPosition))), 3.0);
   outgoingLight += uRim * fres * 0.55;
   outgoingLight = mix(outgoingLight, uTint * (0.6 + fres), uTintAmt);
-  outgoingLight = mix(outgoingLight, vec3(1.6), uFlash);
+  outgoingLight = mix(outgoingLight, vec3(1.0), uFlash);
 }
 #include <opaque_fragment>`);
   };

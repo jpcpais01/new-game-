@@ -281,7 +281,7 @@ export class BattleView {
           x: e.x, y: e.y, count: e.blocked ? 10 : heavy ? 34 : 16, dir: [dir, 0.4, 0], spread: e.blocked ? 1.2 : 0.9,
           speed: heavy ? [6, 14] : [4, 9], life: [0.15, 0.4], size: [0.05, 0.11], color, intensity: 3, gravity: 9, drag: 2, stretch: 0.045,
         });
-        add.burst({ x: e.x, y: e.y, count: 1, speed: [0, 0], life: [0.12, 0.12], size: [heavy ? 1.6 : 0.9, heavy ? 1.6 : 0.9], color, intensity: 2, sizeEnd: 1.6 });
+        add.burst({ x: e.x, y: e.y, count: 1, speed: [0, 0], life: [0.12, 0.12], size: [heavy ? 1.1 : 0.7, heavy ? 1.1 : 0.7], color, intensity: 1.2, sizeEnd: 1.4 });
         if (heavy && !e.blocked) {
           this.pulses.spawn('ring', e.x, e.y, 1.6, color, 0.3, 2.5);
           smoke.burst({ x: e.x, y: 0.15, count: 6, jitter: 0.4, speed: [0.5, 2], life: [0.5, 0.9], size: [0.4, 0.7], color: 0x8a8090, sizeEnd: 2 });

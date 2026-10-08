@@ -94,7 +94,7 @@ export class FighterView {
     const teamColor = team === 0 ? 0x4d8bff : 0xff4d5e;
     this.rig.uniforms.uRim.value.setHex(teamColor);
     teamRingGeo ??= new RingGeometry(0.62, 0.74, 40).rotateX(-Math.PI / 2);
-    this.teamRing = new Mesh(teamRingGeo, glow(teamColor, 2.2));
+    this.teamRing = new Mesh(teamRingGeo, glow(teamColor, 1.1));
     this.teamRing.position.y = 0.03;
     this.group.add(this.teamRing);
     this.pose.set(READY[classId]);
@@ -108,7 +108,7 @@ export class FighterView {
     if (this.enchantColor) {
       for (const m of this.rig.weaponGlow) {
         if (this.classId === 'arcanist') continue;
-        m.material = glow(this.enchantColor.getHex(), 2.4);
+        m.material = glow(this.enchantColor.getHex(), 1.6);
       }
     }
 
@@ -143,7 +143,7 @@ export class FighterView {
     this.group.add(this.stars);
 
     // Hex mark sigil.
-    this.mark = new Mesh(gearGeo.torus(0.22, 0.025), glow(0xc04dff, 3));
+    this.mark = new Mesh(gearGeo.torus(0.22, 0.035), glow(0xc04dff, 1.6));
     this.mark.rotation.x = Math.PI / 2;
     this.mark.visible = false;
     this.group.add(this.mark);
@@ -160,7 +160,7 @@ export class FighterView {
     const a = this.rig.anchors;
     // Item gems on the belt — readable at a glance.
     items.forEach((id, i) => {
-      const gem = new Mesh(gearGeo.ico(0.055), glow(ITEMS[id].color, 2.2));
+      const gem = new Mesh(gearGeo.ico(0.055), glow(ITEMS[id].color, 1.2));
       gem.position.set(0.2, 0.06, (i - 1) * 0.12);
       a.hips.add(gem);
     });
@@ -178,14 +178,14 @@ export class FighterView {
           break;
         case 'swift_boots':
           for (const f of [a.footL, a.footR]) {
-            const r = new Mesh(gearGeo.torus(0.1, 0.02), glow(0x5effc8, 2.5));
+            const r = new Mesh(gearGeo.torus(0.1, 0.025), glow(0x5effc8, 1.2));
             r.position.set(0, -0.32, 0);
             r.rotation.x = Math.PI / 2;
             f.add(r);
           }
           break;
         case 'berserker_mask': {
-          const band = new Mesh(gearGeo.box(0.06, 0.06, 0.32), glow(0xff2020, 2.5));
+          const band = new Mesh(gearGeo.box(0.06, 0.06, 0.32), glow(0xff2020, 1.3));
           band.position.set(0.2, 0.2, 0);
           a.head.add(band);
           break;
@@ -199,13 +199,13 @@ export class FighterView {
           }
           break;
         case 'aegis_charm': {
-          const g = new Mesh(gearGeo.ico(0.07), glow(0xffe27a, 2.5));
+          const g = new Mesh(gearGeo.ico(0.07), glow(0xffe27a, 1.3));
           g.position.set(0.23, 0.22, 0);
           a.chest.add(g);
           break;
         }
         case 'phoenix_feather': {
-          const f = new Mesh(gearGeo.cone(0.05, 0.38, 6), glow(0xff8a2e, 2.2));
+          const f = new Mesh(gearGeo.cone(0.05, 0.38, 6), glow(0xff8a2e, 1.4));
           f.position.set(-0.1, 0.5, 0.14);
           f.rotation.z = 0.8;
           a.head.add(f);
@@ -222,7 +222,7 @@ export class FighterView {
         }
         case 'mirror_ward': case 'storm_sigil': case 'echo_stone': case 'hourglass': {
           const geo = id === 'mirror_ward' ? gearGeo.cyl(0.12, 0.12, 0.02, 6) : id === 'hourglass' ? gearGeo.cone(0.07, 0.16, 4) : gearGeo.ico(0.08);
-          const m = new Mesh(geo, glow(ITEMS[id].color, 2.5));
+          const m = new Mesh(geo, glow(ITEMS[id].color, 1.5));
           if (id === 'mirror_ward') m.rotation.x = Math.PI / 2;
           this.group.add(m);
           this.orbiters.push({ item: id, mesh: m, phase: this.orbiters.length * 2.1, radius: 0.75 + this.orbiters.length * 0.08 });
@@ -268,10 +268,10 @@ export class FighterView {
     }
 
     // Material uniforms: hit flash and status tint.
-    this.flash = Math.max(0, this.flash - dt * 9);
+    this.flash = Math.max(0, this.flash - dt * 12);
     this.hurt = Math.max(0, this.hurt - dt * 4);
     const u = this.rig.uniforms;
-    u.uFlash.value = this.flash * 0.85;
+    u.uFlash.value = this.flash * 0.45;
     let tint = 0;
     const frozen = !!getStatus(f, 'frozen');
     if (frozen) { u.uTint.value.setHex(0x8fe6ff); tint = 0.55; }
@@ -279,7 +279,7 @@ export class FighterView {
     else if (getStatus(f, 'rage')) { u.uTint.value.setHex(0xff3020); tint = 0.22 + Math.sin(this.time * 9) * 0.08; }
     else if (stacksOf(f, 'chill')) { u.uTint.value.setHex(0x7fd8ff); tint = 0.045 * stacksOf(f, 'chill'); }
     else if (stacksOf(f, 'poison')) { u.uTint.value.setHex(0x7cff3a); tint = 0.03 * stacksOf(f, 'poison'); }
-    if (f.invuln > 0 && f.alive) { u.uTint.value.setHex(0xffffff); tint = Math.max(tint, 0.25 + Math.sin(this.time * 40) * 0.1); }
+    if (f.invuln > 0 && f.alive) { u.uTint.value.setHex(0xdfe8ff); tint = Math.max(tint, 0.18); }
     u.uTintAmt.value = damp(u.uTintAmt.value, tint, 12, dt);
 
     // World anchors.

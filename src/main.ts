@@ -233,6 +233,7 @@ window.addEventListener('pointerdown', () => sfx.unlock(), { once: true });
 document.addEventListener('visibilitychange', () => {
   if (document.hidden && state === 'battle' && !paused) togglePause();
   last = performance.now();
+  renderer.resetTiming();
 });
 
 async function boot(): Promise<void> {

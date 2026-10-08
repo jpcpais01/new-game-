@@ -265,8 +265,8 @@ export function buildRig(classId: ClassId): Rig {
       part(tip2, cone(0.1, 0.25, 10), main, { pos: [0, 0.1, 0] });
       cloth.push(tip2);
       // Glowing eyes
-      part(head, sphere(0.03, 6, 4), glow(0x6ff3ff, 3), { pos: [0.2, 0.2, 0.075], outline: false, shadow: false });
-      part(head, sphere(0.03, 6, 4), glow(0x6ff3ff, 3), { pos: [0.2, 0.2, -0.075], outline: false, shadow: false });
+      part(head, sphere(0.03, 6, 4), glow(0x6ff3ff, 1.3), { pos: [0.2, 0.2, 0.075], outline: false, shadow: false });
+      part(head, sphere(0.03, 6, 4), glow(0x6ff3ff, 1.3), { pos: [0.2, 0.2, -0.075], outline: false, shadow: false });
       // Staff (held vertically, built along +Y in the weapon group)
       const staff = new Group();
       staff.rotation.z = -Math.PI / 2 + 0.2; // along the hand's +X: upright when the forearm is level
