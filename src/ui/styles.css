@@ -412,7 +412,8 @@ button {
 }
 
 /* ---------------------------------------------------------------- character creator */
-.creator { position: absolute; inset: 0; pointer-events: none; }
+/* #ui > * turns pointer events on; the full-screen layer must let drags reach the canvas. */
+#ui > .creator { position: absolute; inset: 0; pointer-events: none; }
 .creator > * { pointer-events: auto; }
 .cr-panel {
   position: absolute;
