@@ -12,10 +12,18 @@ export interface PatchNote {
 
 export const PATCH_NOTES: PatchNote[] = [
   {
-    version: '0.8.3',
+    version: '0.8.4',
     date: '2026-10-08',
     title: 'Cleaner battles',
     notes: ['The version number no longer shows during battles, only in the menus.'],
+  },
+  {
+    version: '0.8.3',
+    date: '2026-10-08',
+    title: 'Side margins',
+    notes: [
+      'Panels and the battle HUD keep a small margin from the left and right edges of the screen, clear of rounded corners and camera cutouts. The arena still fills the whole screen.',
+    ],
   },
   {
     version: '0.8.2',
