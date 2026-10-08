@@ -37,10 +37,13 @@
   --slant: -8deg;
   --hi: inset 0 1.5px 0 rgba(255, 240, 222, 0.16);
   --drop: 0 4px 0 var(--ink);
-  --safe-t: env(safe-area-inset-top, 0px);
-  --safe-b: env(safe-area-inset-bottom, 0px);
-  --safe-l: env(safe-area-inset-left, 0px);
-  --safe-r: env(safe-area-inset-right, 0px);
+  /* The UI ignores the system insets: a fixed 3% of the width on each side keeps
+     it clear of the screen edges and camera cutout in any orientation. Only the
+     bottom keeps a little of the system inset so nothing lands on the gesture bar. */
+  --safe-t: 0px;
+  --safe-b: min(env(safe-area-inset-bottom, 0px), 12px);
+  --safe-l: 3vw;
+  --safe-r: 3vw;
 }
 
 * { box-sizing: border-box; }

@@ -12,6 +12,32 @@ export interface PatchNote {
 
 export const PATCH_NOTES: PatchNote[] = [
   {
+    version: '0.8.3',
+    date: '2026-10-08',
+    title: 'Side margins',
+    notes: [
+      'Panels and the battle HUD keep a small margin from the left and right edges of the screen, clear of rounded corners and camera cutouts. The arena still fills the whole screen.',
+    ],
+  },
+  {
+    version: '0.8.2',
+    date: '2026-10-08',
+    title: 'Edge to edge on phones',
+    notes: [
+      'Menus, panels and the battle HUD now use the whole screen, including the strip beside the status bar and camera cutout.',
+    ],
+  },
+  {
+    version: '0.8.1',
+    date: '2026-10-08',
+    title: 'Blocking turns the right way',
+    notes: [
+      'Raising a shield now turns the shield shoulder into the attack instead of away from it.',
+      'Shield users always block with the shield, even with fists or a staff.',
+      'Dual blades guard with the off-hand blade in front, and a successful parry snaps the arm that actually parried.',
+    ],
+  },
+  {
     version: '0.8.0',
     date: '2026-10-08',
     title: 'Special auras',
