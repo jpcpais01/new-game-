@@ -72,8 +72,6 @@ function torsoField(s: FormShape, j: BindJoints): Sdf {
   ], M.SHIRT, 2.2);
   const pelvis = ell([-0.004, yH - 0.03, 0], [pelvisD * 0.82, 0.13, pelvisW * 0.76], M.SHIRT);
   const half = union(0.03,
-    // Pectoral plates: broad and flat, following the ribcage.
-    ell([cd * 0.52, yC + nl * 0.63, cw * 0.36], [0.022 + 0.026 * mu, nl * 0.16, cw * 0.44], M.SHIRT, [0.12, 0.42, -0.1]),
     // Lats flare from the armpit and taper to the waist (the V).
     ell([-cd * 0.3, yC + nl * 0.44, cw * 0.66], [cd * 0.46, nl * 0.4, 0.05 + 0.035 * mu], M.SHIRT, [0.3, 0, 0]),
     // Trapezius slope and the shoulder socket.
@@ -82,7 +80,10 @@ function torsoField(s: FormShape, j: BindJoints): Sdf {
     // Glutes.
     ell([-pelvisD * 0.42, yH - 0.08, s.hipW * 0.56], [s.thighR * 0.7, s.thighR * 0.88, s.thighR * 0.72], M.PANTS),
   );
-  let core: Sdf = union(0.05, trunk, pelvis, new MirrorZ(half),
+  // The chest: one broad, flat plate across the ribcage with a squared lower
+  // edge (two separate rounded pecs read as breasts under the tunic).
+  const chestPlate = rbox([cd * 0.36, yC + nl * 0.6, 0], [0.035 + 0.012 * mu, nl * 0.2, cw * 0.66], 0.03, M.SHIRT, [0, 0, 0.12]);
+  let core: Sdf = union(0.05, trunk, pelvis, chestPlate, new MirrorZ(half),
     s.belly > 0 ? ell([waistD * 0.42, yS - 0.01, 0], [0.1 + 0.05 * s.belly, 0.13 + 0.03 * s.belly, s.waistW * 0.92], M.SHIRT) : null,
   );
   // The groove of the spine down the back.
@@ -101,7 +102,7 @@ function torsoField(s: FormShape, j: BindJoints): Sdf {
   core = union(0.035, core, neck);
 
   // --- Outfit paint: V-neck shows skin, everything below the hem is trousers ---
-  const yApex = yC + nl * 0.5;
+  const yApex = yC + nl * 0.74;
   const slope = 0.1 / Math.max(0.05, yN - yApex);
   const yHem = yH - 0.035;
   const yBelt = yH + 0.07;
