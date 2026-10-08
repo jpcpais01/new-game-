@@ -47,8 +47,8 @@ export class Hud {
   private feed!: HTMLElement;
   private banner!: HTMLElement;
   private ultCalls: HTMLElement[] = [];
-  private speedBtns: HTMLButtonElement[] = [];
-  private speedCycle!: HTMLButtonElement;
+  private speedBtn!: HTMLButtonElement;
+  private feedOn = true;
   private pauseBtn!: HTMLButtonElement;
   private zoomBtn!: HTMLButtonElement;
   private zoomLabel = 'Normal';
@@ -94,17 +94,17 @@ export class Hud {
     }
 
     this.feed = h('div.feed');
-    this.speedBtns = SPEEDS.map((s) => h<HTMLButtonElement>('button.btn' + (s === speed ? '.on' : ''), { onclick: () => this.cb.onSpeed(s), 'aria-label': `Speed ${s}×` }, `${s}×`));
-    // Phones get one button that cycles the speed instead of three.
-    this.speedCycle = h<HTMLButtonElement>('button.btn.speed-cycle', {
-      title: 'Speed', 'aria-label': 'Change speed',
+    this.feed.hidden = !this.feedOn;
+    // One button cycles 1× → 2× → 4× → 1×.
+    this.speedBtn = h<HTMLButtonElement>('button.btn.speed-cycle', {
+      title: 'Speed (1 / 2 / 4)',
       onclick: () => this.cb.onSpeed(SPEEDS[(SPEEDS.indexOf(this.speed) + 1) % SPEEDS.length]),
-    }, `${speed}×`);
-    this.speed = speed;
+    });
+    this.setSpeed(speed);
     this.pauseBtn = h<HTMLButtonElement>('button.btn', { onclick: () => this.cb.onPause(), title: 'Pause', 'aria-label': 'Pause' }, icon('pause'));
     this.zoomBtn = h<HTMLButtonElement>('button.btn.zoom', { onclick: () => this.cb.onZoom(), title: 'Camera zoom (Z)', 'aria-label': 'Camera zoom' });
     this.setZoom(this.zoomLabel);
-    const controls = h('div.controls', null, this.zoomBtn, h('div.speed-seg', null, ...this.speedBtns), this.speedCycle, this.pauseBtn,
+    const controls = h('div.controls', null, this.zoomBtn, this.speedBtn, this.pauseBtn,
       h('button.btn', { onclick: () => this.cb.onExit(), title: 'Back to loadout', 'aria-label': 'Back to loadout' }, icon('close')));
     const bottom = h('div.hud-bottom', null, this.feed, controls);
     this.banner = h('div.banner');
@@ -120,8 +120,20 @@ export class Hud {
 
   setSpeed(s: number): void {
     this.speed = s;
-    this.speedBtns.forEach((b, i) => b.classList.toggle('on', SPEEDS[i] === s));
-    if (this.speedCycle) this.speedCycle.textContent = `${s}×`;
+    const b = this.speedBtn;
+    if (!b) return;
+    b.replaceChildren(icon('haste', 'glyph'), h('span.val', null, `${s}×`));
+    b.classList.toggle('fast', s > 1);
+    b.setAttribute('aria-label', `Speed ${s}×, tap to change`);
+  }
+
+  /** Shows or hides the fighters' running commentary (the battle feed). */
+  setFeed(on: boolean): void {
+    this.feedOn = on;
+    if (this.feed) {
+      this.feed.hidden = !on;
+      if (!on) this.feed.replaceChildren();
+    }
   }
 
   setPaused(p: boolean): void {
@@ -141,7 +153,7 @@ export class Hud {
   onEvent(e: BattleEvent): void {
     const b = this.battle;
     if (!b) return;
-    if (e.type === 'thought') this.pushFeed(e.f, e.text);
+    if (e.type === 'thought') { if (this.feedOn) this.pushFeed(e.f, e.text); }
     else if (e.type === 'plan') {
       const s = this.sides[e.f];
       if (s) s.plan.textContent = PLAN_LABELS[e.plan as Plan];

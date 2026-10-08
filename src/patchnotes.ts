@@ -21,6 +21,16 @@ export const PATCH_NOTES: PatchNote[] = [
     ],
   },
   {
+    version: '0.5.3',
+    date: '2026-10-08',
+    title: 'Clearer duels on phones',
+    notes: [
+      'A Battle feed switch in Settings turns the move-by-move feed on or off.',
+      'Speed is one button that cycles 1×, 2× and 4×.',
+      'On landscape phones the corners are compact strips, and the camera keeps both fighters clear of the panels.',
+    ],
+  },
+  {
     version: '0.5.2',
     date: '2026-10-08',
     title: 'Tidier tunics',
